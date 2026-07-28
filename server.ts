@@ -9,10 +9,12 @@ import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { getRecentSignals, saveSignal, saveAIAudit, getLatestAIAudit, getIndicatorWeights, saveIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal } from './server/db.js';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader } from './server/aiMotor.js';
 import { TickerData, TradeSignal, BotState } from './src/types.js';
+import dotenv from 'dotenv';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  dotenv.config();
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json());
 
