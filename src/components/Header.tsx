@@ -89,6 +89,18 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Navigation Tabs */}
         <nav className="hidden md:flex items-center gap-1 bg-[#050505] p-1 rounded-lg border border-white/10 overflow-x-auto scrollbar-none">
           <button
+            onClick={() => setActiveTab('backtest')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-all font-mono ${
+              activeTab === 'backtest'
+                ? 'bg-orange-500 text-black shadow'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-white/5'
+            }`}
+          >
+            <Database className="h-3.5 w-3.5" />
+            Backtest
+          </button>
+
+          <button
             onClick={() => setActiveTab('dashboard')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-all font-mono ${
               activeTab === 'dashboard'

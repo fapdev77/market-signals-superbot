@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { TradeSignal, TickerData, AIReviewResponse } from '../types';
-import { Zap, TrendingUp, TrendingDown, Brain, RefreshCw, ShieldCheck, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Zap, TrendingUp, TrendingDown, Brain, RefreshCw, ShieldCheck, Clock, AlertTriangle, CheckCircle2, Activity } from 'lucide-react';
 
 interface SignalsMatrixProps {
   signals: TradeSignal[];
@@ -255,6 +255,14 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                       )}
                     </div>
 
+                    {s.backtestWinRate && (
+                      <span className={`px-2 py-0.5 border rounded text-[9px] font-bold flex items-center gap-1 w-max ${
+                        s.backtestWinRate >= 60 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                      }`}>
+                        <Activity className="h-3 w-3" />
+                        Backtest WinRate: {s.backtestWinRate.toFixed(1)}%
+                      </span>
+                    )}
                     {s.validationStage && (
                       <p className="text-[9px] text-neutral-400 italic">
                         ↳ {s.validationStage}

@@ -47,7 +47,8 @@ export default function App() {
       rangePocWeight: 10,
       supportResistanceWeight: 10
     },
-    aiModels: defaultModels
+    aiModels: defaultModels,
+    aiAnalysisEnabled: true
   });
 
   const fetchData = async () => {
@@ -207,6 +208,8 @@ export default function App() {
             currentWeights={botState.weights}
             onApplyWeights={handleSaveWeights}
             aiModels={botState.aiModels}
+            aiAnalysisEnabled={botState.aiAnalysisEnabled}
+            onToggleAI={(enabled) => setBotState(prev => ({ ...prev, aiAnalysisEnabled: enabled }))}
           />
         )}
 

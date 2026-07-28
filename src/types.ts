@@ -88,10 +88,13 @@ export interface TradeSignal {
   aiConfidence?: number;            // 0 to 100
   
   // 1m & 5m Multi-Timeframe Signal Validation
-  validationStatus: 'PENDING_VALIDATION' | 'CONFIRMED' | 'REJECTED_SPIKE';
+  validationStatus: 'PENDING_VALIDATION' | 'CONFIRMED' | 'REJECTED_SPIKE' | 'REJECTED_BACKTEST';
   validationStage: string;           // e.g. "Sustentado em 1m / Confirmado em 5m"
   candle1mConfirmed: boolean;
   candle5mConfirmed: boolean;
+  backtestConfidence?: number;
+  backtestWinRate?: number;
+  backtestProfitFactor?: number;
   validationDetails?: {
     sustainSeconds: number;
     candle5mDirection: 'LONG' | 'SHORT' | 'NEUTRAL';
@@ -146,6 +149,7 @@ export interface BotState {
   signalsGenerated24h: number;
   weights: IndicatorWeights;
   aiModels: AIModelConfig[];
+  aiAnalysisEnabled: boolean;
 }
 
 export type AIProvider = 'gemini' | 'openai' | 'openrouter' | 'anthropic' | 'local';

@@ -169,6 +169,28 @@ export class BacktestEngine {
     return result;
   }
 
+  static async getLatestBacktest(symbol: string, weights: any): Promise<BacktestResult | null> {
+    const config = { symbol, days: 30, weights };
+    const strategyId = this.generateStrategyId(config);
+    const cached = await db.select().from(backtestResults)
+      .where(
+        and(
+           eq(backtestResults.symbol, symbol),
+           eq(backtestResults.strategyId, strategyId)
+        )
+      )
+      .orderBy(desc(backtestResults.createdAt))
+      .limit(1);
+
+    if (cached.length > 0) {
+      return {
+         ...cached[0],
+         config: JSON.parse(cached[0].config)
+      };
+    }
+    return null;
+  }
+
   private static generateStrategyId(config: BacktestConfig): string {
     const str = JSON.stringify(config.weights);
     return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);

@@ -7,13 +7,17 @@ interface AIMotorPanelProps {
   currentWeights: IndicatorWeights;
   onApplyWeights: (weights: IndicatorWeights) => void;
   aiModels?: AIModelConfig[];
+  aiAnalysisEnabled: boolean;
+  onToggleAI: (enabled: boolean) => void;
 }
 
 export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   tickers = [],
   currentWeights,
   onApplyWeights,
-  aiModels = []
+  aiModels = [],
+  aiAnalysisEnabled,
+  onToggleAI
 }) => {
   const activeModels = aiModels.filter(m => m.isActive).sort((a, b) => a.priority - b.priority);
   const [selectedModel, setSelectedModel] = useState<string>(activeModels.length > 0 ? activeModels[0].modelId : 'gemini-1.5-flash-latest');
@@ -106,29 +110,45 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
           </div>
         </div>
 
-        {/* Model Selector Selector */}
-        <div className="bg-[#050505] p-2.5 rounded border border-white/10 flex items-center gap-2.5 w-full lg:w-auto">
-          <Cpu className="h-4 w-4 text-orange-400" />
-          <div>
-            <span className="text-[9px] text-neutral-500 uppercase font-bold block">Modelo Selecionado:</span>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="bg-[#0A0A0A] border border-white/10 text-neutral-200 text-xs font-bold rounded px-2 py-0.5 focus:outline-none focus:border-orange-500"
-            >
-              {activeModels.length > 0 ? (
-                activeModels.map(model => (
-                  <option key={model.id} value={model.modelId}>
-                    {model.name}
-                  </option>
-                ))
-              ) : (
-                <option value="gemini-1.5-flash-latest">Gemini Flash (Default)</option>
-              )}
-            </select>
+        {/* Model Selector and AI Toggle */}
+        <div className="bg-[#050505] p-2 rounded border border-white/10 flex items-center gap-3 w-full lg:w-auto">
+          {/* Toggle IA */}
+          <button
+            onClick={() => onToggleAI(!aiAnalysisEnabled)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded text-[10px] font-bold border transition ${
+              aiAnalysisEnabled
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+            }`}
+          >
+             {aiAnalysisEnabled ? <Brain className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+             {aiAnalysisEnabled ? 'IA ATIVA' : 'IA DESABILITADA'}
+          </button>
+
+          <div className="h-6 w-px bg-white/10" />
+
+          <div className="flex items-center gap-2">
+            <Cpu className="h-3.5 w-3.5 text-orange-400" />
+            <div className="flex flex-col">
+              <span className="text-[9px] text-neutral-500 uppercase font-bold">Modelo:</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-[#0A0A0A] border border-white/10 text-neutral-200 text-[10px] font-bold rounded px-1.5 py-0.5 focus:outline-none focus:border-orange-500"
+              >
+                {activeModels.length > 0 ? (
+                  activeModels.map(model => (
+                    <option key={model.id} value={model.modelId}>
+                      {model.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="gemini-1.5-flash-latest">Gemini Flash (Default)</option>
+                )}
+              </select>
+            </div>
           </div>
         </div>
-      </div>
 
       {/* Strategic Audit Section */}
       <div className="bg-[#0A0A0A] rounded-lg border border-white/10 p-4 shadow-xl space-y-4">
@@ -293,6 +313,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
             <Send className="h-3.5 w-3.5" />
             Enviar
           </button>
+        </div>
         </div>
       </div>
     </div>

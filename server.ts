@@ -263,7 +263,7 @@ async function startServer() {
       status: 'ACTIVE'
     };
 
-    const review = await reviewSignalWithAI(ticker, potentialSignal, model || 'gemini-3.6-flash');
+    const review = await reviewSignalWithAI(ticker, potentialSignal, model || 'gemini-3.6-flash', botState.aiAnalysisEnabled);
     res.json(review);
   });
 
@@ -271,7 +271,7 @@ async function startServer() {
   app.post('/api/ai/audit', async (req, res) => {
     const tickers = Object.values(tickerStateCache);
     const signals = await getRecentSignals(10);
-    const audit = await auditMarketWithAI(tickers, signals, botState.weights);
+    const audit = await auditMarketWithAI(tickers, signals, botState.weights, botState.aiAnalysisEnabled);
     await saveAIAudit(audit);
     res.json(audit);
   });
@@ -293,7 +293,7 @@ async function startServer() {
   app.post('/api/ai/chat', async (req, res) => {
     const { message, symbol } = req.body;
     const ticker = symbol ? tickerStateCache[symbol] : null;
-    const reply = await chatWithAITrader(message || '', ticker);
+    const reply = await chatWithAITrader(message || '', ticker, botState.aiAnalysisEnabled);
     res.json({ reply });
   });
 

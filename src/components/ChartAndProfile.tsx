@@ -197,9 +197,16 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         {/* Active Signal Info */}
         {!aiReview && activeSignal && (
           <div className="mt-4 pt-4 border-t border-white/10 animate-fade-in space-y-3">
-             <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase mb-1">
-                <Zap className="h-4 w-4" />
-                Sinal Ativo Encontrado para {ticker.symbol}
+             <div className="flex items-center justify-between mb-1">
+               <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase">
+                  <Zap className="h-4 w-4" />
+                  Sinal Ativo Encontrado para {ticker.symbol}
+               </div>
+               {activeSignal.backtestWinRate && (
+                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${activeSignal.backtestWinRate >= 60 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'}`}>
+                   Backtest WR: {activeSignal.backtestWinRate.toFixed(1)}% | PF: {activeSignal.backtestProfitFactor?.toFixed(2)}
+                 </span>
+               )}
              </div>
              
              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">

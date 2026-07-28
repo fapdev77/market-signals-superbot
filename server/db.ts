@@ -141,7 +141,7 @@ export async function saveSignal(signal: TradeSignal) {
 
 export async function getActiveSignalsBySymbol(symbol: string): Promise<TradeSignal[]> {
   const database = await getDb();
-  const res = database.exec(`SELECT * FROM trade_signals WHERE symbol = ? AND status = 'ACTIVE'`, [symbol]);
+  const res = database.exec(`SELECT * FROM trade_signals WHERE symbol = '${symbol}' AND status = 'ACTIVE'`);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
@@ -190,7 +190,7 @@ export async function updateSignal(signal: TradeSignal) {
 
 export async function getRecentSignals(limit: number = 30): Promise<TradeSignal[]> {
   const database = await getDb();
-  const res = database.exec(`SELECT * FROM trade_signals ORDER BY created_at DESC LIMIT ?`, [limit]);
+  const res = database.exec(`SELECT * FROM trade_signals ORDER BY created_at DESC LIMIT ${limit}`);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;

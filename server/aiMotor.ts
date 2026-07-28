@@ -23,9 +23,10 @@ const getAiClient = () => {
 export async function reviewSignalWithAI(
   ticker: TickerData,
   signal: TradeSignal,
-  modelName: string = 'gemini-flash-latest'
+  modelName: string = 'gemini-flash-latest',
+  aiAnalysisEnabled: boolean = true
 ): Promise<AIReviewResponse> {
-  const ai = getAiClient();
+  const ai = aiAnalysisEnabled ? getAiClient() : null;
   
   if (ai) {
     const prompt = `Act as an elite quantitative crypto & TradFi hedge fund trader.
@@ -116,9 +117,10 @@ Instructions:
 export async function auditMarketWithAI(
   tickers: TickerData[],
   signals: TradeSignal[],
-  currentWeights: IndicatorWeights
+  currentWeights: IndicatorWeights,
+  aiAnalysisEnabled: boolean = true
 ): Promise<AIAuditReport> {
-  const ai = getAiClient();
+  const ai = aiAnalysisEnabled ? getAiClient() : null;
   
   const summaryData = tickers.map(t => ({
     symbol: t.symbol,
@@ -206,9 +208,10 @@ Instructions:
 
 export async function chatWithAITrader(
   userQuery: string,
-  ticker?: TickerData | null
+  ticker?: TickerData | null,
+  aiAnalysisEnabled: boolean = true
 ): Promise<string> {
-  const ai = getAiClient();
+  const ai = aiAnalysisEnabled ? getAiClient() : null;
   
   const context = ticker ? `Current Ticker Context: ${ticker.symbol} Price: ${ticker.price}, 24h: ${ticker.priceChangePercent24h}%, OI: ${ticker.openInterest}, CVD: ${ticker.cvdDirection}, Fibo Golden Pocket: [${ticker.fibonacci.fib68} - ${ticker.fibonacci.fib618}]` : 'General Market Context';
   
