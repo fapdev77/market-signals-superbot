@@ -1,0 +1,6 @@
+{
+  "name": "Market Signals SuperBot",
+  "description": "Professional crypto and market trading bot monitor with real-time Binance futures signals, order book CVD, Fibonacci 0.68, VAH/VAL/POC ranges, and AI strategy review.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
