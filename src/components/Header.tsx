@@ -95,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main Navigation & Brand Header */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2">
+      <div className="max-w-[2400px] mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 cursor-pointer min-w-0" onClick={() => handleSelectTab('dashboard')}>
           <div className="h-9 w-9 shrink-0 rounded-lg bg-orange-500 flex items-center justify-center font-extrabold text-black font-mono text-sm tracking-tighter shadow-md shadow-orange-500/20 border border-orange-400">
             MS

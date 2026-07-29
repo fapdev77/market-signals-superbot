@@ -414,9 +414,9 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
       </div>
 
       {/* Main Chart Grid & Order Flow Metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
         {/* Main Price Chart with Fibonacci Overlays */}
-        <div className="lg:col-span-2 bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3">
+        <div className="lg:col-span-2 2xl:col-span-3 bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xl font-black text-white">

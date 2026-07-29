@@ -146,7 +146,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 mb-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 min-[1900px]:grid-cols-6 gap-2.5 mb-3">
             <div className="bg-[#050505] p-2.5 rounded border border-white/5">
               <span className="text-[9px] text-neutral-500 uppercase block font-bold">Decisão IA</span>
               <span className={`text-sm font-black ${

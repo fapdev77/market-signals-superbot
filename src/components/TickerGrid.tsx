@@ -105,7 +105,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
       </div>
 
       {/* Grid Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 min-[1900px]:grid-cols-6 min-[2200px]:grid-cols-7 min-[2400px]:grid-cols-8 gap-3">
         {filteredTickers.map((t) => {
           const signalType = t.signalType || 'NEUTRAL';
           const isLong = signalType.includes('LONG');

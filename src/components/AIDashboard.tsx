@@ -67,7 +67,7 @@ export const AIDashboard: React.FC = () => {
   const [timeRange, setTimeRange] = useState('7 dias');
 
   return (
-    <div className="space-y-4 max-w-6xl mx-auto font-mono pb-10">
+    <div className="space-y-4 max-w-[2400px] mx-auto font-mono pb-10">
       
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -92,7 +92,7 @@ export const AIDashboard: React.FC = () => {
       </div>
 
       {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 min-[1900px]:grid-cols-8 gap-3">
         
         {/* Total Chamadas */}
         <div className="bg-[#0A0A0A] p-3 rounded-lg border border-white/10 flex items-center gap-3 shadow-md">

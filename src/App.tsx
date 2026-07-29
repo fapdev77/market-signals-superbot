@@ -187,7 +187,7 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 md:pb-6">
+      <main className="flex-1 max-w-[2400px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 md:pb-6">
         {/* Top Prime Signal Alert Banner */}
         {topGoldenPocketTicker && (
           <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/40 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl animate-fade-in">
@@ -295,7 +295,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500 font-mono">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div className="max-w-[2400px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>Market Signals SuperBot • Cripto Perpetuos USDT & TradFi</span>
           <span>Motor de IA: Gemini 3.6 Flash & OpenRouter Nemotron • SQLite Persistent</span>
         </div>

@@ -227,7 +227,7 @@ export const AIModelsConfigDashboard: React.FC<{
   };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto font-mono pb-16">
+    <div className="space-y-6 max-w-[2400px] mx-auto font-mono pb-16">
       
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-4">

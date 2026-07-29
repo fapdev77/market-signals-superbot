@@ -124,7 +124,7 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
                       formWeights.supportResistanceWeight;
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto font-mono">
+    <div className="space-y-4 max-w-[1400px] mx-auto font-mono">
       {/* Header Card */}
       <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-1">
         <div className="flex items-center gap-3">
@@ -144,7 +144,7 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       {/* Presets Dashboard */}
       <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3">
         <h3 className="text-xs font-bold text-neutral-300 uppercase">Estratégias Prontas (SMC / TPO)</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
           <button 
             onClick={() => applyPreset('scalp')}
             className={`px-3 py-2 text-xs rounded border transition font-bold ${activePreset === 'scalp' ? 'bg-cyan-500 text-black border-cyan-400 shadow-md shadow-cyan-500/20' : 'bg-neutral-900 border-neutral-700 hover:bg-neutral-800 text-neutral-300'}`}
