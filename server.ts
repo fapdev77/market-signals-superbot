@@ -220,15 +220,16 @@ async function startServer() {
 
   // Get All Monitored Tickers Ticks
   app.get('/api/tickers', (req, res) => {
-    const list = Object.values(tickerStateCache).sort((a, b) => b.confluenceScore - a.confluenceScore);
+    const list = Object.values(tickerStateCache).sort((a, b) => a.symbol.localeCompare(b.symbol));
     res.json(list);
   });
 
   // Get Specific Ticker Details & Kline Chart
   app.get('/api/tickers/:symbol', async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
+    const timeframe = (req.query.tf as string) || '15m';
     const ticker = tickerStateCache[symbol];
-    const klines = await fetchKlines(symbol, '15m', 40);
+    const klines = await fetchKlines(symbol, timeframe, 60);
     res.json({ ticker, klines });
   });
 

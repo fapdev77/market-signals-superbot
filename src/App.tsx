@@ -188,37 +188,43 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-[2400px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 md:pb-6">
-        {/* Top Prime Signal Alert Banner */}
-        {topGoldenPocketTicker && (
-          <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/40 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl animate-fade-in">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
-                <Flame className="h-6 w-6 animate-bounce" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold font-mono text-white">
-                    OPORTUNIDADE PRIME: {topGoldenPocketTicker.symbol} no Golden Pocket Fibo (0.618 - 0.68)
-                  </h3>
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 font-extrabold px-2 py-0.5 rounded uppercase">
-                    {topGoldenPocketTicker.confluenceScore}% Confluência
-                  </span>
+        {/* Top Prime Signal Alert Banner - Fixed height container to prevent layout shift (scroll jumping) */}
+        <div className="min-h-[88px]">
+          {topGoldenPocketTicker ? (
+            <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/40 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl animate-fade-in h-full">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <Flame className="h-6 w-6 animate-bounce" />
                 </div>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  Preço em ${topGoldenPocketTicker.price} re-testando retração de ouro com CVD {topGoldenPocketTicker.cvdDirection === 'BUY' ? 'Comprador' : 'Vendedor'}.
-                </p>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold font-mono text-white">
+                      OPORTUNIDADE PRIME: {topGoldenPocketTicker.symbol} no Golden Pocket Fibo (0.618 - 0.68)
+                    </h3>
+                    <span className="text-[10px] bg-amber-500/20 text-amber-300 font-extrabold px-2 py-0.5 rounded uppercase">
+                      {topGoldenPocketTicker.confluenceScore}% Confluência
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Preço em ${topGoldenPocketTicker.price} re-testando retração de ouro com CVD {topGoldenPocketTicker.cvdDirection === 'BUY' ? 'Comprador' : 'Vendedor'}.
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <button
-              onClick={() => handleSelectTickerBySymbol(topGoldenPocketTicker.symbol)}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 shadow-lg shadow-amber-500/20 whitespace-nowrap"
-            >
-              Analisar {topGoldenPocketTicker.symbol}
-              <ArrowUpRight className="h-4 w-4" />
-            </button>
-          </div>
-        )}
+              <button
+                onClick={() => handleSelectTickerBySymbol(topGoldenPocketTicker.symbol)}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 shadow-lg shadow-amber-500/20 whitespace-nowrap"
+              >
+                Analisar {topGoldenPocketTicker.symbol}
+                <ArrowUpRight className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="h-full border border-dashed border-white/5 rounded-2xl flex items-center justify-center text-xs text-neutral-600 font-mono bg-[#050505]/50">
+               Buscando oportunidades em zona de retração...
+            </div>
+          )}
+        </div>
 
         {/* Dynamic Tab Views */}
         {activeTab === 'dashboard' && (

@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'dashboard', label: 'Tickers', icon: Activity, badge: null },
     { id: 'signals', label: 'Sinais', icon: Zap, badge: botState.signalsGenerated24h },
     { id: 'ai_motor', label: 'Motor IA', icon: BrainCircuit, badge: null },
-    { id: 'chart', label: 'Gráfico & Fibo', icon: LineChart, badge: null },
+    { id: 'chart', label: 'Análise Detalhada', icon: LineChart, badge: null },
     { id: 'backtest', label: 'Backtest', icon: Database, badge: null },
     { id: 'ai_models_config', label: 'Modelos IA', icon: Cpu, badge: null },
     { id: 'ai_dashboard', label: 'IA Dash', icon: BarChart2, badge: null, highlight: true },
