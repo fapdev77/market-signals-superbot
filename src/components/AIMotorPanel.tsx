@@ -20,9 +20,19 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   onToggleAI
 }) => {
   const activeModels = aiModels.filter(m => m.isActive).sort((a, b) => a.priority - b.priority);
-  const [selectedModel, setSelectedModel] = useState<string>(activeModels.length > 0 ? activeModels[0].modelId : 'gemini-1.5-flash-latest');
+  const [selectedModel, setSelectedModel] = useState<string>(activeModels.length > 0 ? activeModels[0].modelId : 'none');
   const [auditReport, setAuditReport] = useState<AIAuditReport | null>(null);
   const [loadingAudit, setLoadingAudit] = useState(false);
+
+  useEffect(() => {
+    if (activeModels.length > 0) {
+      if (!activeModels.some(m => m.modelId === selectedModel)) {
+        setSelectedModel(activeModels[0].modelId);
+      }
+    } else {
+      setSelectedModel('none');
+    }
+  }, [aiModels]);
 
   // Chat State
   const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string }>>([
@@ -139,11 +149,11 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
                 {activeModels.length > 0 ? (
                   activeModels.map(model => (
                     <option key={model.id} value={model.modelId}>
-                      {model.name}
+                      {model.name} ({model.provider.toUpperCase()})
                     </option>
                   ))
                 ) : (
-                  <option value="gemini-1.5-flash-latest">Gemini Flash (Default)</option>
+                  <option value="none">Nenhum Modelo Ativo (Rule Engine Fallback)</option>
                 )}
               </select>
             </div>

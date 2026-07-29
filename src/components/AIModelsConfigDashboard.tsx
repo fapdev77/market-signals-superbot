@@ -71,11 +71,20 @@ export const AIModelsConfigDashboard: React.FC<{
   const [activeTabModal, setActiveTabModal] = useState<'general' | 'params' | 'prompt' | 'limits'>('general');
   const [testResult, setTestResult] = useState<{ modelId: string; loading: boolean; message: string; success?: boolean; latencyMs?: number } | null>(null);
 
-  // Get active Gemini model
-  const activeGeminiModel = models.find(m => m.provider === 'gemini' && m.isActive) || models.find(m => m.provider === 'gemini') || models[0];
+  const [selectedActiveModelId, setSelectedActiveModelId] = useState<string | null>(null);
+
+  // Get active models sorted by priority
+  const activeModels = models.filter(m => m.isActive).sort((a, b) => a.priority - b.priority);
+  // Get primary active model to display in quick config banner
+  const activeModel = activeModels.find(m => m.id === selectedActiveModelId) || activeModels[0] || null;
 
   const handleToggleActive = (id: string) => {
-    onUpdateModels(models.map(m => m.id === id ? { ...m, isActive: !m.isActive } : m));
+    const target = models.find(m => m.id === id);
+    const updated = models.map(m => m.id === id ? { ...m, isActive: !m.isActive } : m);
+    onUpdateModels(updated);
+    if (target && !target.isActive) {
+      setSelectedActiveModelId(id);
+    }
   };
 
   const handleToggleFallback = (id: string) => {
@@ -155,9 +164,9 @@ export const AIModelsConfigDashboard: React.FC<{
   };
 
   const handleApplyPreset = (preset: typeof PRESET_PROFILES[0]) => {
-    if (!activeGeminiModel) return;
+    if (!activeModel) return;
     const updated = models.map(m => {
-      if (m.id === activeGeminiModel.id) {
+      if (m.id === activeModel.id) {
         return {
           ...m,
           modelId: preset.modelId,
@@ -174,10 +183,10 @@ export const AIModelsConfigDashboard: React.FC<{
     onUpdateModels(updated);
   };
 
-  const handleQuickUpdateGemini = (updates: Partial<AIModelConfig['parameters']> & { modelId?: string }) => {
-    if (!activeGeminiModel) return;
+  const handleQuickUpdateActiveModel = (updates: Partial<AIModelConfig['parameters']> & { modelId?: string }) => {
+    if (!activeModel) return;
     const updated = models.map(m => {
-      if (m.id === activeGeminiModel.id) {
+      if (m.id === activeModel.id) {
         return {
           ...m,
           ...(updates.modelId ? { modelId: updates.modelId } : {}),
@@ -249,30 +258,99 @@ export const AIModelsConfigDashboard: React.FC<{
         </button>
       </div>
 
-      {/* GEMINI QUICK CONFIG BANNER */}
-      {activeGeminiModel && (
-        <div className="bg-gradient-to-br from-[#0D121F] via-[#0A0A0A] to-[#0A0A0A] border border-blue-500/30 p-5 rounded-2xl shadow-2xl space-y-5">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-white/10 pb-4">
+      {/* ACTIVE MOTOR QUICK CONFIG BANNER */}
+      {!activeModel ? (
+        <div className="bg-[#0A0A0A] border border-rose-500/30 p-5 rounded-2xl shadow-2xl space-y-4 font-mono">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-blue-500/20 rounded-xl border border-blue-500/30 text-blue-400">
-                <Brain className="h-6 w-6" />
+              <div className="p-2.5 bg-rose-500/10 rounded-xl border border-rose-500/30 text-rose-400">
+                <ShieldAlert className="h-6 w-6" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">MOTOR GEMINI ATIVO</span>
+                  <span className="text-xs font-bold text-rose-400 uppercase tracking-widest">NENHUM MOTOR DE IA ATIVO</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" /> INATIVO / FALLBACK
+                  </span>
+                </div>
+                <h3 className="text-base font-extrabold text-white mt-0.5">Sem Modelo de IA em Operação</h3>
+                <p className="text-xs text-neutral-400 mt-1 max-w-2xl leading-relaxed">
+                  Todos os modelos de Inteligência Artificial estão desativados. As análises de sinal e auditorias estratégicas estão operando em modo estático de contingência (Rule Engine sem IA). Ative pelo menos um modelo na lista abaixo para habilitar o Motor de IA.
+                </p>
+              </div>
+            </div>
+
+            {models.length > 0 && (
+              <button
+                onClick={() => handleToggleActive(models[0].id)}
+                className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-black font-bold text-xs flex items-center gap-2 transition shadow-lg shadow-emerald-500/20 whitespace-nowrap cursor-pointer"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Ativar {models[0].name}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className={`bg-gradient-to-br from-[#0D121F] via-[#0A0A0A] to-[#0A0A0A] border ${
+          activeModel.provider === 'gemini' ? 'border-blue-500/30' :
+          activeModel.provider === 'openai' ? 'border-emerald-500/30' :
+          activeModel.provider === 'openrouter' ? 'border-indigo-500/30' :
+          activeModel.provider === 'anthropic' ? 'border-amber-500/30' :
+          'border-purple-500/30'
+        } p-5 rounded-2xl shadow-2xl space-y-5 font-mono`}>
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-white/10 pb-4">
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl border ${
+                activeModel.provider === 'gemini' ? 'bg-blue-500/20 border-blue-500/30 text-blue-400' :
+                activeModel.provider === 'openai' ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' :
+                activeModel.provider === 'openrouter' ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400' :
+                activeModel.provider === 'anthropic' ? 'bg-amber-500/20 border-amber-500/30 text-amber-400' :
+                'bg-purple-500/20 border-purple-500/30 text-purple-400'
+              }`}>
+                <Brain className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-xs font-bold uppercase tracking-widest ${
+                    activeModel.provider === 'gemini' ? 'text-blue-400' :
+                    activeModel.provider === 'openai' ? 'text-emerald-400' :
+                    activeModel.provider === 'openrouter' ? 'text-indigo-400' :
+                    activeModel.provider === 'anthropic' ? 'text-amber-400' :
+                    'text-purple-400'
+                  }`}>
+                    MOTOR {activeModel.provider.toUpperCase()} ATIVO
+                  </span>
                   <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                     <CheckCircle2 className="h-3 w-3" /> EM OPERAÇÃO
                   </span>
+
+                  {activeModels.length > 1 && (
+                    <div className="flex items-center gap-1.5 ml-1 bg-[#050505] px-2 py-0.5 rounded border border-white/10">
+                      <span className="text-[10px] text-neutral-400 font-bold">Alternar Ativo:</span>
+                      <select
+                        value={activeModel.id}
+                        onChange={(e) => setSelectedActiveModelId(e.target.value)}
+                        className="bg-black text-xs font-bold text-white border border-white/20 rounded px-2 py-0.5 focus:outline-none focus:border-orange-500 cursor-pointer"
+                      >
+                        {activeModels.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.name} ({m.provider})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
-                <h3 className="text-base font-extrabold text-white mt-0.5">{activeGeminiModel.name}</h3>
+                <h3 className="text-base font-extrabold text-white mt-0.5">{activeModel.name}</h3>
               </div>
             </div>
 
             <div className="flex items-center gap-2 w-full lg:w-auto">
               <button
-                onClick={() => testConnection(activeGeminiModel)}
+                onClick={() => testConnection(activeModel)}
                 disabled={testResult?.loading}
-                className="flex-1 lg:flex-none px-3.5 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 font-bold text-xs flex items-center justify-center gap-2 transition"
+                className="flex-1 lg:flex-none px-3.5 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 {testResult?.loading ? (
                   <RefreshCw className="h-4 w-4 animate-spin text-blue-400" />
@@ -285,7 +363,7 @@ export const AIModelsConfigDashboard: React.FC<{
           </div>
 
           {/* Test connection result banner */}
-          {testResult && testResult.modelId === activeGeminiModel.id && (
+          {testResult && testResult.modelId === activeModel.id && (
             <div className={`p-3 rounded-lg border text-xs flex items-center justify-between font-mono animate-fade-in ${
               testResult.loading ? 'bg-blue-950/40 border-blue-500/30 text-blue-300' :
               testResult.success ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' :
@@ -314,7 +392,7 @@ export const AIModelsConfigDashboard: React.FC<{
                 <button
                   key={idx}
                   onClick={() => handleApplyPreset(preset)}
-                  className="p-3 bg-[#050505] hover:bg-neutral-900 border border-white/10 hover:border-orange-500/50 rounded-xl text-left transition space-y-1 group"
+                  className="p-3 bg-[#050505] hover:bg-neutral-900 border border-white/10 hover:border-orange-500/50 rounded-xl text-left transition space-y-1 group cursor-pointer"
                 >
                   <div className="font-bold text-xs text-white group-hover:text-orange-400 transition flex items-center justify-between">
                     <span>{preset.name}</span>
@@ -328,21 +406,34 @@ export const AIModelsConfigDashboard: React.FC<{
 
           {/* Quick Parameters Editor */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 bg-[#050505] p-4 rounded-xl border border-white/5">
-            {/* Versão do Modelo Gemini */}
+            {/* Versão do Modelo */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1">
                 <Cpu className="h-3.5 w-3.5 text-orange-400" />
-                Versão do Modelo Gemini
+                Versão do Modelo ({activeModel.provider.toUpperCase()})
               </label>
-              <select
-                value={activeGeminiModel.modelId}
-                onChange={(e) => handleQuickUpdateGemini({ modelId: e.target.value })}
-                className="w-full bg-[#0A0A0A] border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-bold focus:outline-none focus:border-orange-500"
-              >
-                {GEMINI_MODEL_SUGGESTIONS.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+              {activeModel.provider === 'gemini' ? (
+                <select
+                  value={activeModel.modelId}
+                  onChange={(e) => handleQuickUpdateActiveModel({ modelId: e.target.value })}
+                  className="w-full bg-[#0A0A0A] border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-bold focus:outline-none focus:border-orange-500 cursor-pointer"
+                >
+                  {GEMINI_MODEL_SUGGESTIONS.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                  {!GEMINI_MODEL_SUGGESTIONS.some(s => s.id === activeModel.modelId) && (
+                    <option value={activeModel.modelId}>{activeModel.modelId}</option>
+                  )}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={activeModel.modelId}
+                  onChange={(e) => handleQuickUpdateActiveModel({ modelId: e.target.value })}
+                  placeholder="Identificador do modelo (ex: anthropic/claude-3.5-sonnet)"
+                  className="w-full bg-[#0A0A0A] border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-bold font-mono focus:outline-none focus:border-orange-500"
+                />
+              )}
             </div>
 
             {/* Slider de Temperatura */}
@@ -353,7 +444,7 @@ export const AIModelsConfigDashboard: React.FC<{
                   Temperatura
                 </label>
                 <span className="text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded border border-orange-500/20">
-                  {activeGeminiModel.parameters.temperature} ({activeGeminiModel.parameters.temperature < 0.2 ? 'Rígido' : activeGeminiModel.parameters.temperature < 0.5 ? 'Balanceado' : 'Flexível'})
+                  {activeModel.parameters.temperature} ({activeModel.parameters.temperature < 0.2 ? 'Rígido' : activeModel.parameters.temperature < 0.5 ? 'Balanceado' : 'Flexível'})
                 </span>
               </div>
               <input 
@@ -361,13 +452,13 @@ export const AIModelsConfigDashboard: React.FC<{
                 min="0.0"
                 max="1.0"
                 step="0.05"
-                value={activeGeminiModel.parameters.temperature}
-                onChange={(e) => handleQuickUpdateGemini({ temperature: parseFloat(e.target.value) })}
+                value={activeModel.parameters.temperature}
+                onChange={(e) => handleQuickUpdateActiveModel({ temperature: parseFloat(e.target.value) })}
                 className="w-full accent-orange-500 cursor-pointer h-1.5 bg-neutral-800 rounded-lg"
               />
             </div>
 
-            {/* Top P (Nucleus Sampling) */}
+            {/* Top P */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1">
@@ -375,7 +466,7 @@ export const AIModelsConfigDashboard: React.FC<{
                   Top P (Amostragem)
                 </label>
                 <span className="text-xs font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
-                  {activeGeminiModel.parameters.topP ?? 0.95}
+                  {activeModel.parameters.topP ?? 0.95}
                 </span>
               </div>
               <input 
@@ -383,28 +474,28 @@ export const AIModelsConfigDashboard: React.FC<{
                 min="0.5"
                 max="1.0"
                 step="0.01"
-                value={activeGeminiModel.parameters.topP ?? 0.95}
-                onChange={(e) => handleQuickUpdateGemini({ topP: parseFloat(e.target.value) })}
+                value={activeModel.parameters.topP ?? 0.95}
+                onChange={(e) => handleQuickUpdateActiveModel({ topP: parseFloat(e.target.value) })}
                 className="w-full accent-cyan-500 cursor-pointer h-1.5 bg-neutral-800 rounded-lg"
               />
             </div>
           </div>
 
-          {/* System Prompt / Custom Instructions */}
+          {/* System Prompt */}
           <div className="space-y-2">
             <label className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <MessageSquareCode className="h-4 w-4 text-orange-400" />
-                Prompt de Sistema / Instruções Personalizadas do Motor IA
+                Prompt de Sistema / Instruções Personalizadas do Motor IA ({activeModel.name})
               </span>
               <span className="text-[10px] text-neutral-500 normal-case font-normal">
-                Enviado diretamente nas consultas de revisão e auditoria do Gemini
+                Enviado diretamente nas consultas de revisão e auditoria do modelo
               </span>
             </label>
             <textarea
               rows={3}
-              value={activeGeminiModel.parameters.systemInstruction || ''}
-              onChange={(e) => handleQuickUpdateGemini({ systemInstruction: e.target.value })}
+              value={activeModel.parameters.systemInstruction || ''}
+              onChange={(e) => handleQuickUpdateActiveModel({ systemInstruction: e.target.value })}
               placeholder="Digite regras específicas de validação para a IA (ex: Exija alinhamento rigoroso entre CVD Delta e suporte de Fibonacci 0.618)..."
               className="w-full bg-[#050505] border border-white/10 rounded-xl p-3 text-xs text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-orange-500 font-mono leading-relaxed"
             />
