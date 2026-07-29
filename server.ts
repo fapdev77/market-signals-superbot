@@ -1,5 +1,5 @@
-import { HistoricalDataService } from './src/services/HistoricalDataService';
-import { BacktestEngine } from './src/services/BacktestEngine';
+import { HistoricalDataService } from './server/services/HistoricalDataService';
+import { BacktestEngine } from './server/services/BacktestEngine';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';

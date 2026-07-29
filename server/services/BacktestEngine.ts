@@ -1,58 +1,13 @@
-import { db } from '../db';
-import { historicalKlines, backtestResults } from '../db/schema';
+import { db } from '../backtest_db';
+import { historicalKlines, backtestResults } from '../backtest_db/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import crypto from 'crypto';
 import { HistoricalDataService } from './HistoricalDataService';
-import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint } from '../types';
-
-export const PROFILE_PRESETS: Record<TradingProfile, {
-  name: string;
-  timeframeLabel: string;
-  minConfluence: number;
-  targetRiskRatio: number;
-  stopLossPct: number;
-  candleStep: number;
-  description: string;
-}> = {
-  scalp: {
-    name: 'Scalp (Alta Frequência)',
-    timeframeLabel: '1m - 5m',
-    minConfluence: 58,
-    targetRiskRatio: 1.6,
-    stopLossPct: 0.45,
-    candleStep: 1,
-    description: 'Operações ultra rápidas buscando pequenos impulsos de volatilidade e desequilíbrios de CVD.'
-  },
-  daytrade: {
-    name: 'Day Trade (Sessão Intraday)',
-    timeframeLabel: '15m - 30m',
-    minConfluence: 63,
-    targetRiskRatio: 2.2,
-    stopLossPct: 0.95,
-    candleStep: 3,
-    description: 'Operações intra-dia focadas em consolidações de Volume Profile, POC e rompimentos sustentados.'
-  },
-  intraday: {
-    name: 'Intraday Estrutural',
-    timeframeLabel: '30m - 1h',
-    minConfluence: 68,
-    targetRiskRatio: 3.0,
-    stopLossPct: 1.60,
-    candleStep: 6,
-    description: 'Buscando reversão em Golden Pocket Fibonacci e absorção pesada em níveis de suporte e resistência.'
-  },
-  swing: {
-    name: 'Swing Trade (Macro Tendência)',
-    timeframeLabel: '4h - 1D',
-    minConfluence: 74,
-    targetRiskRatio: 4.2,
-    stopLossPct: 3.20,
-    candleStep: 15,
-    description: 'Tendência primária de mercado com amplos alvos de retorno e filtros rígidos de Open Interest.'
-  }
-};
+import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint } from '../../src/types.js';
+import { PROFILE_PRESETS } from '../../src/constants.js';
 
 export class BacktestEngine {
+
   static async runBacktest(config: BacktestConfig, useCache: boolean = true): Promise<BacktestResult> {
     const profile = config.profile || 'daytrade';
     const strategyId = this.generateStrategyId(config);

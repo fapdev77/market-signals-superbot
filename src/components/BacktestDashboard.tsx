@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TickerData, IndicatorWeights, TradingProfile, BacktestResult, AutoTuneResult } from '../types';
-import { PROFILE_PRESETS } from '../services/BacktestEngine';
+import { PROFILE_PRESETS } from '../constants';
 import { 
   Play, 
   Database, 

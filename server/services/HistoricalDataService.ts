@@ -1,5 +1,5 @@
-import { db } from '../db';
-import { historicalKlines } from '../db/schema';
+import { db } from '../backtest_db';
+import { historicalKlines } from '../backtest_db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 
 export interface SyncProgress {
