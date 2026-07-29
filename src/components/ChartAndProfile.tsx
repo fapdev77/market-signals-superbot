@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig } from '../types';
+import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid } from 'recharts';
-import { LineChart as ChartIcon, Layers, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown } from 'lucide-react';
+import { LineChart as ChartIcon, Layers, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent } from 'lucide-react';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -25,6 +26,24 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [loadingReview, setLoadingReview] = useState(false);
   
   const activeSignal = signals.find(s => s.symbol === ticker?.symbol);
+
+  const botMetrics = activeSignal ? calculateTradeMetrics({
+    entry: activeSignal.entryZone,
+    stopLoss: activeSignal.stopLoss,
+    target1: activeSignal.target1,
+    target2: activeSignal.target2,
+    direction: activeSignal.direction,
+    currentPrice: ticker?.price ?? 0
+  }) : null;
+
+  const aiMetrics = aiReview ? calculateTradeMetrics({
+    entry: aiReview.entryZone,
+    stopLoss: aiReview.stopLoss,
+    target1: aiReview.takeProfit1,
+    target2: aiReview.takeProfit2,
+    direction: aiReview.recommendedDirection,
+    currentPrice: ticker?.price ?? 0
+  }) : null;
 
   const handleRunAIReview = async () => {
     if (!ticker) return;
@@ -116,132 +135,282 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         </div>
       </div>
 
-      {/* Action / AI Review Area */}
-      <div className="bg-gradient-to-r from-orange-500/5 to-[#0A0A0A] p-4 rounded-lg border border-orange-500/20 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-              <Brain className="h-4 w-4 text-orange-400" />
-              Auditoria de IA & Sinais Ativos
-            </h3>
-            <p className="text-xs text-neutral-400 mt-0.5">Analise o Order Flow, CVD e confluências com o Motor Quantitativo de IA.</p>
+      {/* Action / AI Review Area & Comparative Analysis Panel */}
+      <div className="bg-gradient-to-r from-orange-500/5 via-[#0A0A0A] to-[#0D0D0D] p-4.5 rounded-xl border border-orange-500/20 shadow-2xl space-y-4">
+        {/* Header Bar */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-3 border-b border-white/10">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400">
+              <Brain className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                Painel de Sinais, Auditoria IA & Relação Risco/Retorno
+              </h3>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Análise quantitativa de pontos de entrada, stop loss, alvos com porcentagens e comparação em tempo real.
+              </p>
+            </div>
           </div>
+
           <button
             onClick={handleRunAIReview}
             disabled={loadingReview}
-            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-black rounded text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 whitespace-nowrap"
+            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-black rounded-lg text-xs font-black transition flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 whitespace-nowrap cursor-pointer"
           >
             {loadingReview ? (
-              <><RefreshCw className="h-4 w-4 animate-spin" /> Auditando...</>
+              <><RefreshCw className="h-4 w-4 animate-spin" /> Auditando com IA...</>
+            ) : aiReview ? (
+              <><RefreshCw className="h-4 w-4" /> Re-Executar Auditoria</>
             ) : (
               <><Brain className="h-4 w-4" /> Executar Auditoria IA</>
             )}
           </button>
         </div>
 
+        {/* AI Reasoning Header if AI Review exists */}
         {aiReview && (
-          <div className="mt-4 pt-4 border-t border-white/10 animate-fade-in space-y-4">
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2 bg-[#050505] p-2.5 rounded border border-white/5">
-                <span className="text-[10px] text-neutral-500 font-bold uppercase">Decisão IA</span>
-                <span className={`text-sm font-extrabold ${
-                  aiReview.decision === 'CONFIRM' ? 'text-emerald-400' : 
-                  aiReview.decision === 'REJECT' ? 'text-rose-400' : 'text-amber-400'
+          <div className="space-y-3 animate-fade-in bg-[#050505] p-3.5 rounded-lg border border-white/10">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-2.5 border-b border-white/5">
+              <div className="flex flex-wrap items-center gap-2.5 text-xs">
+                <span className="text-neutral-400 font-bold text-[10px] uppercase">Decisão do Agente:</span>
+                <span className={`px-2.5 py-1 rounded text-xs font-black uppercase border flex items-center gap-1 ${
+                  aiReview.decision === 'CONFIRM' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 
+                  aiReview.decision === 'REJECT' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
                 }`}>
+                  {aiReview.decision === 'CONFIRM' && <CheckCircle2 className="h-3.5 w-3.5" />}
+                  {aiReview.decision === 'REJECT' && <ShieldAlert className="h-3.5 w-3.5" />}
+                  {aiReview.decision === 'ADJUST' && <AlertTriangle className="h-3.5 w-3.5" />}
                   {aiReview.decision}
                 </span>
-              </div>
-              <div className="flex items-center gap-2 bg-[#050505] p-2.5 rounded border border-white/5">
-                <span className="text-[10px] text-neutral-500 font-bold uppercase">Direção</span>
-                <span className={`text-sm font-extrabold flex items-center gap-1 ${
+
+                <span className="text-neutral-600">|</span>
+
+                <span className="text-neutral-400 font-bold text-[10px] uppercase">Direção IA:</span>
+                <span className={`font-black flex items-center gap-1 ${
                   aiReview.recommendedDirection === 'LONG' ? 'text-emerald-400' : 'text-rose-400'
                 }`}>
-                  {aiReview.recommendedDirection === 'LONG' ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                  {aiReview.recommendedDirection === 'LONG' ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
                   {aiReview.recommendedDirection}
                 </span>
+
+                <span className="text-neutral-600">|</span>
+
+                <span className="text-neutral-400 font-bold text-[10px] uppercase">Confiança:</span>
+                <span className="font-extrabold text-orange-400">{aiReview.confidenceScore}%</span>
               </div>
-              <div className="flex items-center gap-2 bg-[#050505] p-2.5 rounded border border-white/5">
-                <span className="text-[10px] text-neutral-500 font-bold uppercase">Confiança</span>
-                <span className="text-sm font-extrabold text-orange-400">{aiReview.confidenceScore}%</span>
-              </div>
+
+              {aiReview.modelUsed && (
+                <span className="text-[10px] font-mono text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded border border-white/5">
+                  Modelo: {aiReview.modelUsed}
+                </span>
+              )}
             </div>
-            
-            <div className="bg-[#050505] p-3 rounded border border-white/5 text-xs text-neutral-300 leading-relaxed">
-              <strong className="text-orange-400 block mb-1">Raciocínio da IA:</strong>
+
+            <p className="text-xs text-neutral-300 leading-relaxed font-sans">
+              <strong className="text-orange-400 font-bold">Tese de Investimento & Auditoria: </strong>
               {aiReview.reasoning}
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div className="bg-[#050505] p-2 rounded border border-white/5">
-                <span className="text-[10px] text-neutral-500 uppercase block font-bold mb-0.5">Zona de Entrada</span>
-                <span className="font-bold text-neutral-200">
-                  ${(aiReview.entryZone?.[0] ?? 0).toFixed(4)} - ${(aiReview.entryZone?.[1] ?? 0).toFixed(4)}
-                </span>
-              </div>
-              <div className="bg-[#050505] p-2 rounded border border-rose-500/20">
-                <span className="text-[10px] text-rose-500 uppercase block font-bold mb-0.5">Stop Loss</span>
-                <span className="font-bold text-rose-400">${(aiReview.stopLoss ?? 0).toFixed(4)}</span>
-              </div>
-              <div className="bg-[#050505] p-2 rounded border border-emerald-500/20">
-                <span className="text-[10px] text-emerald-500 uppercase block font-bold mb-0.5">Alvo Scalp/DT</span>
-                <span className="font-bold text-emerald-400">${(aiReview.takeProfit1 ?? 0).toFixed(4)}</span>
-              </div>
-              <div className="bg-[#050505] p-2 rounded border border-emerald-500/20">
-                <span className="text-[10px] text-emerald-500 uppercase block font-bold mb-0.5">Alvo Swing</span>
-                <span className="font-bold text-emerald-400">${(aiReview.takeProfit2 ?? 0).toFixed(4)}</span>
-              </div>
-            </div>
+            </p>
           </div>
         )}
 
-        {/* Active Signal Info */}
-        {!aiReview && activeSignal && (
-          <div className="mt-4 pt-4 border-t border-white/10 animate-fade-in space-y-3">
-             <div className="flex items-center justify-between mb-1">
-               <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs uppercase">
-                  <Zap className="h-4 w-4" />
-                  Sinal Ativo Encontrado para {ticker.symbol}
-               </div>
-               {activeSignal.backtestWinRate && (
-                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${activeSignal.backtestWinRate >= 60 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'}`}>
-                   Backtest WR: {activeSignal.backtestWinRate.toFixed(1)}% | PF: {activeSignal.backtestProfitFactor?.toFixed(2)}
-                 </span>
-               )}
-             </div>
-             
-             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div className="bg-[#050505] p-2 rounded border border-emerald-500/20">
-                <span className="text-[10px] text-emerald-500 uppercase block font-bold mb-0.5">Direção</span>
-                <span className="font-extrabold text-emerald-400">{activeSignal.direction} ({activeSignal.signalType})</span>
+        {/* COMPARATIVE / DETAILED SIGNALS GRID */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* BOT QUANT SIGNAL CARD */}
+          <div className={`p-4 rounded-xl border font-mono transition-all space-y-3 ${
+            activeSignal ? 'bg-[#050505] border-emerald-500/30 shadow-lg' : 'bg-[#050505]/60 border-white/5 opacity-70'
+          }`}>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Zap className="h-4 w-4 text-emerald-400" />
+                <span className="text-xs font-black text-white uppercase tracking-wider">Sinal Algorítmico (Quant Bot)</span>
               </div>
-              <div className="bg-[#050505] p-2 rounded border border-white/5">
-                <span className="text-[10px] text-neutral-500 uppercase block font-bold mb-0.5">Zona Entrada</span>
-                <span className="font-bold text-orange-400">
-                  ${(activeSignal.entryZone?.[0] ?? 0).toFixed(4)} - ${(activeSignal.entryZone?.[1] ?? 0).toFixed(4)}
+              {activeSignal ? (
+                <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded uppercase">
+                  {activeSignal.direction} ({activeSignal.signalType})
                 </span>
-              </div>
-              <div className="bg-[#050505] p-2 rounded border border-rose-500/20">
-                <span className="text-[10px] text-rose-500 uppercase block font-bold mb-0.5">Stop Loss</span>
-                <span className="font-bold text-rose-400">${(activeSignal.stopLoss ?? 0).toFixed(4)}</span>
-              </div>
-              <div className="bg-[#050505] p-2 rounded border border-emerald-500/20">
-                <span className="text-[10px] text-emerald-500 uppercase block font-bold mb-0.5">Alvo 1 (DT)</span>
-                <span className="font-bold text-emerald-400">${(activeSignal.target1 ?? 0).toFixed(4)}</span>
-              </div>
+              ) : (
+                <span className="text-[10px] font-bold text-neutral-500 bg-neutral-900 px-2 py-0.5 rounded border border-white/5">
+                  Sem sinal ativo
+                </span>
+              )}
             </div>
 
-            <div className="bg-[#050505] p-3 rounded border border-white/5">
-               <span className="text-[10px] text-neutral-500 uppercase block font-bold mb-1.5">Fatores de Confluência Detalhados ({activeSignal.confluenceScore}%)</span>
-               <div className="flex flex-wrap gap-1.5">
-                  {(activeSignal.confluenceFactors || []).map((f, idx) => (
-                    <span key={idx} className="text-[9px] font-bold bg-neutral-900 text-neutral-300 px-2 py-1 rounded border border-white/10">
-                      ✓ {f}
+            {activeSignal && botMetrics ? (
+              <div className="space-y-3">
+                {/* Metric Items */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-white/5">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase block mb-0.5">Zona de Entrada</span>
+                    <span className="font-extrabold text-orange-400 text-xs">
+                      {formatPriceRange(activeSignal.entryZone?.[0], activeSignal.entryZone?.[1])}
                     </span>
-                  ))}
-               </div>
-            </div>
+                  </div>
+
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-rose-500/20">
+                    <span className="text-[10px] text-rose-400 font-bold uppercase block mb-0.5">Stop Loss (% Risco)</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-rose-400">{formatPrice(activeSignal.stopLoss, { currency: true })}</span>
+                      <span className="text-[10px] font-black text-rose-400 bg-rose-500/20 px-1.5 py-0.5 rounded border border-rose-500/30">
+                        -{botMetrics.riskPct.toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-emerald-500/20">
+                    <span className="text-[10px] text-emerald-400 font-bold uppercase block mb-0.5">Alvo 1 (Scalp / DayTrade)</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-emerald-400">{formatPrice(activeSignal.target1, { currency: true })}</span>
+                      <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                        +{botMetrics.target1GainPct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="text-[9px] font-bold text-neutral-400 mt-1 flex items-center justify-between border-t border-white/5 pt-1">
+                      <span>Risco : Retorno:</span>
+                      <span className="text-orange-400 font-extrabold">1 : {botMetrics.rrRatio1.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-emerald-500/20">
+                    <span className="text-[10px] text-emerald-400 font-bold uppercase block mb-0.5">Alvo 2 (Swing)</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-emerald-400">{formatPrice(activeSignal.target2, { currency: true })}</span>
+                      <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                        +{botMetrics.target2GainPct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="text-[9px] font-bold text-neutral-400 mt-1 flex items-center justify-between border-t border-white/5 pt-1">
+                      <span>Risco : Retorno:</span>
+                      <span className="text-orange-400 font-extrabold">1 : {botMetrics.rrRatio2.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score & Confluence */}
+                <div className="bg-neutral-900/80 p-2.5 rounded border border-white/5 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-neutral-400 font-bold uppercase">Confluência Quant:</span>
+                    <span className="font-extrabold text-orange-400">{activeSignal.confluenceScore}%</span>
+                  </div>
+                  {activeSignal.backtestWinRate && (
+                    <div className="flex items-center justify-between text-[10px] border-t border-white/5 pt-1">
+                      <span className="text-neutral-400 font-bold uppercase">Backtest Histórico:</span>
+                      <span className="font-bold text-emerald-400">
+                        WR {activeSignal.backtestWinRate.toFixed(1)}% | PF {activeSignal.backtestProfitFactor?.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {(activeSignal.confluenceFactors || []).map((f, idx) => (
+                      <span key={idx} className="text-[9px] font-bold bg-black text-neutral-300 px-1.5 py-0.5 rounded border border-white/10">
+                        ✓ {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-neutral-500 font-sans space-y-2">
+                <p>Nenhum sinal ativo gerado pelo bot quant para {ticker?.symbol} no momento.</p>
+                <p className="text-[11px] text-neutral-400">Clique no botão "Executar Auditoria IA" acima para solicitar um sinal autônomo ao agente.</p>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* AI REVIEW PROPOSAL CARD */}
+          <div className={`p-4 rounded-xl border font-mono transition-all space-y-3 ${
+            aiReview ? 'bg-[#050505] border-orange-500/40 shadow-lg' : 'bg-[#050505]/60 border-white/5 opacity-70'
+          }`}>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Brain className="h-4 w-4 text-orange-400" />
+                <span className="text-xs font-black text-white uppercase tracking-wider">Auditoria do Agente de IA</span>
+              </div>
+              {aiReview ? (
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase border flex items-center gap-1 ${
+                  aiReview.recommendedDirection === 'LONG' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                }`}>
+                  {aiReview.recommendedDirection} ({aiReview.confidenceScore}% Conf)
+                </span>
+              ) : (
+                <span className="text-[10px] font-bold text-neutral-500 bg-neutral-900 px-2 py-0.5 rounded border border-white/5">
+                  Aguardando execução
+                </span>
+              )}
+            </div>
+
+            {aiReview && aiMetrics ? (
+              <div className="space-y-3">
+                {/* Metric Items */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-white/5">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase block mb-0.5">Zona Entrada Recomendada</span>
+                    <span className="font-extrabold text-orange-400 text-xs">
+                      {formatPriceRange(aiReview.entryZone?.[0], aiReview.entryZone?.[1])}
+                    </span>
+                  </div>
+
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-rose-500/20">
+                    <span className="text-[10px] text-rose-400 font-bold uppercase block mb-0.5">Stop Loss Auditoria (% Risco)</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-rose-400">{formatPrice(aiReview.stopLoss, { currency: true })}</span>
+                      <span className="text-[10px] font-black text-rose-400 bg-rose-500/20 px-1.5 py-0.5 rounded border border-rose-500/30">
+                        -{aiMetrics.riskPct.toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-emerald-500/20">
+                    <span className="text-[10px] text-emerald-400 font-bold uppercase block mb-0.5">Alvo 1 (Scalp IA)</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-emerald-400">{formatPrice(aiReview.takeProfit1, { currency: true })}</span>
+                      <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                        +{aiMetrics.target1GainPct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="text-[9px] font-bold text-neutral-400 mt-1 flex items-center justify-between border-t border-white/5 pt-1">
+                      <span>Risco : Retorno IA:</span>
+                      <span className="text-orange-400 font-extrabold">1 : {aiMetrics.rrRatio1.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-neutral-900/80 p-2.5 rounded border border-emerald-500/20">
+                    <span className="text-[10px] text-emerald-400 font-bold uppercase block mb-0.5">Alvo 2 (Swing IA)</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-emerald-400">{formatPrice(aiReview.takeProfit2, { currency: true })}</span>
+                      <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                        +{aiMetrics.target2GainPct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="text-[9px] font-bold text-neutral-400 mt-1 flex items-center justify-between border-t border-white/5 pt-1">
+                      <span>Risco : Retorno IA:</span>
+                      <span className="text-orange-400 font-extrabold">1 : {aiMetrics.rrRatio2.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* AI Review Delta comparison */}
+                <div className="bg-neutral-900/80 p-2.5 rounded border border-white/5 text-xs space-y-1 font-sans">
+                  <span className="text-[10px] text-orange-400 font-bold uppercase block mb-0.5">Resumo Comparativo de Risco:</span>
+                  <p className="text-[11px] text-neutral-300">
+                    Relação Risco:Retorno Média da IA: <strong className="text-orange-400">1:{aiMetrics.rrRatio1.toFixed(2)}</strong> (Scalp) / <strong className="text-orange-400">1:{aiMetrics.rrRatio2.toFixed(2)}</strong> (Swing).
+                    {botMetrics && (
+                      <span>
+                        {' '}Comparado ao Bot Quant ({botMetrics.riskPct.toFixed(2)}% Risco / R:R 1:{botMetrics.rrRatio1.toFixed(2)}),
+                        a IA sugere {aiMetrics.riskPct < botMetrics.riskPct ? `um Stop Loss mais protegido (-${(botMetrics.riskPct - aiMetrics.riskPct).toFixed(2)}% menor risco).` : 'um ajuste proporcional de margem.'}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-neutral-500 font-sans space-y-2">
+                <p>Nenhuma auditoria executada ainda para {ticker?.symbol}.</p>
+                <p className="text-[11px] text-neutral-400">Clique em "Executar Auditoria IA" para auditar o gráfico com LLMs quantitativos.</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Main Chart Grid & Order Flow Metrics */}
@@ -251,10 +420,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xl font-black text-white">
-                ${price >= 1000 ? price.toLocaleString('en-US', { minimumFractionDigits: 1 }) : price.toFixed(price < 1 ? 4 : 2)}
+                {formatPrice(price, { currency: true })}
               </div>
               <span className={`text-xs font-bold ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {changePct >= 0 ? '▲ +' : '▼ '}{changePct.toFixed(2)}% (24h)
+                {changePct >= 0 ? '▲ ' : '▼ '}{formatPercent(changePct)} (24h)
               </span>
             </div>
             {/* Golden Pocket Banner */}
@@ -289,13 +458,13 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   />
                   {/* Fibonacci Retracement Levels */}
                   {fib.fib618 > 0 && (
-                    <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 ($${fib.fib618.toFixed(2)})`, fill: '#f97316', fontSize: 9 }} />
+                    <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
                   )}
                   {fib.fib68 > 0 && (
-                    <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 ($${fib.fib68.toFixed(2)})`, fill: '#ea580c', fontSize: 9 }} />
+                    <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 (${formatPrice(fib.fib68, { currency: true })})`, fill: '#ea580c', fontSize: 9 }} />
                   )}
                   {range.poc > 0 && (
-                    <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range ($${range.poc.toFixed(2)})`, fill: '#06b6d4', fontSize: 9 }} />
+                    <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
                   )}
                   {/* Active Signal / AI Review targets */}
                   {(aiReview?.takeProfit1 || activeSignal?.target1) && (
@@ -334,15 +503,15 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between p-2 rounded bg-[#050505] border border-white/5">
                 <span className="text-neutral-400">VAH (Value Area High):</span>
-                <span className="font-extrabold text-neutral-200">${(range.vah ?? 0).toFixed(2)}</span>
+                <span className="font-extrabold text-neutral-200">{formatPrice(range.vah, { currency: true })}</span>
               </div>
               <div className="flex justify-between p-2 rounded bg-orange-500/10 border border-orange-500/30">
                 <span className="text-orange-400 font-bold">POC (Point of Control):</span>
-                <span className="font-extrabold text-orange-400">${(range.poc ?? 0).toFixed(2)}</span>
+                <span className="font-extrabold text-orange-400">{formatPrice(range.poc, { currency: true })}</span>
               </div>
               <div className="flex justify-between p-2 rounded bg-[#050505] border border-white/5">
                 <span className="text-neutral-400">VAL (Value Area Low):</span>
-                <span className="font-extrabold text-neutral-200">${(range.val ?? 0).toFixed(2)}</span>
+                <span className="font-extrabold text-neutral-200">{formatPrice(range.val, { currency: true })}</span>
               </div>
             </div>
           </div>

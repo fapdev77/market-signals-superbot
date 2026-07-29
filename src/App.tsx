@@ -11,7 +11,7 @@ import { AIModelsConfigDashboard } from './components/AIModelsConfigDashboard';
 import { BacktestDashboard } from './components/BacktestDashboard';
 import { defaultModels } from './config/defaultModels';
 import { useBinanceWebSocket } from './hooks/useBinanceWebSocket';
-import { TickerData, TradeSignal, BotState, IndicatorWeights } from './types';
+import { TickerData, TradeSignal, BotState, IndicatorWeights, AIModelConfig } from './types';
 import { Zap, Flame, ShieldCheck, RefreshCw, Activity, ArrowUpRight, Database } from 'lucide-react';
 
 export default function App() {
@@ -139,6 +139,25 @@ export default function App() {
     }
   };
 
+  const handleSaveAIModels = async (newModels: AIModelConfig[]) => {
+    try {
+      setBotState(prev => ({ ...prev, aiModels: newModels }));
+      const res = await fetch('/api/settings/ai-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newModels)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models) {
+          setBotState(prev => ({ ...prev, aiModels: data.models }));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to save AI models:', err);
+    }
+  };
+
   const handleSelectTickerBySymbol = (symbol: string) => {
     const found = tickers.find(t => t.symbol === symbol);
     if (found) {
@@ -244,13 +263,14 @@ export default function App() {
           <BacktestDashboard
             tickers={tickers}
             weights={botState.weights}
+            onApplyWeights={handleSaveWeights}
           />
         )}
 
         {activeTab === 'ai_models_config' && (
           <AIModelsConfigDashboard
             models={botState.aiModels}
-            onUpdateModels={(newModels) => setBotState({ ...botState, aiModels: newModels })}
+            onUpdateModels={handleSaveAIModels}
           />
         )}
 

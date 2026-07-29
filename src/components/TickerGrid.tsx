@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
 import { TickerData } from '../types';
-import { TrendingUp, TrendingDown, Zap, Brain, Activity, Flame } from 'lucide-react';
+import { TrendingUp, TrendingDown, Zap, Activity, Flame, Brain, ArrowUpRight } from 'lucide-react';
+import { formatPrice, formatPercent } from '../utils/formatters';
 
 interface TickerGridProps {
   tickers: TickerData[];
   onSelectTicker: (ticker: TickerData) => void;
-  onRequestAIReview: (ticker: TickerData) => void;
+  onRequestAIReview?: (ticker: TickerData) => void;
 }
 
 export const TickerGrid: React.FC<TickerGridProps> = ({
   tickers = [],
   onSelectTicker,
-  onRequestAIReview
 }) => {
   const [filterMarket, setFilterMarket] = useState<'all' | 'crypto_futures' | 'tradfi'>('all');
   const [filterSignal, setFilterSignal] = useState<'all' | 'signals_only' | 'golden_pocket'>('all');
@@ -116,16 +116,17 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           return (
             <div
               key={t.symbol}
-              className={`bg-[#0A0A0A] rounded-lg border ${
-                t.confluenceScore >= 65 ? 'border-orange-500/40' : 'border-white/10'
-              } p-3 hover:border-neutral-700 transition duration-150 flex flex-col justify-between shadow-md relative overflow-hidden group font-mono`}
+              onClick={() => onSelectTicker(t)}
+              className={`bg-[#0A0A0A] rounded-xl border ${
+                t.confluenceScore >= 65 ? 'border-orange-500/40 hover:border-orange-500' : 'border-white/10 hover:border-orange-500/60'
+              } p-3.5 transition-all duration-200 hover:-translate-y-0.5 flex flex-col justify-between shadow-md hover:shadow-orange-500/10 cursor-pointer relative overflow-hidden group font-mono`}
             >
               <div>
                 {/* Header Row */}
                 <div className="flex items-start justify-between mb-1.5">
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <h3 className="font-extrabold text-sm text-white group-hover:text-orange-400 transition">
+                      <h3 className="font-extrabold text-sm text-white group-hover:text-orange-400 transition flex items-center gap-1">
                         {t.symbol}
                       </h3>
                       <span className="text-[9px] uppercase font-bold text-neutral-400 bg-neutral-900 border border-white/5 px-1 py-0.5 rounded">
@@ -154,10 +155,10 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                 {/* Price & Change */}
                 <div className="flex items-baseline justify-between my-2">
                   <div className="text-lg font-black text-white">
-                    ${price >= 1000 ? price.toLocaleString('en-US', { minimumFractionDigits: 1 }) : price.toFixed(price < 1 ? 4 : 2)}
+                    {formatPrice(price, { currency: true })}
                   </div>
                   <div className={`text-xs font-bold ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                    {formatPercent(changePct)}
                   </div>
                 </div>
 
@@ -222,23 +223,14 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-1.5 pt-2 border-t border-white/10">
-                <button
-                  onClick={() => onSelectTicker(t)}
-                  className="w-full py-1 px-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 rounded text-[11px] font-bold transition border border-white/5 flex items-center justify-center gap-1"
-                >
-                  <Activity className="h-3 w-3 text-orange-400" />
-                  Gráfico
-                </button>
-
-                <button
-                  onClick={() => onRequestAIReview(t)}
-                  className="w-full py-1 px-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded text-[11px] font-bold transition flex items-center justify-center gap-1"
-                >
-                  <Brain className="h-3 w-3 text-orange-400" />
-                  Revisar IA
-                </button>
+              {/* Card Footer Link */}
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-neutral-400 group-hover:text-orange-400 transition font-mono">
+                <span className="flex items-center gap-1.5 font-bold">
+                  <Activity className="h-3.5 w-3.5 text-orange-400" />
+                  <Brain className="h-3.5 w-3.5 text-orange-400" />
+                  <span>Gráfico & Análise IA</span>
+                </span>
+                <ArrowUpRight className="h-4 w-4 text-orange-400 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </div>
             </div>
           );

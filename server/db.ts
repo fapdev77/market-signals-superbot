@@ -1,7 +1,7 @@
 import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import { TradeSignal, IndicatorWeights, AIAuditReport } from '../src/types.js';
+import { TradeSignal, IndicatorWeights, AIAuditReport, AIModelConfig } from '../src/types.js';
 
 let db: Database | null = null;
 const dbFilePath = path.join(process.cwd(), 'data', 'superbot.sqlite');
@@ -78,6 +78,12 @@ export async function getDb(): Promise<Database> {
     CREATE TABLE IF NOT EXISTS strategy_settings (
       id INTEGER PRIMARY KEY DEFAULT 1,
       weights TEXT,
+      updated_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_models_settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      models TEXT,
       updated_at INTEGER
     );
   `);
@@ -292,3 +298,85 @@ export async function getIndicatorWeights(): Promise<IndicatorWeights> {
   }
   return parsed;
 }
+
+export const defaultAIModels: AIModelConfig[] = [
+  {
+    id: 'm1',
+    name: 'Gemini 1.5 Flash (Principal)',
+    provider: 'gemini',
+    modelId: 'gemini-1.5-flash-latest',
+    isActive: true,
+    isFallback: false,
+    priority: 1,
+    rateLimit: { maxReqPerMinute: 60, maxReqPerDay: 10000 },
+    parameters: {
+      temperature: 0.2,
+      maxTokens: 8192,
+      topP: 0.95,
+      systemInstruction: 'Act as an elite quantitative crypto & TradFi hedge fund trader. Require strong confluence in CVD and Fibonacci Golden Pocket 0.618.'
+    }
+  },
+  {
+    id: 'm2',
+    name: 'Gemini 1.5 Pro (Contingência / Análise Profunda)',
+    provider: 'gemini',
+    modelId: 'gemini-1.5-pro-latest',
+    isActive: true,
+    isFallback: true,
+    priority: 2,
+    rateLimit: { maxReqPerMinute: 15, maxReqPerDay: 1000 },
+    parameters: {
+      temperature: 0.1,
+      maxTokens: 8192,
+      topP: 0.95,
+      systemInstruction: 'Act as a senior risk manager at a quantitative trading firm. Rigorously evaluate liquidity traps and order flow imbalances.'
+    }
+  },
+  {
+    id: 'm3',
+    name: 'Claude 3.5 Sonnet (OpenRouter)',
+    provider: 'openrouter',
+    modelId: 'anthropic/claude-3.5-sonnet',
+    isActive: false,
+    isFallback: false,
+    priority: 3,
+    rateLimit: { maxReqPerMinute: 100, maxReqPerDay: 5000 },
+    parameters: { temperature: 0.2, maxTokens: 4096 }
+  },
+  {
+    id: 'm4',
+    name: 'Llama 3 70B (Local / LM Studio)',
+    provider: 'local',
+    modelId: 'llama-3-70b-instruct',
+    apiUrl: 'http://localhost:1234/v1',
+    isActive: false,
+    isFallback: true,
+    priority: 4,
+    rateLimit: { maxReqPerMinute: 300, maxReqPerDay: 50000 },
+    parameters: { temperature: 0.1, maxTokens: 4096 }
+  }
+];
+
+export async function saveAIModels(models: AIModelConfig[]) {
+  const database = await getDb();
+  database.run(
+    `INSERT OR REPLACE INTO ai_models_settings (id, models, updated_at) VALUES (1, ?, ?)`,
+    [JSON.stringify(models), Date.now()]
+  );
+  saveDbToDisk();
+}
+
+export async function getAIModels(): Promise<AIModelConfig[]> {
+  const database = await getDb();
+  const res = database.exec(`SELECT models FROM ai_models_settings WHERE id = 1`);
+  if (!res.length || !res[0].values.length) {
+    return defaultAIModels;
+  }
+  try {
+    const parsed = JSON.parse(res[0].values[0][0] as string);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultAIModels;
+  } catch (err) {
+    return defaultAIModels;
+  }
+}
+

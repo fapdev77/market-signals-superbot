@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { TradeSignal, TickerData, AIReviewResponse } from '../types';
+import { formatPrice, formatPriceRange, calculateTradeMetrics } from '../utils/formatters';
 import { Zap, TrendingUp, TrendingDown, Brain, RefreshCw, ShieldCheck, Clock, AlertTriangle, CheckCircle2, Activity } from 'lucide-react';
 
 interface SignalsMatrixProps {
@@ -158,7 +159,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             <div className="bg-[#050505] p-2.5 rounded border border-white/5">
               <span className="text-[9px] text-neutral-500 uppercase block font-bold">Entrada Recomendada</span>
               <span className="text-xs font-bold text-orange-400">
-                ${(selectedAIReview.entryZone?.[0] ?? 0).toFixed(2)} - ${(selectedAIReview.entryZone?.[1] ?? 0).toFixed(2)}
+                {formatPriceRange(selectedAIReview.entryZone?.[0], selectedAIReview.entryZone?.[1])}
               </span>
             </div>
 
@@ -175,11 +176,45 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             {selectedAIReview.reasoning}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-300 pt-2 border-t border-white/10">
-            <span>Stop Loss: <strong className="text-rose-400">${(selectedAIReview.stopLoss ?? 0).toFixed(2)}</strong></span>
-            <span>Alvo 1: <strong className="text-emerald-400">${(selectedAIReview.takeProfit1 ?? 0).toFixed(2)}</strong></span>
-            <span>Alvo 2: <strong className="text-emerald-400">${(selectedAIReview.takeProfit2 ?? 0).toFixed(2)}</strong></span>
-          </div>
+          {(() => {
+            const aiMetrics = calculateTradeMetrics({
+              entry: selectedAIReview.entryZone,
+              stopLoss: selectedAIReview.stopLoss,
+              target1: selectedAIReview.takeProfit1,
+              target2: selectedAIReview.takeProfit2,
+              direction: selectedAIReview.recommendedDirection,
+              currentPrice: 0
+            });
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-neutral-300 pt-2 border-t border-white/10 bg-[#050505] p-2.5 rounded border border-white/5">
+                <div>
+                  <span className="text-[9px] text-neutral-500 uppercase block font-bold">Stop Loss (% Risco)</span>
+                  <div className="flex items-center gap-1">
+                    <strong className="text-rose-400">{formatPrice(selectedAIReview.stopLoss, { currency: true })}</strong>
+                    <span className="text-[9px] text-rose-400 font-bold bg-rose-500/10 px-1 rounded">-{aiMetrics.riskPct.toFixed(2)}%</span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[9px] text-neutral-500 uppercase block font-bold">Alvo 1 (% Gain)</span>
+                  <div className="flex items-center gap-1">
+                    <strong className="text-emerald-400">{formatPrice(selectedAIReview.takeProfit1, { currency: true })}</strong>
+                    <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1 rounded">+{aiMetrics.target1GainPct.toFixed(2)}%</span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[9px] text-neutral-500 uppercase block font-bold">Alvo 2 (% Gain)</span>
+                  <div className="flex items-center gap-1">
+                    <strong className="text-emerald-400">{formatPrice(selectedAIReview.takeProfit2, { currency: true })}</strong>
+                    <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1 rounded">+{aiMetrics.target2GainPct.toFixed(2)}%</span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[9px] text-neutral-500 uppercase block font-bold">Ratio Risco : Retorno</span>
+                  <strong className="text-orange-400 text-[11px]">1 : {aiMetrics.rrRatio1.toFixed(2)} (DT) / 1 : {aiMetrics.rrRatio2.toFixed(2)} (Swing)</strong>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -279,29 +314,51 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                   </div>
 
                   {/* Middle Order Parameters */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full lg:w-1/2 bg-[#050505] p-2 rounded border border-white/5 text-[10px]">
-                    <div>
-                      <span className="text-[9px] text-neutral-500 uppercase block font-bold">Preço Atual</span>
-                      <span className="font-extrabold text-white">${curPrice.toFixed(curPrice < 1 ? 4 : 2)}</span>
-                    </div>
+                  {(() => {
+                    const metrics = calculateTradeMetrics({
+                      entry: s.entryZone,
+                      stopLoss: s.stopLoss,
+                      target1: s.target1,
+                      target2: s.target2,
+                      direction: s.direction,
+                      currentPrice: curPrice
+                    });
+                    return (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full lg:w-1/2 bg-[#050505] p-2.5 rounded border border-white/5 text-[10px]">
+                        <div>
+                          <span className="text-[9px] text-neutral-500 uppercase block font-bold">Preço Atual / Zona</span>
+                          <span className="font-extrabold text-white block">{formatPrice(curPrice, { currency: true })}</span>
+                          <span className="text-[9px] font-bold text-orange-400">
+                            {formatPriceRange(entry0, entry1)}
+                          </span>
+                        </div>
 
-                    <div>
-                      <span className="text-[9px] text-neutral-500 uppercase block font-bold">Zona de Entrada</span>
-                      <span className="font-bold text-orange-400">
-                        ${entry0.toFixed(entry0 < 1 ? 4 : 2)} - ${entry1.toFixed(entry1 < 1 ? 4 : 2)}
-                      </span>
-                    </div>
+                        <div>
+                          <span className="text-[9px] text-rose-400 uppercase block font-bold">Stop Loss (% Risco)</span>
+                          <span className="font-extrabold text-rose-400 block">{formatPrice(stop, { currency: true })}</span>
+                          <span className="text-[9px] font-bold text-rose-400 bg-rose-500/10 px-1 rounded border border-rose-500/20 inline-block mt-0.5">
+                            -{metrics.riskPct.toFixed(2)}%
+                          </span>
+                        </div>
 
-                    <div>
-                      <span className="text-[9px] text-rose-400 uppercase block font-bold">Stop Loss</span>
-                      <span className="font-extrabold text-rose-400">${stop.toFixed(stop < 1 ? 4 : 2)}</span>
-                    </div>
+                        <div>
+                          <span className="text-[9px] text-emerald-400 uppercase block font-bold">Alvo 1 (R:R 1:{metrics.rrRatio1.toFixed(1)})</span>
+                          <span className="font-extrabold text-emerald-400 block">{formatPrice(target, { currency: true })}</span>
+                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1 rounded border border-emerald-500/20 inline-block mt-0.5">
+                            +{metrics.target1GainPct.toFixed(2)}%
+                          </span>
+                        </div>
 
-                    <div>
-                      <span className="text-[9px] text-emerald-400 uppercase block font-bold">Alvo 1 (1:{s.riskRewardRatio || '2.0'})</span>
-                      <span className="font-extrabold text-emerald-400">${target.toFixed(target < 1 ? 4 : 2)}</span>
-                    </div>
-                  </div>
+                        <div>
+                          <span className="text-[9px] text-emerald-400 uppercase block font-bold">Alvo 2 (R:R 1:{metrics.rrRatio2.toFixed(1)})</span>
+                          <span className="font-extrabold text-emerald-400 block">{formatPrice(s.target2, { currency: true })}</span>
+                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1 rounded border border-emerald-500/20 inline-block mt-0.5">
+                            +{metrics.target2GainPct.toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Right Action Button */}
                   <div className="w-full lg:w-auto flex items-center justify-end">

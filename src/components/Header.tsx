@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight } from 'lucide-react';
 import { BotState, TickerData } from '../types';
+import { formatPrice, formatPercent } from '../utils/formatters';
 
 interface HeaderProps {
   botState: BotState;
@@ -73,9 +74,9 @@ export const Header: React.FC<HeaderProps> = ({
             {topTickers.map(t => (
               <div key={t.symbol} className="flex items-center gap-1.5">
                 <span className="font-bold text-neutral-200">{t.symbol}</span>
-                <span className="text-neutral-300">${(t.price ?? 0) >= 1000 ? (t.price ?? 0).toLocaleString('en-US', { minimumFractionDigits: 1 }) : (t.price ?? 0).toFixed((t.price ?? 0) < 1 ? 4 : 2)}</span>
+                <span className="text-neutral-300">{formatPrice(t.price, { currency: true })}</span>
                 <span className={`text-[10px] font-bold ${(t.priceChangePercent24h ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {(t.priceChangePercent24h ?? 0) >= 0 ? '+' : ''}{(t.priceChangePercent24h ?? 0).toFixed(2)}%
+                  {formatPercent(t.priceChangePercent24h)}
                 </span>
               </div>
             ))}

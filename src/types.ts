@@ -1,4 +1,5 @@
 export type MarketType = 'crypto_futures' | 'crypto_spot' | 'tradfi';
+export type TradingProfile = 'scalp' | 'daytrade' | 'intraday' | 'swing';
 
 export interface TickerData {
   symbol: string;
@@ -114,8 +115,8 @@ export interface IndicatorWeights {
   fibonacciZoneWeight: number;      // default 15
   rangePocWeight: number;           // default 10
   supportResistanceWeight: number; // default 10
-  minRiskRewardRatio: number;       // default 3.0
-  volumeProfileRange: number;       // default 20 (candles for volume profile calculation)
+  minRiskRewardRatio: number;       // default 2.5
+  volumeProfileRange: number;       // default 20
 }
 
 export interface AIReviewResponse {
@@ -173,5 +174,74 @@ export interface AIModelConfig {
     maxTokens: number;
     topP?: number;
     topK?: number;
+    systemInstruction?: string;
   };
 }
+
+export interface BacktestConfig {
+  symbol: string;
+  days: number;
+  profile: TradingProfile;
+  weights: IndicatorWeights;
+}
+
+export interface EquityPoint {
+  time: number;
+  balance: number;
+  drawdown: number;
+}
+
+export interface BacktestDiagnostic {
+  strengths: string[];
+  weaknesses: string[];
+  weightAnalysis: string[];
+  suggestions: string[];
+}
+
+export interface BacktestResult {
+  id: string;
+  symbol: string;
+  profile: TradingProfile;
+  strategyId: string;
+  startTime: number;
+  endTime: number;
+  totalCandlesTested: number;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRate: number;
+  profitFactor: number;
+  maxDrawdown: number;
+  netProfit: number;
+  avgWinPct: number;
+  avgLossPct: number;
+  avgRiskReward: number;
+  avgDurationMinutes: number;
+  equityCurve: EquityPoint[];
+  diagnostic: BacktestDiagnostic;
+  config: BacktestConfig;
+  createdAt: number;
+}
+
+export interface AutoTuneIteration {
+  iteration: number;
+  winRate: number;
+  profitFactor: number;
+  netProfit: number;
+  maxDrawdown: number;
+  fitnessScore: number;
+  weights: IndicatorWeights;
+}
+
+export interface AutoTuneResult {
+  symbol: string;
+  profile: TradingProfile;
+  iterations: number;
+  bestWeights: IndicatorWeights;
+  initialResult: BacktestResult;
+  bestResult: BacktestResult;
+  fitnessHistory: AutoTuneIteration[];
+  tuningSummary: string;
+  createdAt: number;
+}
+
