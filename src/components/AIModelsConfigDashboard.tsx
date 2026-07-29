@@ -207,7 +207,12 @@ export const AIModelsConfigDashboard: React.FC<{
       const res = await fetch('/api/ai/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId: model.modelId, provider: model.provider })
+        body: JSON.stringify({
+          modelId: model.modelId,
+          provider: model.provider,
+          apiUrl: model.apiUrl,
+          apiKey: model.apiKey
+        })
       });
       const data = await res.json();
       setTestResult({
@@ -878,9 +883,14 @@ export const AIModelsConfigDashboard: React.FC<{
                       type="text" 
                       value={editingModel.apiUrl || ''}
                       onChange={e => setEditingModel({...editingModel, apiUrl: e.target.value})}
-                      placeholder="http://localhost:1234/v1"
+                      placeholder="Ex: http://localhost:11434 ou https://xxxx.ngrok-free.app"
                       className="w-full bg-[#050505] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-orange-500 font-mono"
                     />
+                    {editingModel.provider === 'local' && (
+                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-[10px] text-amber-300 leading-normal">
+                        <strong>Dica Ollama na Nuvem:</strong> Se o app estiver rodando na nuvem, <code className="bg-black/40 px-1 py-0.5 rounded">localhost</code> aponta para o servidor e não para seu PC. Para conectar o Ollama do seu computador, rode <code className="bg-black/40 px-1 py-0.5 rounded">ngrok http 11434</code> e insira a URL pública gerada aqui.
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4 pt-2">

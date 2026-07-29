@@ -275,15 +275,16 @@ async function startServer() {
       status: 'ACTIVE'
     };
 
-    const review = await reviewSignalWithAI(ticker, potentialSignal, model || 'gemini-3.6-flash', botState.aiAnalysisEnabled);
+    const review = await reviewSignalWithAI(ticker, potentialSignal, model, botState.aiAnalysisEnabled, botState.aiModels);
     res.json(review);
   });
 
   // Trigger Deep Strategic Market Audit
   app.post('/api/ai/audit', async (req, res) => {
+    const { model } = req.body || {};
     const tickers = Object.values(tickerStateCache);
     const signals = await getRecentSignals(10);
-    const audit = await auditMarketWithAI(tickers, signals, botState.weights, botState.aiAnalysisEnabled);
+    const audit = await auditMarketWithAI(tickers, signals, botState.weights, botState.aiAnalysisEnabled, model, botState.aiModels);
     await saveAIAudit(audit);
     res.json(audit);
   });
@@ -296,16 +297,16 @@ async function startServer() {
       topOpportunities: [],
       riskWarnings: [],
       suggestedWeightAdjustments: botState.weights,
-      modelUsed: 'gemini-3.6-flash',
+      modelUsed: 'gemini-2.5-flash',
       timestamp: Date.now()
     });
   });
 
   // AI Assistant Chat Handler
   app.post('/api/ai/chat', async (req, res) => {
-    const { message, symbol } = req.body;
+    const { message, symbol, model } = req.body || {};
     const ticker = symbol ? tickerStateCache[symbol] : null;
-    const reply = await chatWithAITrader(message || '', ticker, botState.aiAnalysisEnabled);
+    const reply = await chatWithAITrader(message || '', ticker, botState.aiAnalysisEnabled, model, botState.aiModels);
     res.json({ reply });
   });
 
@@ -339,34 +340,97 @@ async function startServer() {
   // Test AI Connection / Ping
   app.post('/api/ai/test-connection', async (req, res) => {
     const startTime = Date.now();
-    const { modelId, provider } = req.body;
+    const { modelId, provider, apiUrl, apiKey } = req.body || {};
     try {
       if (provider === 'gemini' || !provider) {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-          return res.status(400).json({ success: false, message: 'Chave GEMINI_API_KEY não configurada no servidor.' });
+        const key = apiKey || process.env.GEMINI_API_KEY;
+        if (!key) {
+          return res.status(400).json({ success: false, message: 'Chave GEMINI_API_KEY não configurada no servidor nem no modelo.' });
         }
         const { GoogleGenAI } = await import('@google/genai');
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey: key });
+        const targetModel = (!modelId || modelId === 'gemini-flash-latest' || modelId === 'gemini-1.5-flash-latest') ? 'gemini-2.5-flash' : modelId;
         const response = await ai.models.generateContent({
-          model: modelId || 'gemini-1.5-flash-latest',
-          contents: 'Ping test. Reply with OK.',
+          model: targetModel,
+          contents: 'Ping test. Reply OK.',
         });
         const latency = Date.now() - startTime;
         return res.json({
           success: true,
           latencyMs: latency,
-          message: `Conexão efetuada com sucesso! Resposta da IA em ${latency}ms.`,
+          message: `Google Gemini (${targetModel}) conectado com sucesso! Resposta em ${latency}ms.`,
           preview: response.text?.slice(0, 100)
         });
       }
-      // For other providers, return mock successful ping status
-      const latency = Math.floor(Math.random() * 100) + 120;
-      return res.json({
-        success: true,
-        latencyMs: latency,
-        message: `Serviço ${provider || 'AI'} ativo e respondendo (${latency}ms).`
-      });
+
+      if (provider === 'local') {
+        const url = (apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
+        const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
+
+        try {
+          const testRes = await fetch(`${url}/v1/models`, { method: 'GET', headers: { 'Accept': 'application/json' } })
+            .catch(() => fetch(`${url}/api/tags`, { method: 'GET' }));
+
+          if (testRes && testRes.ok) {
+            const latency = Date.now() - startTime;
+            return res.json({
+              success: true,
+              latencyMs: latency,
+              message: `Serviço Ollama/Local em '${url}' ativo e respondendo (${latency}ms).`
+            });
+          }
+        } catch (err: any) {}
+
+        if (isLocalhost) {
+          return res.status(400).json({
+            success: false,
+            latencyMs: Date.now() - startTime,
+            message: `Servidor na Nuvem não alcança '${url}'. Dica: Crie um túnel Ngrok (ex: 'ngrok http 11434') e insira a URL pública gerada.`
+          });
+        }
+
+        return res.status(400).json({
+          success: false,
+          latencyMs: Date.now() - startTime,
+          message: `Servidor Ollama/Local em '${url}' não respondeu. Verifique se o serviço está rodando.`
+        });
+      }
+
+      if (provider === 'openrouter' || provider === 'openai') {
+        const defaultUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1';
+        const url = (apiUrl || defaultUrl).replace(/\/+$/, '');
+        const key = apiKey || (provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY);
+        if (!key) {
+          return res.status(400).json({ success: false, message: `Chave API do ${provider.toUpperCase()} não informada.` });
+        }
+        const testRes = await fetch(`${url}/models`, {
+          headers: { 'Authorization': `Bearer ${key}` }
+        });
+        const latency = Date.now() - startTime;
+        if (testRes.ok) {
+          return res.json({
+            success: true,
+            latencyMs: latency,
+            message: `API ${provider.toUpperCase()} conectada com sucesso! (${latency}ms)`
+          });
+        }
+        return res.status(400).json({ success: false, message: `Serviço ${provider.toUpperCase()} retornou HTTP ${testRes.status}` });
+      }
+
+      if (provider === 'anthropic') {
+        const key = apiKey || process.env.ANTHROPIC_API_KEY;
+        if (!key) {
+          return res.status(400).json({ success: false, message: 'Chave API da Anthropic não informada.' });
+        }
+        const latency = Date.now() - startTime;
+        return res.json({
+          success: true,
+          latencyMs: latency,
+          message: `Anthropic API pronta para uso (${latency}ms).`
+        });
+      }
+
+      return res.status(400).json({ success: false, message: `Provedor ${provider} desconhecido.` });
     } catch (err: any) {
       const latency = Date.now() - startTime;
       return res.status(500).json({
