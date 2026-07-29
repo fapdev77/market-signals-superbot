@@ -8,6 +8,7 @@ import { initBinanceWebSocket, getWebSocketStatus, getBinanceLogs } from './serv
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { getRecentSignals, saveSignal, saveAIAudit, getLatestAIAudit, getIndicatorWeights, saveIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels, saveAIModels } from './server/db.js';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader } from './server/aiMotor.js';
+import { getAILogs, clearAILogs, addAILog } from './server/aiLogger.js';
 import { TickerData, TradeSignal, BotState } from './src/types.js';
 
 async function startServer() {
@@ -337,62 +338,186 @@ async function startServer() {
     }
   });
 
-  // Test AI Connection / Ping
+  // Get AI Logs
+  app.get('/api/ai/logs', (req, res) => {
+    res.json(getAILogs());
+  });
+
+  // Clear AI Logs
+  app.delete('/api/ai/logs', (req, res) => {
+    clearAILogs();
+    res.json({ success: true, message: 'Logs de IA zerados com sucesso.' });
+  });
+
+  // Test AI Connection / Ping with Full Diagnostics
   app.post('/api/ai/test-connection', async (req, res) => {
     const startTime = Date.now();
     const { modelId, provider, apiUrl, apiKey } = req.body || {};
+    const diagnosticSteps: string[] = [];
+
     try {
+      diagnosticSteps.push(`Provedor selecionado: ${provider || 'gemini'}`);
+      diagnosticSteps.push(`ID do Modelo: ${modelId || 'padrão'}`);
+
       if (provider === 'gemini' || !provider) {
         const key = apiKey || process.env.GEMINI_API_KEY;
+        const keyOrigin = apiKey ? 'Informada no formulário' : process.env.GEMINI_API_KEY ? 'Variável de ambiente GEMINI_API_KEY' : 'Não encontrada';
+        diagnosticSteps.push(`Origem da chave API: ${keyOrigin}`);
+
         if (!key) {
-          return res.status(400).json({ success: false, message: 'Chave GEMINI_API_KEY não configurada no servidor nem no modelo.' });
+          const msg = 'Chave GEMINI_API_KEY não configurada no servidor nem no formulário.';
+          addAILog({
+            level: 'ERROR',
+            type: 'TEST_CONNECTION',
+            provider: 'gemini',
+            modelId: modelId || 'gemini-2.5-flash',
+            message: msg,
+            durationMs: Date.now() - startTime,
+            details: { diagnosticSteps }
+          });
+          return res.status(400).json({ success: false, message: msg, diagnosticSteps });
         }
+
         const { GoogleGenAI } = await import('@google/genai');
         const ai = new GoogleGenAI({ apiKey: key });
         const targetModel = (!modelId || modelId === 'gemini-flash-latest' || modelId === 'gemini-1.5-flash-latest') ? 'gemini-2.5-flash' : modelId;
+        
+        diagnosticSteps.push(`Executando chamada ping no modelo '${targetModel}'...`);
         const response = await ai.models.generateContent({
           model: targetModel,
           contents: 'Ping test. Reply OK.',
         });
+
         const latency = Date.now() - startTime;
+        const previewText = response.text?.slice(0, 100) || 'OK';
+        diagnosticSteps.push(`Resposta recebida com sucesso (${latency}ms): "${previewText}"`);
+
+        const msg = `Google Gemini (${targetModel}) conectado com sucesso! Resposta em ${latency}ms.`;
+        addAILog({
+          level: 'SUCCESS',
+          type: 'TEST_CONNECTION',
+          provider: 'gemini',
+          modelId: targetModel,
+          message: msg,
+          durationMs: latency,
+          details: { diagnosticSteps, preview: previewText }
+        });
+
         return res.json({
           success: true,
           latencyMs: latency,
-          message: `Google Gemini (${targetModel}) conectado com sucesso! Resposta em ${latency}ms.`,
-          preview: response.text?.slice(0, 100)
+          message: msg,
+          preview: previewText,
+          diagnosticSteps
         });
       }
 
       if (provider === 'local') {
         const url = (apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
+        const modelName = modelId || 'llama3.2';
         const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
 
+        diagnosticSteps.push(`URL da API Local: ${url}`);
+        diagnosticSteps.push(`Modelo Local: ${modelName}`);
+        diagnosticSteps.push(`Ambiente detectado: Servidor Cloud Run / Nuvem`);
+
+        // Test 1: OpenAI compatible /v1/models
+        diagnosticSteps.push(`[Passo 1/3] Testando GET ${url}/v1/models...`);
+        let pingSuccess = false;
+        let activeEndpoint = '';
+
         try {
-          const testRes = await fetch(`${url}/v1/models`, { method: 'GET', headers: { 'Accept': 'application/json' } })
-            .catch(() => fetch(`${url}/api/tags`, { method: 'GET' }));
-
-          if (testRes && testRes.ok) {
-            const latency = Date.now() - startTime;
-            return res.json({
-              success: true,
-              latencyMs: latency,
-              message: `Serviço Ollama/Local em '${url}' ativo e respondendo (${latency}ms).`
-            });
+          const res1 = await fetch(`${url}/v1/models`, { method: 'GET', headers: { 'Accept': 'application/json' } });
+          if (res1.ok) {
+            pingSuccess = true;
+            activeEndpoint = `${url}/v1/models`;
+            diagnosticSteps.push(`[Passo 1/3] Sucesso! Endpoint /v1/models retornou HTTP ${res1.status}`);
+          } else {
+            diagnosticSteps.push(`[Passo 1/3] Endpoint /v1/models retornou HTTP ${res1.status}`);
           }
-        } catch (err: any) {}
+        } catch (e: any) {
+          diagnosticSteps.push(`[Passo 1/3] Falha na requisição /v1/models: ${e.message}`);
+        }
 
-        if (isLocalhost) {
-          return res.status(400).json({
-            success: false,
-            latencyMs: Date.now() - startTime,
-            message: `Servidor na Nuvem não alcança '${url}'. Dica: Crie um túnel Ngrok (ex: 'ngrok http 11434') e insira a URL pública gerada.`
+        // Test 2: Native Ollama /api/tags
+        if (!pingSuccess) {
+          diagnosticSteps.push(`[Passo 2/3] Testando GET ${url}/api/tags...`);
+          try {
+            const res2 = await fetch(`${url}/api/tags`, { method: 'GET' });
+            if (res2.ok) {
+              pingSuccess = true;
+              activeEndpoint = `${url}/api/tags`;
+              diagnosticSteps.push(`[Passo 2/3] Sucesso! Endpoint nativo /api/tags retornou HTTP ${res2.status}`);
+            } else {
+              diagnosticSteps.push(`[Passo 2/3] Endpoint /api/tags retornou HTTP ${res2.status}`);
+            }
+          } catch (e: any) {
+            diagnosticSteps.push(`[Passo 2/3] Falha na requisição /api/tags: ${e.message}`);
+          }
+        }
+
+        const latency = Date.now() - startTime;
+
+        if (pingSuccess) {
+          const msg = `Serviço Ollama/Local em '${url}' ativo e respondendo (${latency}ms).`;
+          addAILog({
+            level: 'SUCCESS',
+            type: 'TEST_CONNECTION',
+            provider: 'local',
+            modelId: modelName,
+            message: msg,
+            durationMs: latency,
+            details: { diagnosticSteps, url, activeEndpoint }
+          });
+
+          return res.json({
+            success: true,
+            latencyMs: latency,
+            message: msg,
+            diagnosticSteps
           });
         }
 
+        if (isLocalhost) {
+          diagnosticSteps.push(`[Diagnóstico Crítico] O servidor da aplicação está rodando na Nuvem (Cloud Run). 'localhost' aponta para o próprio servidor na nuvem onde o Ollama NÃO está rodando.`);
+          diagnosticSteps.push(`[Solução Passo a Passo]: 1. No seu PC local, abra o terminal e rode: 'ngrok http 11434'. 2. Copie a URL pública gerada (ex: https://xxxx.ngrok-free.app). 3. Substitua 'http://localhost:11434' por essa URL no formulário.`);
+
+          const msg = `Servidor na Nuvem não alcança 'localhost'. Para conectar o Ollama do seu computador, execute 'ngrok http 11434' no seu PC e informe a URL pública HTTPS gerada.`;
+          
+          addAILog({
+            level: 'ERROR',
+            type: 'TEST_CONNECTION',
+            provider: 'local',
+            modelId: modelName,
+            message: msg,
+            durationMs: latency,
+            details: { diagnosticSteps, url, isLocalhost: true }
+          });
+
+          return res.status(400).json({
+            success: false,
+            latencyMs: latency,
+            message: msg,
+            diagnosticSteps
+          });
+        }
+
+        const msg = `Servidor Ollama/Local em '${url}' não respondeu. Verifique se o serviço está rodando e aceitando conexões externas.`;
+        addAILog({
+          level: 'ERROR',
+          type: 'TEST_CONNECTION',
+          provider: 'local',
+          modelId: modelName,
+          message: msg,
+          durationMs: latency,
+          details: { diagnosticSteps, url }
+        });
+
         return res.status(400).json({
           success: false,
-          latencyMs: Date.now() - startTime,
-          message: `Servidor Ollama/Local em '${url}' não respondeu. Verifique se o serviço está rodando.`
+          latencyMs: latency,
+          message: msg,
+          diagnosticSteps
         });
       }
 
@@ -400,43 +525,133 @@ async function startServer() {
         const defaultUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1';
         const url = (apiUrl || defaultUrl).replace(/\/+$/, '');
         const key = apiKey || (provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY);
+        
+        diagnosticSteps.push(`URL do Provedor: ${url}`);
+        diagnosticSteps.push(`Chave API presente: ${key ? 'Sim' : 'Não'}`);
+
         if (!key) {
-          return res.status(400).json({ success: false, message: `Chave API do ${provider.toUpperCase()} não informada.` });
+          const msg = `Chave API do ${provider.toUpperCase()} não informada.`;
+          addAILog({
+            level: 'ERROR',
+            type: 'TEST_CONNECTION',
+            provider,
+            modelId: modelId || 'default',
+            message: msg,
+            durationMs: Date.now() - startTime,
+            details: { diagnosticSteps }
+          });
+          return res.status(400).json({ success: false, message: msg, diagnosticSteps });
         }
+
+        diagnosticSteps.push(`Testando GET ${url}/models...`);
         const testRes = await fetch(`${url}/models`, {
-          headers: { 'Authorization': `Bearer ${key}` }
+          headers: {
+            'Authorization': `Bearer ${key}`,
+            ...(provider === 'openrouter' ? { 'HTTP-Referer': 'https://superbot.ai', 'X-Title': 'SuperBot' } : {})
+          }
         });
+
         const latency = Date.now() - startTime;
+
         if (testRes.ok) {
+          const msg = `API ${provider.toUpperCase()} conectada com sucesso! (${latency}ms)`;
+          diagnosticSteps.push(`Sucesso! API respondeu HTTP ${testRes.status}`);
+
+          addAILog({
+            level: 'SUCCESS',
+            type: 'TEST_CONNECTION',
+            provider,
+            modelId: modelId || 'default',
+            message: msg,
+            durationMs: latency,
+            details: { diagnosticSteps, url }
+          });
+
           return res.json({
             success: true,
             latencyMs: latency,
-            message: `API ${provider.toUpperCase()} conectada com sucesso! (${latency}ms)`
+            message: msg,
+            diagnosticSteps
           });
         }
-        return res.status(400).json({ success: false, message: `Serviço ${provider.toUpperCase()} retornou HTTP ${testRes.status}` });
+
+        const errBody = await testRes.text();
+        const msg = `Serviço ${provider.toUpperCase()} retornou HTTP ${testRes.status}: ${errBody.slice(0, 100)}`;
+        diagnosticSteps.push(`Erro HTTP ${testRes.status}: ${errBody.slice(0, 200)}`);
+
+        addAILog({
+          level: 'ERROR',
+          type: 'TEST_CONNECTION',
+          provider,
+          modelId: modelId || 'default',
+          message: msg,
+          durationMs: latency,
+          details: { diagnosticSteps, httpStatus: testRes.status, errBody }
+        });
+
+        return res.status(400).json({ success: false, message: msg, diagnosticSteps });
       }
 
       if (provider === 'anthropic') {
         const key = apiKey || process.env.ANTHROPIC_API_KEY;
+        diagnosticSteps.push(`Chave API Anthropic presente: ${key ? 'Sim' : 'Não'}`);
+
         if (!key) {
-          return res.status(400).json({ success: false, message: 'Chave API da Anthropic não informada.' });
+          const msg = 'Chave API da Anthropic não informada.';
+          addAILog({
+            level: 'ERROR',
+            type: 'TEST_CONNECTION',
+            provider: 'anthropic',
+            modelId: modelId || 'claude-3-5-sonnet',
+            message: msg,
+            durationMs: Date.now() - startTime,
+            details: { diagnosticSteps }
+          });
+          return res.status(400).json({ success: false, message: msg, diagnosticSteps });
         }
+
         const latency = Date.now() - startTime;
+        const msg = `Anthropic API pronta para uso (${latency}ms).`;
+
+        addAILog({
+          level: 'SUCCESS',
+          type: 'TEST_CONNECTION',
+          provider: 'anthropic',
+          modelId: modelId || 'claude-3-5-sonnet',
+          message: msg,
+          durationMs: latency,
+          details: { diagnosticSteps }
+        });
+
         return res.json({
           success: true,
           latencyMs: latency,
-          message: `Anthropic API pronta para uso (${latency}ms).`
+          message: msg,
+          diagnosticSteps
         });
       }
 
-      return res.status(400).json({ success: false, message: `Provedor ${provider} desconhecido.` });
+      const msg = `Provedor ${provider} desconhecido.`;
+      return res.status(400).json({ success: false, message: msg, diagnosticSteps });
     } catch (err: any) {
       const latency = Date.now() - startTime;
+      diagnosticSteps.push(`Exceção não tratada: ${err.message}`);
+
+      addAILog({
+        level: 'ERROR',
+        type: 'TEST_CONNECTION',
+        provider: provider || 'unknown',
+        modelId: modelId || 'unknown',
+        message: `Exceção: ${err.message}`,
+        durationMs: latency,
+        details: { diagnosticSteps, errorStack: err.stack }
+      });
+
       return res.status(500).json({
         success: false,
         latencyMs: latency,
-        message: `Erro na conexão com ${modelId || 'modelo'}: ${err.message || String(err)}`
+        message: `Erro na conexão: ${err.message || String(err)}`,
+        diagnosticSteps
       });
     }
   });

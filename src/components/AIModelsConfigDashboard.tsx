@@ -69,7 +69,14 @@ export const AIModelsConfigDashboard: React.FC<{
   const [editingModel, setEditingModel] = useState<AIModelConfig | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeTabModal, setActiveTabModal] = useState<'general' | 'params' | 'prompt' | 'limits'>('general');
-  const [testResult, setTestResult] = useState<{ modelId: string; loading: boolean; message: string; success?: boolean; latencyMs?: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ 
+    modelId: string; 
+    loading: boolean; 
+    message: string; 
+    success?: boolean; 
+    latencyMs?: number;
+    diagnosticSteps?: string[];
+  } | null>(null);
 
   const [selectedActiveModelId, setSelectedActiveModelId] = useState<string | null>(null);
 
@@ -202,7 +209,7 @@ export const AIModelsConfigDashboard: React.FC<{
   };
 
   const testConnection = async (model: AIModelConfig) => {
-    setTestResult({ modelId: model.id, loading: true, message: 'Testando conexão com a API...' });
+    setTestResult({ modelId: model.id, loading: true, message: 'Testando conexão com a API e rodando diagnósticos...' });
     try {
       const res = await fetch('/api/ai/test-connection', {
         method: 'POST',
@@ -220,7 +227,8 @@ export const AIModelsConfigDashboard: React.FC<{
         loading: false,
         success: data.success,
         message: data.message || 'Teste concluído',
-        latencyMs: data.latencyMs
+        latencyMs: data.latencyMs,
+        diagnosticSteps: data.diagnosticSteps
       });
     } catch (err: any) {
       setTestResult({
@@ -369,19 +377,35 @@ export const AIModelsConfigDashboard: React.FC<{
 
           {/* Test connection result banner */}
           {testResult && testResult.modelId === activeModel.id && (
-            <div className={`p-3 rounded-lg border text-xs flex items-center justify-between font-mono animate-fade-in ${
+            <div className={`p-3 rounded-lg border text-xs font-mono animate-fade-in space-y-2 ${
               testResult.loading ? 'bg-blue-950/40 border-blue-500/30 text-blue-300' :
               testResult.success ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' :
               'bg-rose-950/40 border-rose-500/40 text-rose-300'
             }`}>
-              <div className="flex items-center gap-2">
-                {testResult.loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : testResult.success ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <AlertCircle className="h-4 w-4 text-rose-400" />}
-                <span>{testResult.message}</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {testResult.loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : testResult.success ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <AlertCircle className="h-4 w-4 text-rose-400" />}
+                  <span className="font-bold">{testResult.message}</span>
+                </div>
+                {testResult.latencyMs !== undefined && (
+                  <span className="bg-black/50 px-2 py-0.5 rounded font-bold text-[11px] border border-white/10">
+                    ⚡ {testResult.latencyMs}ms
+                  </span>
+                )}
               </div>
-              {testResult.latencyMs !== undefined && (
-                <span className="bg-black/50 px-2 py-0.5 rounded font-bold text-[11px] border border-white/10">
-                  ⚡ {testResult.latencyMs}ms
-                </span>
+
+              {testResult.diagnosticSteps && testResult.diagnosticSteps.length > 0 && (
+                <div className="bg-black/60 p-2.5 rounded border border-white/10 space-y-1 text-[11px]">
+                  <span className="text-amber-400 font-bold block border-b border-white/10 pb-1 mb-1">
+                    🔍 Trilha de Diagnóstico de Conexão:
+                  </span>
+                  {testResult.diagnosticSteps.map((step, idx) => (
+                    <div key={idx} className="text-neutral-300 font-mono flex items-start gap-1.5">
+                      <span className="text-neutral-500 select-none">•</span>
+                      <span>{step}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

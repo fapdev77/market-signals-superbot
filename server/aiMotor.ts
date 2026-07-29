@@ -1,5 +1,6 @@
 import { TickerData, TradeSignal, AIReviewResponse, AIAuditReport, IndicatorWeights, AIModelConfig } from '../src/types.js';
 import { GoogleGenAI, Type } from '@google/genai';
+import { addAILog } from './aiLogger.js';
 
 const getAiClient = (apiKeyOverride?: string) => {
   const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
@@ -67,11 +68,21 @@ export async function generateContentWithModel(
   options: GenerateOptions
 ): Promise<{ text: string; modelUsed: string }> {
   const provider = modelConfig.provider || 'gemini';
+  const startTime = Date.now();
 
   if (provider === 'gemini') {
     const ai = getAiClient(modelConfig.apiKey);
     if (!ai) {
-      throw new Error("Chave GEMINI_API_KEY não encontrada no servidor nem nas configurações do modelo.");
+      const errMsg = "Chave GEMINI_API_KEY não encontrada no servidor nem nas configurações do modelo.";
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider: 'gemini',
+        modelId: modelConfig.modelId,
+        message: errMsg,
+        durationMs: Date.now() - startTime
+      });
+      throw new Error(errMsg);
     }
     const targetModel = normalizeGeminiModelName(modelConfig.modelId);
     
@@ -88,16 +99,46 @@ export async function generateContentWithModel(
       configObj.responseSchema = options.jsonSchema;
     }
 
-    const response = await ai.models.generateContent({
-      model: targetModel,
-      contents: options.prompt,
-      config: configObj
-    });
+    try {
+      const response = await ai.models.generateContent({
+        model: targetModel,
+        contents: options.prompt,
+        config: configObj
+      });
 
-    return {
-      text: response.text?.trim() || '',
-      modelUsed: `Gemini (${targetModel})`
-    };
+      const durationMs = Date.now() - startTime;
+      const textOutput = response.text?.trim() || '';
+
+      addAILog({
+        level: 'SUCCESS',
+        type: options.responseMimeType === 'application/json' ? 'SIGNAL_REVIEW' : 'CHAT_AGENT',
+        provider: 'gemini',
+        modelId: targetModel,
+        message: `Conteúdo gerado via Gemini (${targetModel}) em ${durationMs}ms`,
+        durationMs,
+        details: {
+          promptSnippet: options.prompt.slice(0, 150) + '...',
+          outputSnippet: textOutput.slice(0, 150) + '...'
+        }
+      });
+
+      return {
+        text: textOutput,
+        modelUsed: `Gemini (${targetModel})`
+      };
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider: 'gemini',
+        modelId: targetModel,
+        message: `Erro na execução Gemini (${targetModel}): ${err.message}`,
+        durationMs,
+        details: { errorStack: err.stack, promptSnippet: options.prompt.slice(0, 150) }
+      });
+      throw err;
+    }
   }
 
   if (provider === 'local') {
@@ -116,9 +157,14 @@ export async function generateContentWithModel(
     }
     messages.push({ role: 'user', content: userContent });
 
+    const diagnosticSteps: string[] = [];
+    diagnosticSteps.push(`Target Ollama URL: ${baseUrl}`);
+    diagnosticSteps.push(`Target Model: ${modelId}`);
+
     // 1. Try OpenAI-compatible endpoint
     try {
       const endpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+      diagnosticSteps.push(`Tentando endpoint OpenAI-compatible: ${endpoint}`);
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -134,15 +180,30 @@ export async function generateContentWithModel(
       if (res.ok) {
         const data = await res.json();
         const output = data.choices?.[0]?.message?.content || '';
-        if (output) return { text: output, modelUsed: `Ollama/Local (${modelId})` };
+        if (output) {
+          const durationMs = Date.now() - startTime;
+          addAILog({
+            level: 'SUCCESS',
+            type: 'SIGNAL_REVIEW',
+            provider: 'local',
+            modelId,
+            message: `Resposta obtida com sucesso via Ollama/OpenAI (${modelId}) em ${durationMs}ms`,
+            durationMs,
+            details: { baseUrl, outputSnippet: output.slice(0, 150), diagnosticSteps }
+          });
+          return { text: output, modelUsed: `Ollama/Local (${modelId})` };
+        }
+      } else {
+        diagnosticSteps.push(`Endpoint OpenAI-compatible retornou HTTP ${res.status}`);
       }
-    } catch (e) {
-      // Continue to native Ollama
+    } catch (e: any) {
+      diagnosticSteps.push(`Falha no endpoint OpenAI-compatible: ${e.message}`);
     }
 
     // 2. Try native Ollama endpoint
     try {
       const endpoint = `${baseUrl}/api/chat`;
+      diagnosticSteps.push(`Tentando endpoint nativo Ollama: ${endpoint}`);
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -160,13 +221,41 @@ export async function generateContentWithModel(
       if (res.ok) {
         const data = await res.json();
         const output = data.message?.content || data.response || '';
-        if (output) return { text: output, modelUsed: `Ollama (${modelId})` };
+        if (output) {
+          const durationMs = Date.now() - startTime;
+          addAILog({
+            level: 'SUCCESS',
+            type: 'SIGNAL_REVIEW',
+            provider: 'local',
+            modelId,
+            message: `Resposta obtida com sucesso via Ollama Nativo (${modelId}) em ${durationMs}ms`,
+            durationMs,
+            details: { baseUrl, outputSnippet: output.slice(0, 150), diagnosticSteps }
+          });
+          return { text: output, modelUsed: `Ollama (${modelId})` };
+        }
+      } else {
+        diagnosticSteps.push(`Endpoint nativo Ollama retornou HTTP ${res.status}`);
       }
-    } catch (e) {
-      // Failed connection
+    } catch (e: any) {
+      diagnosticSteps.push(`Falha no endpoint nativo Ollama: ${e.message}`);
     }
 
+    const durationMs = Date.now() - startTime;
+
     if (isLocalhost) {
+      const cloudErrMsg = `Ollama em '${baseUrl}' inacessível a partir do servidor em nuvem (Cloud Run). 'localhost' aponta para o servidor e não para seu computador pessoal. Crie um túnel Ngrok (ex: 'ngrok http 11434') e cole o link HTTPS no campo URL do modelo.`;
+      
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider: 'local',
+        modelId,
+        message: cloudErrMsg,
+        durationMs,
+        details: { baseUrl, diagnosticSteps }
+      });
+
       throw new Error(
         `Ollama Local em '${baseUrl}' inacessível.\n\n` +
         `Motivo: O servidor da aplicação está rodando na Nuvem (Cloud Run), portanto 'localhost' aponta para o servidor na nuvem e não para a sua máquina pessoal onde o Ollama está rodando.\n\n` +
@@ -177,6 +266,16 @@ export async function generateContentWithModel(
       );
     }
 
+    addAILog({
+      level: 'ERROR',
+      type: 'SIGNAL_REVIEW',
+      provider: 'local',
+      modelId,
+      message: `Serviço Ollama/Local em '${baseUrl}' não respondeu a nenhuma requisição.`,
+      durationMs,
+      details: { baseUrl, diagnosticSteps }
+    });
+
     throw new Error(`Serviço Ollama/Local em '${baseUrl}' não respondeu.`);
   }
 
@@ -186,7 +285,16 @@ export async function generateContentWithModel(
     const apiKey = modelConfig.apiKey || (provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY);
 
     if (!apiKey) {
-      throw new Error(`Chave API para ${provider.toUpperCase()} não foi informada.`);
+      const errMsg = `Chave API para ${provider.toUpperCase()} não foi informada.`;
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider,
+        modelId: modelConfig.modelId,
+        message: errMsg,
+        durationMs: Date.now() - startTime
+      });
+      throw new Error(errMsg);
     }
 
     const messages = [];
@@ -206,26 +314,62 @@ export async function generateContentWithModel(
       headers['X-Title'] = 'Market Signals SuperBot';
     }
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: modelConfig.modelId,
-        messages,
-        temperature: modelConfig.parameters.temperature ?? 0.2,
-        max_tokens: modelConfig.parameters.maxTokens || 4096,
-        response_format: options.responseMimeType === 'application/json' ? { type: 'json_object' } : undefined
-      })
-    });
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: modelConfig.modelId,
+          messages,
+          temperature: modelConfig.parameters.temperature ?? 0.2,
+          max_tokens: modelConfig.parameters.maxTokens || 4096,
+          response_format: options.responseMimeType === 'application/json' ? { type: 'json_object' } : undefined
+        })
+      });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Erro na API ${provider.toUpperCase()} (${res.status}): ${errText.slice(0, 150)}`);
+      const durationMs = Date.now() - startTime;
+
+      if (!res.ok) {
+        const errText = await res.text();
+        const errorMsg = `Erro na API ${provider.toUpperCase()} (${res.status}): ${errText.slice(0, 150)}`;
+        addAILog({
+          level: 'ERROR',
+          type: 'SIGNAL_REVIEW',
+          provider,
+          modelId: modelConfig.modelId,
+          message: errorMsg,
+          durationMs,
+          details: { endpoint, httpStatus: res.status, errText }
+        });
+        throw new Error(errorMsg);
+      }
+
+      const data = await res.json();
+      const output = data.choices?.[0]?.message?.content || '';
+
+      addAILog({
+        level: 'SUCCESS',
+        type: 'SIGNAL_REVIEW',
+        provider,
+        modelId: modelConfig.modelId,
+        message: `Sucesso ao comunicar com ${provider.toUpperCase()} (${modelConfig.modelId}) em ${durationMs}ms`,
+        durationMs,
+        details: { outputSnippet: output.slice(0, 150) }
+      });
+
+      return { text: output, modelUsed: `${provider.toUpperCase()} (${modelConfig.modelId})` };
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider,
+        modelId: modelConfig.modelId,
+        message: `Exceção em ${provider.toUpperCase()}: ${err.message}`,
+        durationMs
+      });
+      throw err;
     }
-
-    const data = await res.json();
-    const output = data.choices?.[0]?.message?.content || '';
-    return { text: output, modelUsed: `${provider.toUpperCase()} (${modelConfig.modelId})` };
   }
 
   if (provider === 'anthropic') {
@@ -233,35 +377,78 @@ export async function generateContentWithModel(
     const apiKey = modelConfig.apiKey || process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {
-      throw new Error("Chave API da Anthropic não informada.");
+      const errMsg = "Chave API da Anthropic não informada.";
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider: 'anthropic',
+        modelId: modelConfig.modelId,
+        message: errMsg,
+        durationMs: Date.now() - startTime
+      });
+      throw new Error(errMsg);
     }
 
     const endpoint = `${baseUrl}/messages`;
     const sysPrompt = options.systemInstruction || modelConfig.parameters.systemInstruction;
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: modelConfig.modelId || 'claude-3-5-sonnet-20241022',
-        max_tokens: modelConfig.parameters.maxTokens || 4096,
-        system: sysPrompt,
-        messages: [{ role: 'user', content: options.prompt }]
-      })
-    });
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: modelConfig.modelId || 'claude-3-5-sonnet-20241022',
+          max_tokens: modelConfig.parameters.maxTokens || 4096,
+          system: sysPrompt,
+          messages: [{ role: 'user', content: options.prompt }]
+        })
+      });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Erro na API Anthropic (${res.status}): ${errText.slice(0, 150)}`);
+      const durationMs = Date.now() - startTime;
+
+      if (!res.ok) {
+        const errText = await res.text();
+        const errorMsg = `Erro na API Anthropic (${res.status}): ${errText.slice(0, 150)}`;
+        addAILog({
+          level: 'ERROR',
+          type: 'SIGNAL_REVIEW',
+          provider: 'anthropic',
+          modelId: modelConfig.modelId,
+          message: errorMsg,
+          durationMs
+        });
+        throw new Error(errorMsg);
+      }
+
+      const data = await res.json();
+      const output = data.content?.[0]?.text || '';
+
+      addAILog({
+        level: 'SUCCESS',
+        type: 'SIGNAL_REVIEW',
+        provider: 'anthropic',
+        modelId: modelConfig.modelId,
+        message: `Sucesso Anthropic (${modelConfig.modelId}) em ${durationMs}ms`,
+        durationMs
+      });
+
+      return { text: output, modelUsed: `Anthropic (${modelConfig.modelId})` };
+    } catch (err: any) {
+      const durationMs = Date.now() - startTime;
+      addAILog({
+        level: 'ERROR',
+        type: 'SIGNAL_REVIEW',
+        provider: 'anthropic',
+        modelId: modelConfig.modelId,
+        message: `Exceção Anthropic: ${err.message}`,
+        durationMs
+      });
+      throw err;
     }
-
-    const data = await res.json();
-    const output = data.content?.[0]?.text || '';
-    return { text: output, modelUsed: `Anthropic (${modelConfig.modelId})` };
   }
 
   throw new Error(`Provedor de IA não suportado: ${provider}`);

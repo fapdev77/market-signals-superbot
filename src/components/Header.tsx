@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'ai_models_config', label: 'Modelos IA', icon: Cpu, badge: null },
     { id: 'ai_dashboard', label: 'IA Dash', icon: BarChart2, badge: null, highlight: true },
     { id: 'settings', label: 'Pesos', icon: Sliders, badge: null },
-    { id: 'binance_logs', label: 'Logs API', icon: Wifi, badge: null },
+    { id: 'binance_logs', label: 'Logs API & IA', icon: Wifi, badge: null },
   ];
 
   const handleSelectTab = (tabId: string) => {
@@ -54,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
             </span>
-            BINANCE LIVE / LOGS
+            BINANCE & IA LOGS
           </div>
 
           <div
