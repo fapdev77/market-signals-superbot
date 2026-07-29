@@ -105,6 +105,25 @@ export default function App() {
     }
   };
 
+  const handleToggleAI = async (enabled: boolean) => {
+    try {
+      const res = await fetch('/api/bot/toggle-ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBotState(prev => ({ ...prev, aiAnalysisEnabled: data.aiAnalysisEnabled }));
+      } else {
+        setBotState(prev => ({ ...prev, aiAnalysisEnabled: enabled }));
+      }
+    } catch (err) {
+      console.error('Failed to toggle AI mode:', err);
+      setBotState(prev => ({ ...prev, aiAnalysisEnabled: enabled }));
+    }
+  };
+
   const handleSaveWeights = async (newWeights: IndicatorWeights) => {
     try {
       const res = await fetch('/api/settings/weights', {
@@ -149,7 +168,7 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6 pb-24 md:pb-6">
         {/* Top Prime Signal Alert Banner */}
         {topGoldenPocketTicker && (
           <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/40 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl animate-fade-in">
@@ -209,7 +228,7 @@ export default function App() {
             onApplyWeights={handleSaveWeights}
             aiModels={botState.aiModels}
             aiAnalysisEnabled={botState.aiAnalysisEnabled}
-            onToggleAI={(enabled) => setBotState(prev => ({ ...prev, aiAnalysisEnabled: enabled }))}
+            onToggleAI={handleToggleAI}
           />
         )}
 

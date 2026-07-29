@@ -48,7 +48,10 @@ Live Market Metrics:
 
 Instructions:
 1. Validate whether this setup is high probability or if there is hidden liquidity risk.
-2. Provide your response as JSON.`;
+2. CRITICAL TRADING EXECUTION RULES FOR NUMERICAL VALUES:
+   - For SHORT signals: Stop Loss MUST be HIGHER than the entry price (stopLoss > entryMax). Take Profits MUST be LOWER than the entry price (takeProfit2 < takeProfit1 < entryMin).
+   - For LONG signals: Stop Loss MUST be LOWER than the entry price (stopLoss < entryMin). Take Profits MUST be HIGHER than the entry price (takeProfit2 > takeProfit1 > entryMax).
+3. Provide your response as JSON.`;
 
     try {
       const response = await ai.models.generateContent({
@@ -77,15 +80,63 @@ Instructions:
       const content = response.text?.trim() || "{}";
       const json = JSON.parse(content);
       
+      let recommendedDirection = (json.recommendedDirection || signal.direction).toUpperCase();
+      if (!['LONG', 'SHORT', 'NEUTRAL'].includes(recommendedDirection)) {
+        recommendedDirection = signal.direction;
+      }
+
+      let entryMin = json.entryMin || signal.entryZone[0];
+      let entryMax = json.entryMax || signal.entryZone[1];
+      if (entryMin > entryMax) [entryMin, entryMax] = [entryMax, entryMin];
+
+      let stopLoss = json.stopLoss || signal.stopLoss;
+      let takeProfit1 = json.takeProfit1 || signal.target1;
+      let takeProfit2 = json.takeProfit2 || signal.target2;
+
+      // Ensure mathematical consistency for SHORT vs LONG
+      if (recommendedDirection === 'SHORT') {
+        const midEntry = (entryMin + entryMax) / 2;
+        const risk = Math.abs(stopLoss - midEntry) || (midEntry * 0.015);
+
+        // Stop Loss for SHORT must be higher than entryMax
+        if (stopLoss <= entryMax) {
+          stopLoss = parseFloat((entryMax + risk).toFixed(4));
+        }
+        // Take Profit 1 for SHORT must be lower than entryMin
+        if (takeProfit1 >= entryMin) {
+          takeProfit1 = parseFloat((entryMin - risk * 1.5).toFixed(4));
+        }
+        // Take Profit 2 for SHORT must be lower than takeProfit1
+        if (takeProfit2 >= takeProfit1) {
+          takeProfit2 = parseFloat((takeProfit1 - risk * 1.5).toFixed(4));
+        }
+      } else if (recommendedDirection === 'LONG') {
+        const midEntry = (entryMin + entryMax) / 2;
+        const risk = Math.abs(midEntry - stopLoss) || (midEntry * 0.015);
+
+        // Stop Loss for LONG must be lower than entryMin
+        if (stopLoss >= entryMin) {
+          stopLoss = parseFloat((entryMin - risk).toFixed(4));
+        }
+        // Take Profit 1 for LONG must be higher than entryMax
+        if (takeProfit1 <= entryMax) {
+          takeProfit1 = parseFloat((entryMax + risk * 1.5).toFixed(4));
+        }
+        // Take Profit 2 for LONG must be higher than takeProfit1
+        if (takeProfit2 <= takeProfit1) {
+          takeProfit2 = parseFloat((takeProfit1 + risk * 1.5).toFixed(4));
+        }
+      }
+
       return {
         symbol: ticker.symbol,
         decision: json.decision || 'CONFIRM',
         reasoning: json.reasoning || 'Sinal validado pelo fluxo de ordens e acúmulo de Open Interest.',
-        recommendedDirection: json.recommendedDirection || signal.direction,
-        entryZone: [json.entryMin || signal.entryZone[0], json.entryMax || signal.entryZone[1]],
-        stopLoss: json.stopLoss || signal.stopLoss,
-        takeProfit1: json.takeProfit1 || signal.target1,
-        takeProfit2: json.takeProfit2 || signal.target2,
+        recommendedDirection,
+        entryZone: [parseFloat(entryMin.toFixed(4)), parseFloat(entryMax.toFixed(4))],
+        stopLoss,
+        takeProfit1,
+        takeProfit2,
         confidenceScore: json.confidenceScore || signal.confluenceScore,
         modelUsed: modelName,
         timestamp: Date.now()

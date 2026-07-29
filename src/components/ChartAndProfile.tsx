@@ -99,12 +99,12 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {allTickers.slice(0, 10).map(t => (
+        <div className="flex items-center gap-1.5 text-xs overflow-x-auto scrollbar-none w-full md:w-auto pb-1 md:pb-0">
+          {allTickers.slice(0, 12).map(t => (
             <button
               key={t.symbol}
               onClick={() => onSelectTickerBySymbol(t.symbol)}
-              className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+              className={`px-2.5 py-1 rounded text-xs font-bold transition shrink-0 ${
                 t.symbol === ticker.symbol
                   ? 'bg-orange-500 text-black shadow'
                   : 'bg-neutral-900 text-neutral-400 hover:text-white border border-white/5'

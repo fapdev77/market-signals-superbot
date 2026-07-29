@@ -49,13 +49,13 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap items-center gap-2 text-xs w-full xl:w-auto">
+        <div className="flex items-center gap-2 text-xs w-full xl:w-auto overflow-x-auto scrollbar-none pb-1 xl:pb-0">
           {/* Validation Filter */}
-          <div className="flex items-center gap-1 bg-[#050505] p-1 rounded border border-white/5">
+          <div className="flex items-center gap-1 bg-[#050505] p-1 rounded border border-white/5 shrink-0">
             <span className="text-[9px] font-bold text-neutral-400 uppercase tracking-wider px-1">Validação:</span>
             <button
               onClick={() => setValidationFilter('ALL')}
-              className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+              className={`px-2 py-0.5 rounded text-[10px] font-bold transition shrink-0 ${
                 validationFilter === 'ALL' ? 'bg-orange-500 text-black' : 'text-neutral-400 hover:text-white'
               }`}
             >
@@ -63,7 +63,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             </button>
             <button
               onClick={() => setValidationFilter('CONFIRMED')}
-              className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+              className={`px-2 py-0.5 rounded text-[10px] font-bold transition shrink-0 ${
                 validationFilter === 'CONFIRMED' ? 'bg-emerald-500 text-black font-extrabold' : 'text-emerald-400 hover:text-white'
               }`}
             >
@@ -71,15 +71,15 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             </button>
             <button
               onClick={() => setValidationFilter('PENDING')}
-              className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+              className={`px-2 py-0.5 rounded text-[10px] font-bold transition shrink-0 ${
                 validationFilter === 'PENDING' ? 'bg-amber-500 text-black font-extrabold' : 'text-amber-400 hover:text-white'
               }`}
             >
-              ⏳ Em Validação 1m/5m
+              ⏳ Em Validação
             </button>
             <button
               onClick={() => setValidationFilter('REJECTED')}
-              className={`px-2 py-0.5 rounded text-[10px] font-bold transition ${
+              className={`px-2 py-0.5 rounded text-[10px] font-bold transition shrink-0 ${
                 validationFilter === 'REJECTED' ? 'bg-rose-500 text-white font-extrabold' : 'text-rose-400 hover:text-white'
               }`}
             >

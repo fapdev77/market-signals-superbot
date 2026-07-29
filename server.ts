@@ -9,12 +9,10 @@ import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { getRecentSignals, saveSignal, saveAIAudit, getLatestAIAudit, getIndicatorWeights, saveIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal } from './server/db.js';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader } from './server/aiMotor.js';
 import { TickerData, TradeSignal, BotState } from './src/types.js';
-import dotenv from 'dotenv';
 
 async function startServer() {
   const app = express();
-  dotenv.config();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -30,7 +28,8 @@ async function startServer() {
     ticksProcessed: 0,
     signalsGenerated24h: 0,
     weights: await getIndicatorWeights(),
-    aiModels: []
+    aiModels: [],
+    aiAnalysisEnabled: true
   };
 
   /**
@@ -207,6 +206,16 @@ async function startServer() {
   app.post('/api/bot/toggle', (req, res) => {
     botState.isMonitoring = !botState.isMonitoring;
     res.json({ isMonitoring: botState.isMonitoring });
+  });
+
+  // Toggle AI Analysis Mode
+  app.post('/api/bot/toggle-ai', (req, res) => {
+    if (typeof req.body?.enabled === 'boolean') {
+      botState.aiAnalysisEnabled = req.body.enabled;
+    } else {
+      botState.aiAnalysisEnabled = !botState.aiAnalysisEnabled;
+    }
+    res.json({ aiAnalysisEnabled: botState.aiAnalysisEnabled });
   });
 
   // Get All Monitored Tickers Ticks

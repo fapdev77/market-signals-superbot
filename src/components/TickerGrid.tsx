@@ -32,12 +32,12 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
   return (
     <div className="space-y-4">
       {/* Filter and Search Bar */}
-      <div className="bg-[#0A0A0A] p-3 rounded-lg border border-white/10 flex flex-col md:flex-row items-center justify-between gap-3 shadow-xl">
-        <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto font-mono text-xs">
-          <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mr-1">MERCADO:</span>
+      <div className="bg-[#0A0A0A] p-3 rounded-lg border border-white/10 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-xl">
+        <div className="flex items-center gap-1.5 w-full md:w-auto font-mono text-xs overflow-x-auto scrollbar-none pb-1 md:pb-0">
+          <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider mr-1 shrink-0">MERCADO:</span>
           <button
             onClick={() => setFilterMarket('all')}
-            className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+            className={`px-2.5 py-1 rounded text-xs font-bold transition shrink-0 ${
               filterMarket === 'all'
                 ? 'bg-orange-500 text-black'
                 : 'bg-neutral-900 text-neutral-400 hover:text-white border border-white/5'
@@ -47,7 +47,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           </button>
           <button
             onClick={() => setFilterMarket('crypto_futures')}
-            className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+            className={`px-2.5 py-1 rounded text-xs font-bold transition shrink-0 ${
               filterMarket === 'crypto_futures'
                 ? 'bg-orange-500 text-black'
                 : 'bg-neutral-900 text-neutral-400 hover:text-white border border-white/5'
@@ -57,7 +57,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           </button>
           <button
             onClick={() => setFilterMarket('tradfi')}
-            className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+            className={`px-2.5 py-1 rounded text-xs font-bold transition shrink-0 ${
               filterMarket === 'tradfi'
                 ? 'bg-orange-500 text-black'
                 : 'bg-neutral-900 text-neutral-400 hover:text-white border border-white/5'
@@ -67,37 +67,39 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto font-mono text-xs">
-          <button
-            onClick={() => setFilterSignal(filterSignal === 'signals_only' ? 'all' : 'signals_only')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border ${
-              filterSignal === 'signals_only'
-                ? 'bg-orange-500/20 text-orange-400 border-orange-500/40'
-                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
-            }`}
-          >
-            <Zap className="h-3 w-3 text-orange-400" />
-            SINAIS ATIVOS
-          </button>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto font-mono text-xs">
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+            <button
+              onClick={() => setFilterSignal(filterSignal === 'signals_only' ? 'all' : 'signals_only')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border shrink-0 ${
+                filterSignal === 'signals_only'
+                  ? 'bg-orange-500/20 text-orange-400 border-orange-500/40'
+                  : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+              }`}
+            >
+              <Zap className="h-3 w-3 text-orange-400" />
+              SINAIS ATIVOS
+            </button>
 
-          <button
-            onClick={() => setFilterSignal(filterSignal === 'golden_pocket' ? 'all' : 'golden_pocket')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border ${
-              filterSignal === 'golden_pocket'
-                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
-            }`}
-          >
-            <Flame className="h-3 w-3 text-orange-400" />
-            GOLDEN POCKET (FIBO 0.68)
-          </button>
+            <button
+              onClick={() => setFilterSignal(filterSignal === 'golden_pocket' ? 'all' : 'golden_pocket')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border shrink-0 ${
+                filterSignal === 'golden_pocket'
+                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                  : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+              }`}
+            >
+              <Flame className="h-3 w-3 text-orange-400" />
+              GOLDEN POCKET (0.68)
+            </button>
+          </div>
 
           <input
             type="text"
-            placeholder="Buscar ativo (BTC, SOL, SPY)..."
+            placeholder="Buscar ativo (BTC, SOL)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="bg-[#050505] border border-white/10 text-neutral-200 placeholder-neutral-500 px-3 py-1 rounded text-xs focus:outline-none focus:border-orange-500 w-full md:w-48 font-mono"
+            className="bg-[#050505] border border-white/10 text-neutral-200 placeholder-neutral-500 px-3 py-1 rounded text-xs focus:outline-none focus:border-orange-500 w-full sm:w-48 font-mono"
           />
         </div>
       </div>
