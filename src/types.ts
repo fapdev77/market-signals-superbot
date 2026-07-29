@@ -198,6 +198,23 @@ export interface BacktestDiagnostic {
   suggestions: string[];
 }
 
+export interface BacktestTrade {
+  id: string;
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  exitPrice: number;
+  entryTime: number;
+  exitTime: number;
+  pnlPct: number;
+  pnlValue: number;
+  stopLoss: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  isWin: boolean;
+  durationMinutes: number;
+}
+
 export interface BacktestResult {
   id: string;
   symbol: string;
@@ -221,6 +238,7 @@ export interface BacktestResult {
   diagnostic: BacktestDiagnostic;
   config: BacktestConfig;
   createdAt: number;
+  trades?: BacktestTrade[];
 }
 
 export interface AutoTuneIteration {

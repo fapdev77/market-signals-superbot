@@ -1,6 +1,6 @@
 import { db } from '../backtest_db';
 import { historicalKlines } from '../backtest_db/schema';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, sql, gte, lte } from 'drizzle-orm';
 
 export interface SyncProgress {
   symbol: string;
@@ -16,31 +16,59 @@ export class HistoricalDataService {
     return syncStates[symbol] || { symbol, progress: 0, status: 'IDLE' };
   }
 
-  static async syncSymbol(symbol: string, days: number = 30): Promise<void> {
+  static async getStats(symbol: string) {
+    try {
+      const stats = await db
+        .select({
+          count: sql<number>`count(*)`,
+          minTime: sql<number>`min(open_time)`,
+          maxTime: sql<number>`max(open_time)`
+        })
+        .from(historicalKlines)
+        .where(eq(historicalKlines.symbol, symbol));
+
+      return {
+        count: stats[0]?.count || 0,
+        minTime: stats[0]?.minTime || null,
+        maxTime: stats[0]?.maxTime || null
+      };
+    } catch (err) {
+      console.error('Error fetching stats:', err);
+      return { count: 0, minTime: null, maxTime: null };
+    }
+  }
+
+  static async syncSymbol(symbol: string, days: number = 30, forceFull: boolean = false): Promise<void> {
     if (syncStates[symbol]?.status === 'SYNCING') return;
 
     syncStates[symbol] = { symbol, progress: 0, status: 'SYNCING' };
 
     try {
+      if (forceFull) {
+        await db.delete(historicalKlines).where(eq(historicalKlines.symbol, symbol));
+      }
+
       const now = Date.now();
       const startTime = now - days * 24 * 60 * 60 * 1000;
       let fetchTime = startTime;
 
-      // Check if we have recent data
-      const latestKlines = await db
-        .select({ openTime: historicalKlines.openTime })
-        .from(historicalKlines)
-        .where(
-          and(
-            eq(historicalKlines.symbol, symbol),
-            eq(historicalKlines.interval, '1m')
+      if (!forceFull) {
+        // Check if we have recent data
+        const latestKlines = await db
+          .select({ openTime: historicalKlines.openTime })
+          .from(historicalKlines)
+          .where(
+            and(
+              eq(historicalKlines.symbol, symbol),
+              eq(historicalKlines.interval, '1m')
+            )
           )
-        )
-        .orderBy(desc(historicalKlines.openTime))
-        .limit(1);
+          .orderBy(desc(historicalKlines.openTime))
+          .limit(1);
 
-      if (latestKlines.length > 0 && latestKlines[0].openTime > startTime) {
-        fetchTime = latestKlines[0].openTime + 60000;
+        if (latestKlines.length > 0 && latestKlines[0].openTime > startTime) {
+          fetchTime = latestKlines[0].openTime + 60000;
+        }
       }
 
       const totalTimeSpan = now - fetchTime;
@@ -141,13 +169,20 @@ export class HistoricalDataService {
     let curTime = startTime;
 
     while (curTime <= endTime) {
-      const variation = (Math.sin(curTime / 300000) + (Math.random() - 0.49)) * (basePrice * 0.002);
+      const variation = (Math.sin(curTime / 300000) + (Math.random() - 0.495)) * (basePrice * 0.002);
       const open = basePrice;
       const close = basePrice + variation;
       const high = Math.max(open, close) + Math.random() * (basePrice * 0.001);
       const low = Math.min(open, close) - Math.random() * (basePrice * 0.001);
-      const volume = Math.random() * 20 + 5;
-      const takerBuyBaseVolume = volume * (0.45 + Math.random() * 0.1);
+      
+      // Generate volume with realistic periodic spikes (representing breakout sessions)
+      let volume = Math.random() * 20 + 5;
+      if (Math.random() < 0.08) {
+        volume = volume * (2.0 + Math.random() * 3.0);
+      }
+      
+      // Generate realistic wide distribution for taker buy volume (CVD)
+      const takerBuyBaseVolume = volume * (0.33 + Math.random() * 0.34);
 
       rows.push({
         symbol,
@@ -160,7 +195,7 @@ export class HistoricalDataService {
         close,
         volume,
         quoteAssetVolume: volume * close,
-        trades: Math.floor(Math.random() * 50) + 10,
+        trades: Math.floor(Math.random() * 150) + 20,
         takerBuyBaseVolume,
         takerBuyQuoteVolume: takerBuyBaseVolume * close
       });
@@ -177,6 +212,26 @@ export class HistoricalDataService {
 
     if (rows.length > 0) {
       await db.insert(historicalKlines).values(rows).onConflictDoNothing();
+    }
+  }
+
+  public static async getTradeCandles(symbol: string, startTime: number, endTime: number): Promise<any[]> {
+    try {
+      const gteTime = startTime - 15 * 60 * 1000; // 15 mins padding before
+      const lteTime = endTime + 15 * 60 * 1000;   // 15 mins padding after
+      return await db.select().from(historicalKlines)
+        .where(
+          and(
+            eq(historicalKlines.symbol, symbol),
+            eq(historicalKlines.interval, '1m'),
+            gte(historicalKlines.openTime, gteTime),
+            lte(historicalKlines.openTime, lteTime)
+          )
+        )
+        .orderBy(historicalKlines.openTime);
+    } catch (err) {
+      console.error('Error fetching trade candles:', err);
+      return [];
     }
   }
 }

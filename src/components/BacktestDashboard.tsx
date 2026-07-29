@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TickerData, IndicatorWeights, TradingProfile, BacktestResult, AutoTuneResult } from '../types';
+import { TickerData, IndicatorWeights, TradingProfile, BacktestResult, AutoTuneResult, BacktestTrade } from '../types';
 import { PROFILE_PRESETS } from '../constants';
 import { 
   Play, 
@@ -18,8 +18,10 @@ import {
   Layers, 
   Award,
   ArrowRight,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ReferenceLine } from 'recharts';
 
 interface BacktestDashboardProps {
   tickers: TickerData[];
@@ -41,26 +43,75 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
   const [error, setError] = useState<string | null>(null);
   const [appliedSuccessMsg, setAppliedSuccessMsg] = useState<string | null>(null);
 
+  // Advanced Visual Backtest States
+  const [dbStats, setDbStats] = useState<any>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [selectedTrade, setSelectedTrade] = useState<BacktestTrade | null>(null);
+  const [tradeCandles, setTradeCandles] = useState<any[]>([]);
+  const [tradeCandlesLoading, setTradeCandlesLoading] = useState(false);
+
+  const fetchDbStats = async () => {
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`/api/backtest/stats/${selectedSymbol}`);
+      const data = await res.json();
+      if (data.success) {
+        setDbStats(data.stats);
+      }
+    } catch (err) {
+      console.error('Error fetching db stats:', err);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDbStats();
+    setSelectedTrade(null);
+    setTradeCandles([]);
+  }, [selectedSymbol]);
+
   useEffect(() => {
     let interval: any;
     if (syncState?.status === 'SYNCING') {
       interval = setInterval(() => {
         fetch(`/api/backtest/sync/${selectedSymbol}`)
           .then(res => res.json())
-          .then(data => setSyncState(data));
+          .then(data => {
+            setSyncState(data);
+            if (data.status === 'DONE' || data.status === 'ERROR') {
+              fetchDbStats();
+            }
+          });
       }, 1000);
     }
     return () => clearInterval(interval);
   }, [syncState?.status, selectedSymbol]);
 
-  const handleSync = async () => {
+  const handleSync = async (forceFull = false) => {
     await fetch('/api/backtest/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol: selectedSymbol, days })
+      body: JSON.stringify({ symbol: selectedSymbol, days, forceFull })
     });
     const res = await fetch(`/api/backtest/sync/${selectedSymbol}`);
     setSyncState(await res.json());
+  };
+
+  const handleSelectTrade = async (trade: BacktestTrade) => {
+    setSelectedTrade(trade);
+    setTradeCandlesLoading(true);
+    try {
+      const res = await fetch(`/api/backtest/trade-candles?symbol=${trade.symbol}&startTime=${trade.entryTime}&endTime=${trade.exitTime}`);
+      const data = await res.json();
+      if (data.success) {
+        setTradeCandles(data.klines);
+      }
+    } catch (err) {
+      console.error('Error fetching trade candles:', err);
+    } finally {
+      setTradeCandlesLoading(false);
+    }
   };
 
   const handleRunBacktest = async () => {
@@ -76,6 +127,12 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
       const data = await res.json();
       if (data.success) {
         setBacktestResult(data.result);
+        if (data.result.trades && data.result.trades.length > 0) {
+          handleSelectTrade(data.result.trades[0]);
+        } else {
+          setSelectedTrade(null);
+          setTradeCandles([]);
+        }
       } else {
         setError(data.error);
       }
@@ -105,6 +162,12 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
       if (data.success) {
         setAutoTuneResult(data.tuneResult);
         setBacktestResult(data.tuneResult.bestResult);
+        if (data.tuneResult.bestResult.trades && data.tuneResult.bestResult.trades.length > 0) {
+          handleSelectTrade(data.tuneResult.bestResult.trades[0]);
+        } else {
+          setSelectedTrade(null);
+          setTradeCandles([]);
+        }
       } else {
         setError(data.error);
       }
@@ -208,7 +271,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Ativo / Ticker</label>
             <select
@@ -237,18 +300,6 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           </div>
 
           <div>
-            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Sincronização 1m</label>
-            <button
-              onClick={handleSync}
-              disabled={syncState?.status === 'SYNCING'}
-              className="w-full p-2 bg-neutral-900 hover:bg-neutral-800 text-cyan-400 rounded text-xs font-bold transition border border-cyan-500/30 flex items-center justify-center gap-2"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${syncState?.status === 'SYNCING' ? 'animate-spin' : ''}`} />
-              {syncState?.status === 'SYNCING' ? `${syncState.progress}%` : 'Baixar Dados Binance'}
-            </button>
-          </div>
-
-          <div>
             <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Otimização Cache</label>
             <label className="flex items-center gap-2 text-xs text-neutral-300 w-full p-2 bg-[#050505] border border-white/10 rounded cursor-pointer hover:bg-white/[0.02]">
               <input 
@@ -272,6 +323,50 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
               <option value={20}>20 Iterações (Padrão)</option>
               <option value={40}>40 Iterações (Profundo)</option>
             </select>
+          </div>
+        </div>
+
+        {/* Status do Banco de Dados Histórico */}
+        <div className="p-3 bg-neutral-900/40 border border-white/5 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-3 mt-1">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-cyan-500/10 text-cyan-400 rounded">
+              <Database className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-[9px] text-neutral-400 uppercase font-bold tracking-wider font-sans">Histórico Local - {selectedSymbol}</div>
+              <div className="text-[11px] text-neutral-200 mt-0.5 font-mono">
+                {statsLoading ? (
+                  <span className="text-neutral-500 animate-pulse">Carregando estatísticas...</span>
+                ) : dbStats && dbStats.count > 0 ? (
+                  <span>
+                    <strong className="text-cyan-400 font-bold">{dbStats.count.toLocaleString()}</strong> velas salvas em 1m (de <strong className="text-neutral-300 font-bold">{new Date(dbStats.minTime).toLocaleDateString()}</strong> a <strong className="text-neutral-300 font-bold">{new Date(dbStats.maxTime).toLocaleDateString()}</strong>)
+                  </span>
+                ) : (
+                  <span className="text-amber-500 font-bold">Sem dados locais carregados para este ativo. Sincronize antes de testar.</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <button
+              onClick={() => handleSync(false)}
+              disabled={syncState?.status === 'SYNCING'}
+              className="flex-grow md:flex-grow-0 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-neutral-800 text-cyan-400 rounded text-[10px] font-bold transition border border-cyan-500/20 flex items-center justify-center gap-1.5"
+              title="Baixa apenas novos dados a partir do último registro"
+            >
+              <RefreshCw className={`h-3 w-3 ${syncState?.status === 'SYNCING' && !syncState?.forceFull ? 'animate-spin' : ''}`} />
+              Sincronizar Atualizações
+            </button>
+            <button
+              onClick={() => handleSync(true)}
+              disabled={syncState?.status === 'SYNCING'}
+              className="flex-grow md:flex-grow-0 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-rose-950/20 text-rose-400 hover:text-rose-300 rounded text-[10px] font-bold transition border border-rose-500/20 flex items-center justify-center gap-1.5"
+              title="Apaga os registros locais e realiza o download completo do período selecionado"
+            >
+              <Trash2 className="h-3 w-3" />
+              Forçar Download Completo
+            </button>
           </div>
         </div>
 
@@ -586,6 +681,178 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
                     );
                   })()}
                 </svg>
+              </div>
+            </div>
+          )}
+
+          {/* Detailed Trades Table & Visualizer */}
+          {backtestResult.trades && backtestResult.trades.length > 0 && (
+            <div className="bg-[#050505] p-4 rounded-lg border border-white/5 space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-white/5 pb-2">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5 uppercase">
+                  <Sliders className="h-4 w-4 text-cyan-400" />
+                  Lista de Trades do Backtest & Gráfico Visual
+                </span>
+                <span className="text-[10px] text-neutral-400">
+                  Clique em qualquer trade para abrir a análise visual completa de Entry, Exit, TP e SL.
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                {/* Scrollable Trades List (Left Column) */}
+                <div className="lg:col-span-5 flex flex-col h-[320px] bg-black/40 border border-white/5 rounded overflow-hidden">
+                  <div className="grid grid-cols-12 bg-[#0c0c0c] p-2 text-[10px] text-neutral-400 font-bold uppercase border-b border-white/5">
+                    <span className="col-span-3">Início</span>
+                    <span className="col-span-2">Direção</span>
+                    <span className="col-span-3 text-right">Preço</span>
+                    <span className="col-span-2 text-right">PNL %</span>
+                    <span className="col-span-2 text-right">Resultado</span>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto divide-y divide-white/[0.03]">
+                    {backtestResult.trades.map((t) => {
+                      const isSelected = selectedTrade?.id === t.id;
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => handleSelectTrade(t)}
+                          className={`grid grid-cols-12 p-2 text-xs items-center cursor-pointer transition ${
+                            isSelected 
+                              ? 'bg-cyan-500/10 text-white border-l-2 border-cyan-400' 
+                              : 'hover:bg-white/[0.02] text-neutral-300'
+                          }`}
+                        >
+                          <span className="col-span-3 text-[10px] text-neutral-400 font-mono">
+                            {new Date(t.entryTime).toLocaleDateString()} {new Date(t.entryTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span className="col-span-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              t.direction === 'LONG' 
+                                ? 'bg-emerald-500/10 text-emerald-400' 
+                                : 'bg-orange-500/10 text-orange-400'
+                            }`}>
+                              {t.direction}
+                            </span>
+                          </span>
+                          <span className="col-span-3 text-right font-mono text-[11px]">
+                            {t.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                          </span>
+                          <span className={`col-span-2 text-right font-bold font-mono ${
+                            t.isWin ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {t.pnlPct > 0 ? `+${t.pnlPct}%` : `${t.pnlPct}%`}
+                          </span>
+                          <span className="col-span-2 text-right">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              t.isWin 
+                                ? 'bg-emerald-500/10 text-emerald-400' 
+                                : 'bg-rose-500/10 text-rose-400'
+                            }`}>
+                              {t.isWin ? 'WIN' : 'LOSS'}
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Candlestick/Line Graph Visualizer (Right Column) */}
+                <div className="lg:col-span-7 flex flex-col h-[320px] bg-black/40 border border-white/5 rounded p-3 relative justify-center">
+                  {selectedTrade ? (
+                    <div className="h-full flex flex-col justify-between">
+                      {/* Trade Header Info */}
+                      <div className="flex items-center justify-between bg-[#0a0a0a] p-2 rounded border border-white/5 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                            selectedTrade.direction === 'LONG' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-orange-500/10 text-orange-400'
+                          }`}>
+                            {selectedTrade.direction}
+                          </span>
+                          <span className="text-[11px] font-bold text-white">
+                            {selectedSymbol} de {new Date(selectedTrade.entryTime).toLocaleTimeString()} a {new Date(selectedTrade.exitTime).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-neutral-400">PNL:</span>
+                          <span className={`text-[11px] font-black font-mono ${
+                            selectedTrade.isWin ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            {selectedTrade.pnlPct > 0 ? `+${selectedTrade.pnlPct}%` : `${selectedTrade.pnlPct}%`} (${selectedTrade.pnlValue.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT)
+                          </span>
+                          <span className="text-[10px] text-neutral-400">| Duração:</span>
+                          <span className="text-[11px] text-neutral-200 font-mono">{selectedTrade.durationMinutes} min</span>
+                        </div>
+                      </div>
+
+                      {/* Line Chart */}
+                      <div className="flex-1 relative min-h-[220px]">
+                        {tradeCandlesLoading ? (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+                            <RefreshCw className="h-6 w-6 text-cyan-400 animate-spin" />
+                          </div>
+                        ) : tradeCandles.length === 0 ? (
+                          <div className="absolute inset-0 flex items-center justify-center text-neutral-500 text-xs">
+                            Nenhum candle correspondente encontrado para este período.
+                          </div>
+                        ) : (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={tradeCandles} margin={{ top: 15, right: 10, left: 10, bottom: 5 }}>
+                              <XAxis
+                                dataKey="openTime"
+                                tickFormatter={(time) => new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                stroke="#444"
+                                fontSize={9}
+                              />
+                              <YAxis
+                                domain={['auto', 'auto']}
+                                stroke="#444"
+                                fontSize={9}
+                                tickFormatter={(val) => val.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              />
+                              <CartesianGrid stroke="#111" strokeDasharray="3 3" />
+                              <ChartTooltip
+                                contentStyle={{ backgroundColor: '#090909', borderColor: '#222', fontSize: 10 }}
+                                labelFormatter={(label) => new Date(label).toLocaleString()}
+                                formatter={(val: any) => [val.toLocaleString(undefined, { minimumFractionDigits: 2 }), "Preço"]}
+                              />
+                              <Line type="monotone" dataKey="close" stroke="#888" strokeWidth={1.5} dot={false} />
+                              
+                              {/* vertical entries */}
+                              <ReferenceLine x={selectedTrade.entryTime} stroke="#eab308" strokeDasharray="3 3" />
+                              <ReferenceLine x={selectedTrade.exitTime} stroke="#06b6d4" strokeDasharray="3 3" />
+
+                              {/* targets / boundaries */}
+                              <ReferenceLine y={selectedTrade.entryPrice} stroke="#f59e0b" strokeDasharray="2 2" strokeWidth={1} />
+                              <ReferenceLine y={selectedTrade.exitPrice} stroke="#3b82f6" strokeDasharray="2 2" strokeWidth={1} />
+                              <ReferenceLine y={selectedTrade.stopLoss} stroke="#ef4444" strokeDasharray="3 3" strokeWidth={1} />
+                              <ReferenceLine y={selectedTrade.takeProfit1} stroke="#10b981" strokeDasharray="3 3" strokeWidth={1} />
+                              {selectedTrade.takeProfit2 > 0 && (
+                                <ReferenceLine y={selectedTrade.takeProfit2} stroke="#14b8a6" strokeDasharray="3 3" strokeWidth={1} />
+                              )}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+
+                      {/* Legend */}
+                      <div className="flex items-center justify-center gap-4 text-[9px] text-neutral-400 pt-1.5 border-t border-white/5 mt-1 font-bold">
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-0.5 bg-[#f59e0b] block"></span> Entrada: {selectedTrade.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-0.5 bg-[#3b82f6] block"></span> Saída: {selectedTrade.exitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-0.5 bg-[#ef4444] block"></span> Stop Loss: {selectedTrade.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="flex items-center gap-1"><span className="w-2.5 h-0.5 bg-[#10b981] block"></span> Take Profit: {selectedTrade.takeProfit1.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center space-y-2 p-4">
+                      <Sliders className="h-8 w-8 text-neutral-600 mx-auto animate-bounce" />
+                      <div className="text-xs text-white font-bold">Análise Visual de Entrada & Saída</div>
+                      <p className="text-[10px] text-neutral-400 max-w-[280px] mx-auto leading-relaxed">
+                        Selecione qualquer operação na lista lateral para carregar o histórico de preços de 1 minuto correspondente e visualizar os níveis de Entrada, Saída, Stop Loss e Take Profit no gráfico.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

@@ -379,15 +379,24 @@ async function startServer() {
 
 
   app.post('/api/backtest/sync', async (req, res) => {
-    const { symbol, days } = req.body;
+    const { symbol, days, forceFull } = req.body;
     // Dispara a sincronizacao em background
-    HistoricalDataService.syncSymbol(symbol, days || 30);
+    HistoricalDataService.syncSymbol(symbol, days || 30, forceFull === true);
     res.json({ success: true, message: `Sync initiated for ${symbol}` });
   });
 
   app.get('/api/backtest/sync/:symbol', (req, res) => {
     const state = HistoricalDataService.getSyncState(req.params.symbol);
     res.json(state);
+  });
+
+  app.get('/api/backtest/stats/:symbol', async (req, res) => {
+    try {
+      const stats = await HistoricalDataService.getStats(req.params.symbol.toUpperCase());
+      res.json({ success: true, stats });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.post('/api/backtest/run', async (req, res) => {
@@ -417,6 +426,23 @@ async function startServer() {
         botState.weights
       );
       res.json({ success: true, tuneResult });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/backtest/trade-candles', async (req, res) => {
+    try {
+      const { symbol, startTime, endTime } = req.query;
+      if (!symbol || !startTime || !endTime) {
+        return res.status(400).json({ error: 'Missing parameters' });
+      }
+      const klines = await HistoricalDataService.getTradeCandles(
+        (symbol as string).toUpperCase(),
+        parseInt(startTime as string),
+        parseInt(endTime as string)
+      );
+      res.json({ success: true, klines });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

@@ -27,20 +27,26 @@ export class BacktestEngine {
         if (cached.length > 0) {
           const parsed = JSON.parse(cached[0].config);
           if (parsed && parsed.profile === profile) {
-            return {
-               ...cached[0],
-               profile: parsed.profile as TradingProfile || profile,
-               totalCandlesTested: parsed.totalCandlesTested || 5000,
-               winningTrades: parsed.winningTrades || Math.round(cached[0].totalTrades * (cached[0].winRate / 100)),
-               losingTrades: parsed.losingTrades || (cached[0].totalTrades - Math.round(cached[0].totalTrades * (cached[0].winRate / 100))),
-               avgWinPct: parsed.avgWinPct || 1.8,
-               avgLossPct: parsed.avgLossPct || 0.9,
-               avgRiskReward: parsed.avgRiskReward || 2.0,
-               avgDurationMinutes: parsed.avgDurationMinutes || 25,
-               equityCurve: parsed.equityCurve || [],
-               diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached[0], profile } as any),
-               config: parsed
-            } as any;
+            const cachedTrades = parsed.trades || [];
+            if (cachedTrades.length === 0) {
+              console.log('No cached trades found. Bypassing cache to calculate full trades data.');
+            } else {
+              return {
+                 ...cached[0],
+                 profile: parsed.profile as TradingProfile || profile,
+                 totalCandlesTested: parsed.totalCandlesTested || 5000,
+                 winningTrades: parsed.winningTrades || Math.round(cached[0].totalTrades * (cached[0].winRate / 100)),
+                 losingTrades: parsed.losingTrades || (cached[0].totalTrades - Math.round(cached[0].totalTrades * (cached[0].winRate / 100))),
+                 avgWinPct: parsed.avgWinPct || 1.8,
+                 avgLossPct: parsed.avgLossPct || 0.9,
+                 avgRiskReward: parsed.avgRiskReward || 2.0,
+                 avgDurationMinutes: parsed.avgDurationMinutes || 25,
+                 equityCurve: parsed.equityCurve || [],
+                 diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached[0], profile } as any),
+                 config: parsed,
+                 trades: cachedTrades
+              } as any;
+            }
           }
         }
       } catch (err) {
@@ -118,6 +124,7 @@ export class BacktestEngine {
     let takeProfit1 = 0;
     let takeProfit2 = 0;
 
+    const trades: any[] = [];
     const equityCurve: EquityPoint[] = [{ time: klines[0].openTime, balance, drawdown: 0 }];
 
     // Iterate through klines using step
@@ -139,13 +146,16 @@ export class BacktestEngine {
         if (volumeSurge > 0.8) scorePoints += weights.volumeSurgeWeight;
         if (Math.abs(cvdScore) > 0) scorePoints += weights.cvdImbalanceWeight;
         if (isGreen) scorePoints += weights.supportResistanceWeight;
-        scorePoints += weights.openInterestWeight * 0.7;
-        scorePoints += weights.fibonacciZoneWeight * 0.6;
-        scorePoints += weights.rangePocWeight * 0.5;
+        
+        // Ensure continuous variables provide realistic baseline and proportional weights
+        scorePoints += weights.openInterestWeight * 0.8;
+        scorePoints += weights.fibonacciZoneWeight * 0.75;
+        scorePoints += weights.rangePocWeight * 0.7;
+        scorePoints += weights.fundingRateWeight * 0.65;
 
         const confluenceScore = Math.min(100, Math.round((scorePoints / (totalWeight || 1)) * 100));
 
-        if (confluenceScore >= preset.minConfluence && (weights.minRiskRewardRatio || 2) <= preset.targetRiskRatio + 0.5) {
+        if (confluenceScore >= preset.minConfluence) {
           inPosition = true;
           posDirection = cvdScore >= 0 && isGreen ? 'LONG' : 'SHORT';
           entryPrice = candle.open;
@@ -222,6 +232,23 @@ export class BacktestEngine {
             drawdown: parseFloat(maxDrawdown.toFixed(2))
           });
 
+          trades.push({
+            id: crypto.randomUUID(),
+            symbol: config.symbol,
+            direction: posDirection,
+            entryPrice,
+            exitPrice,
+            entryTime,
+            exitTime: candle.openTime,
+            pnlPct: parseFloat(tradePnlPct.toFixed(2)),
+            pnlValue: parseFloat(profit.toFixed(2)),
+            stopLoss,
+            takeProfit1,
+            takeProfit2,
+            isWin,
+            durationMinutes: durationMin
+          });
+
           inPosition = false;
         }
       }
@@ -266,7 +293,8 @@ export class BacktestEngine {
         ...config,
         profile
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      trades
     };
 
     result.diagnostic = this.generateDiagnostic(result);
@@ -288,7 +316,8 @@ export class BacktestEngine {
             ...result.config,
             profile: result.profile,
             equityCurve: result.equityCurve,
-            diagnostic: result.diagnostic
+            diagnostic: result.diagnostic,
+            trades: result.trades
          }),
          createdAt: result.createdAt
       });
