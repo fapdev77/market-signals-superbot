@@ -2,9 +2,14 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import * as schema from './schema';
 import path from 'path';
+import fs from 'fs';
 
-// Store the database file in the project root
-const dbPath = path.resolve(process.cwd(), 'backtest.db');
+// Store the database file in the data folder
+const dataDir = path.resolve(process.cwd(), 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+const dbPath = path.join(dataDir, 'backtest.db');
 
 export const client = createClient({
   url: `file:${dbPath}`
