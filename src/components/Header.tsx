@@ -40,6 +40,11 @@ export const Header: React.FC<HeaderProps> = ({
     setIsMobileMenuOpen(false);
   };
 
+  const activeModels = (botState.aiModels || []).filter(m => m.isActive).sort((a, b) => a.priority - b.priority);
+  const activeModelLabel = activeModels.length > 0
+    ? `${activeModels[0].name.toUpperCase()}${activeModels.length > 1 ? ` (+${activeModels.length - 1} FB)` : ''}`
+    : 'NENHUM MODELO ATIVO';
+
   return (
     <header className="bg-[#0A0A0A] border-b border-white/10 text-neutral-100 sticky top-0 z-50">
       {/* Top Ticker Tape */}
@@ -67,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Clique para gerenciar o Motor de IA"
           >
             <span>AI:</span>
-            <span>{botState.aiAnalysisEnabled ? 'GEMINI 3.6 FLASH (ON)' : 'INDICADORES (IA OFF)'}</span>
+            <span>{botState.aiAnalysisEnabled ? `${activeModelLabel} (ON)` : 'INDICADORES (IA OFF)'}</span>
           </div>
 
           <div className="flex items-center gap-4 text-neutral-300 text-[11px]">

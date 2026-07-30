@@ -305,7 +305,15 @@ export default function App() {
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-500 font-mono">
         <div className="max-w-[2400px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>Market Signals SuperBot • Cripto Perpetuos USDT & TradFi</span>
-          <span>Motor de IA: Gemini 3.6 Flash & OpenRouter Nemotron • SQLite Persistent</span>
+          <span>
+            Motor de IA: {
+              (botState.aiModels || [])
+                .filter(m => m.isActive)
+                .sort((a, b) => a.priority - b.priority)
+                .map(m => m.name)
+                .join(' ➔ ') || 'Nenhum modelo ativo'
+            } • SQLite Persistent
+          </span>
         </div>
       </footer>
     </div>
