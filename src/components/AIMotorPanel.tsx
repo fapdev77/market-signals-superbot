@@ -35,7 +35,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   }, [aiModels]);
 
   // Chat State
-  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string }>>([
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string; modelUsed?: string }>>([
     {
       sender: 'ai',
       text: 'Olá! Sou o Motor de Inteligência Artificial do Market Signals SuperBot. Como posso ajudar com a sua estratégia de trade ou análise dos ativos hoje?'
@@ -91,7 +91,11 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
         body: JSON.stringify({ message: msg, symbol: selectedSymbolForChat, model: selectedModel })
       });
       const data = await res.json();
-      setChatMessages(prev => [...prev, { sender: 'ai', text: data.reply || 'Erro na resposta.' }]);
+      setChatMessages(prev => [...prev, { 
+        sender: 'ai', 
+        text: data.reply || 'Erro na resposta.',
+        modelUsed: data.modelUsed
+      }]);
     } catch (err) {
       setChatMessages(prev => [...prev, { sender: 'ai', text: 'Falha na comunicação com o Motor de IA.' }]);
     } finally {
@@ -148,8 +152,8 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
               >
                 {activeModels.length > 0 ? (
                   activeModels.map(model => (
-                    <option key={model.id} value={model.modelId}>
-                      {model.name} ({model.provider.toUpperCase()})
+                    <option key={model.id} value={model.id}>
+                      {model.name} ({model.provider.toUpperCase()} - {model.modelId})
                     </option>
                   ))
                 ) : (
@@ -284,11 +288,18 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
               key={idx}
               className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
             >
-              <span className="text-[9px] text-neutral-500 mb-0.5 font-bold">
-                {m.sender === 'user' ? 'Você' : 'SuperBot AI Trader'}
-              </span>
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[9px] text-neutral-500 font-bold">
+                  {m.sender === 'user' ? 'Você' : 'SuperBot AI Trader'}
+                </span>
+                {m.modelUsed && m.sender === 'ai' && (
+                  <span className="text-[8px] bg-orange-500/10 text-orange-400 font-bold px-1 py-0.2 rounded border border-orange-500/20">
+                    {m.modelUsed}
+                  </span>
+                )}
+              </div>
               <div
-                className={`max-w-xl p-2.5 rounded text-xs leading-relaxed ${
+                className={`max-w-xl p-2.5 rounded text-xs leading-relaxed whitespace-pre-wrap ${
                   m.sender === 'user'
                     ? 'bg-orange-500 text-black font-bold'
                     : 'bg-[#0A0A0A] text-neutral-200 border border-white/10'

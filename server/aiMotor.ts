@@ -61,6 +61,7 @@ export interface GenerateOptions {
   systemInstruction?: string;
   responseMimeType?: string;
   jsonSchema?: any;
+  logType?: 'TEST_CONNECTION' | 'SIGNAL_REVIEW' | 'MARKET_AUDIT' | 'CHAT_AGENT' | 'MODEL_CONFIG';
 }
 
 export async function generateContentWithModel(
@@ -69,6 +70,7 @@ export async function generateContentWithModel(
 ): Promise<{ text: string; modelUsed: string }> {
   const provider = modelConfig.provider || 'gemini';
   const startTime = Date.now();
+  const logType = options.logType || (options.responseMimeType === 'application/json' ? 'SIGNAL_REVIEW' : 'CHAT_AGENT');
 
   if (provider === 'gemini') {
     const ai = getAiClient(modelConfig.apiKey);
@@ -76,7 +78,7 @@ export async function generateContentWithModel(
       const errMsg = "Chave GEMINI_API_KEY não encontrada no servidor nem nas configurações do modelo.";
       addAILog({
         level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider: 'gemini',
         modelId: modelConfig.modelId,
         message: errMsg,
@@ -111,7 +113,7 @@ export async function generateContentWithModel(
 
       addAILog({
         level: 'SUCCESS',
-        type: options.responseMimeType === 'application/json' ? 'SIGNAL_REVIEW' : 'CHAT_AGENT',
+        type: logType,
         provider: 'gemini',
         modelId: targetModel,
         message: `Conteúdo gerado via Gemini (${targetModel}) em ${durationMs}ms`,
@@ -130,7 +132,7 @@ export async function generateContentWithModel(
       const durationMs = Date.now() - startTime;
       addAILog({
         level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider: 'gemini',
         modelId: targetModel,
         message: `Erro na execução Gemini (${targetModel}): ${err.message}`,
@@ -145,26 +147,150 @@ export async function generateContentWithModel(
     const baseUrl = (modelConfig.apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
     const modelId = modelConfig.modelId || 'llama3.2';
     const isLocalhost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
+    const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(baseUrl.replace(/^https?:\/\//, ''));
 
-    const messages = [];
     const sysPrompt = options.systemInstruction || modelConfig.parameters.systemInstruction;
-    if (sysPrompt) {
-      messages.push({ role: 'system', content: sysPrompt });
+    let fullPrompt = options.prompt;
+    if (options.responseMimeType === 'application/json' && !fullPrompt.includes('JSON')) {
+      fullPrompt += '\nResponda estritamente em formato JSON válido.';
     }
-    let userContent = options.prompt;
-    if (options.responseMimeType === 'application/json' && !userContent.includes('JSON')) {
-      userContent += '\nResponda estritamente em formato JSON válido.';
-    }
-    messages.push({ role: 'user', content: userContent });
 
     const diagnosticSteps: string[] = [];
-    diagnosticSteps.push(`Target Ollama URL: ${baseUrl}`);
-    diagnosticSteps.push(`Target Model: ${modelId}`);
+    diagnosticSteps.push(`Servidor Ollama/Local: ${baseUrl}`);
+    diagnosticSteps.push(`Modelo Solicitado: ${modelId}`);
 
-    // 1. Try OpenAI-compatible endpoint
+    // 1. Native Ollama /api/generate endpoint (Matches Python client.generate)
+    try {
+      const endpoint = `${baseUrl}/api/generate`;
+      diagnosticSteps.push(`[Tentativa 1/3] POST ${endpoint} (Ollama Nativo /api/generate)...`);
+      
+      const bodyObj: any = {
+        model: modelId,
+        prompt: fullPrompt,
+        stream: false,
+        options: {
+          temperature: modelConfig.parameters.temperature ?? 0.2
+        }
+      };
+      if (sysPrompt) bodyObj.system = sysPrompt;
+      if (options.responseMimeType === 'application/json') bodyObj.format = 'json';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyObj)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const output = data.response || data.output || data.text || '';
+        if (output && output.trim()) {
+          const durationMs = Date.now() - startTime;
+          diagnosticSteps.push(`[Sucesso /api/generate] Resposta obtida (${output.length} chars) em ${durationMs}ms`);
+
+          let tokensPerSec = 0;
+          if (data.eval_count && data.eval_duration) {
+            const evalSec = data.eval_duration / 1e9;
+            tokensPerSec = evalSec > 0 ? Number((data.eval_count / evalSec).toFixed(2)) : 0;
+            diagnosticSteps.push(`Métricas Ollama: ${tokensPerSec} tokens/s (${data.eval_count} tokens em ${evalSec.toFixed(2)}s)`);
+          }
+
+          addAILog({
+            level: 'SUCCESS',
+            type: logType,
+            provider: 'local',
+            modelId,
+            message: `Resposta obtida via Ollama Nativo /api/generate (${modelId}) em ${durationMs}ms${tokensPerSec ? ` [${tokensPerSec} tok/s]` : ''}`,
+            durationMs,
+            details: {
+              baseUrl,
+              promptSnippet: fullPrompt.slice(0, 200),
+              outputSnippet: output.slice(0, 200),
+              diagnosticSteps,
+              evalCount: data.eval_count,
+              evalDurationSec: data.eval_duration ? data.eval_duration / 1e9 : undefined,
+              tokensPerSecond: tokensPerSec
+            }
+          });
+
+          return { text: output.trim(), modelUsed: `Ollama (${modelId})` };
+        } else {
+          diagnosticSteps.push(`[Aviso /api/generate] Endpoint retornou HTTP 200, mas o campo 'response' veio vazio.`);
+        }
+      } else {
+        const errText = await res.text().catch(() => '');
+        diagnosticSteps.push(`[Aviso /api/generate] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
+      }
+    } catch (e: any) {
+      diagnosticSteps.push(`[Falha /api/generate]: ${e.message}`);
+    }
+
+    // 2. Native Ollama /api/chat endpoint
+    try {
+      const endpoint = `${baseUrl}/api/chat`;
+      diagnosticSteps.push(`[Tentativa 2/3] POST ${endpoint} (Ollama Nativo /api/chat)...`);
+      const messages = [];
+      if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+      messages.push({ role: 'user', content: fullPrompt });
+
+      const bodyObj: any = {
+        model: modelId,
+        messages,
+        stream: false,
+        options: {
+          temperature: modelConfig.parameters.temperature ?? 0.2
+        }
+      };
+      if (options.responseMimeType === 'application/json') bodyObj.format = 'json';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyObj)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const output = data.message?.content || data.response || '';
+        if (output && output.trim()) {
+          const durationMs = Date.now() - startTime;
+          diagnosticSteps.push(`[Sucesso /api/chat] Resposta obtida (${output.length} chars) em ${durationMs}ms`);
+
+          addAILog({
+            level: 'SUCCESS',
+            type: logType,
+            provider: 'local',
+            modelId,
+            message: `Resposta obtida via Ollama Nativo /api/chat (${modelId}) em ${durationMs}ms`,
+            durationMs,
+            details: {
+              baseUrl,
+              promptSnippet: fullPrompt.slice(0, 200),
+              outputSnippet: output.slice(0, 200),
+              diagnosticSteps
+            }
+          });
+
+          return { text: output.trim(), modelUsed: `Ollama /api/chat (${modelId})` };
+        } else {
+          diagnosticSteps.push(`[Aviso /api/chat] Endpoint retornou HTTP 200, mas o conteúdo veio vazio.`);
+        }
+      } else {
+        const errText = await res.text().catch(() => '');
+        diagnosticSteps.push(`[Aviso /api/chat] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
+      }
+    } catch (e: any) {
+      diagnosticSteps.push(`[Falha /api/chat]: ${e.message}`);
+    }
+
+    // 3. OpenAI-compatible endpoint
     try {
       const endpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-      diagnosticSteps.push(`Tentando endpoint OpenAI-compatible: ${endpoint}`);
+      diagnosticSteps.push(`[Tentativa 3/3] POST ${endpoint} (OpenAI Compatible)...`);
+      const messages = [];
+      if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+      messages.push({ role: 'user', content: fullPrompt });
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -180,103 +306,63 @@ export async function generateContentWithModel(
       if (res.ok) {
         const data = await res.json();
         const output = data.choices?.[0]?.message?.content || '';
-        if (output) {
+        if (output && output.trim()) {
           const durationMs = Date.now() - startTime;
+          diagnosticSteps.push(`[Sucesso OpenAI-compatible] Resposta obtida (${output.length} chars) em ${durationMs}ms`);
+
           addAILog({
             level: 'SUCCESS',
-            type: 'SIGNAL_REVIEW',
+            type: logType,
             provider: 'local',
             modelId,
-            message: `Resposta obtida com sucesso via Ollama/OpenAI (${modelId}) em ${durationMs}ms`,
+            message: `Resposta obtida via Ollama OpenAI-compatible (${modelId}) em ${durationMs}ms`,
             durationMs,
-            details: { baseUrl, outputSnippet: output.slice(0, 150), diagnosticSteps }
+            details: {
+              baseUrl,
+              promptSnippet: fullPrompt.slice(0, 200),
+              outputSnippet: output.slice(0, 200),
+              diagnosticSteps
+            }
           });
-          return { text: output, modelUsed: `Ollama/Local (${modelId})` };
+
+          return { text: output.trim(), modelUsed: `Ollama /v1/chat (${modelId})` };
+        } else {
+          diagnosticSteps.push(`[Aviso OpenAI-compatible] Retornou HTTP 200, mas sem escolhas.`);
         }
       } else {
-        diagnosticSteps.push(`Endpoint OpenAI-compatible retornou HTTP ${res.status}`);
+        const errText = await res.text().catch(() => '');
+        diagnosticSteps.push(`[Aviso OpenAI-compatible] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
     } catch (e: any) {
-      diagnosticSteps.push(`Falha no endpoint OpenAI-compatible: ${e.message}`);
+      diagnosticSteps.push(`[Falha OpenAI-compatible]: ${e.message}`);
     }
 
-    // 2. Try native Ollama endpoint
-    try {
-      const endpoint = `${baseUrl}/api/chat`;
-      diagnosticSteps.push(`Tentando endpoint nativo Ollama: ${endpoint}`);
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: modelId,
-          messages,
-          stream: false,
-          format: options.responseMimeType === 'application/json' ? 'json' : undefined,
-          options: {
-            temperature: modelConfig.parameters.temperature ?? 0.2
-          }
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const output = data.message?.content || data.response || '';
-        if (output) {
-          const durationMs = Date.now() - startTime;
-          addAILog({
-            level: 'SUCCESS',
-            type: 'SIGNAL_REVIEW',
-            provider: 'local',
-            modelId,
-            message: `Resposta obtida com sucesso via Ollama Nativo (${modelId}) em ${durationMs}ms`,
-            durationMs,
-            details: { baseUrl, outputSnippet: output.slice(0, 150), diagnosticSteps }
-          });
-          return { text: output, modelUsed: `Ollama (${modelId})` };
-        }
-      } else {
-        diagnosticSteps.push(`Endpoint nativo Ollama retornou HTTP ${res.status}`);
-      }
-    } catch (e: any) {
-      diagnosticSteps.push(`Falha no endpoint nativo Ollama: ${e.message}`);
-    }
-
+    // If all attempts failed:
     const durationMs = Date.now() - startTime;
+    let mainErrorMsg = `Serviço Ollama em '${baseUrl}' com modelo '${modelId}' não respondeu.`;
 
-    if (isLocalhost) {
-      const cloudErrMsg = `Ollama em '${baseUrl}' inacessível a partir do servidor em nuvem (Cloud Run). 'localhost' aponta para o servidor e não para seu computador pessoal. Crie um túnel Ngrok (ex: 'ngrok http 11434') e cole o link HTTPS no campo URL do modelo.`;
-      
-      addAILog({
-        level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
-        provider: 'local',
-        modelId,
-        message: cloudErrMsg,
-        durationMs,
-        details: { baseUrl, diagnosticSteps }
-      });
-
-      throw new Error(
-        `Ollama Local em '${baseUrl}' inacessível.\n\n` +
-        `Motivo: O servidor da aplicação está rodando na Nuvem (Cloud Run), portanto 'localhost' aponta para o servidor na nuvem e não para a sua máquina pessoal onde o Ollama está rodando.\n\n` +
-        `Como resolver:\n` +
-        `1. Abra o terminal no seu computador e execute: 'ngrok http 11434'\n` +
-        `2. Copie a URL pública gerada (ex: https://xxxx.ngrok-free.app)\n` +
-        `3. Cole essa URL no campo 'URL da API' nas configurações do modelo Ollama.`
-      );
+    if (isLocalhost || isPrivateIp) {
+      diagnosticSteps.push(`[DIAGNÓSTICO REDE] '${baseUrl}' é um IP da sua rede privada ou localhost.`);
+      diagnosticSteps.push(`O servidor backend do SuperBot roda na Nuvem (Cloud Run). Da nuvem, não é possível alcançar o IP privado da sua rede Wi-Fi local (${baseUrl}).`);
+      diagnosticSteps.push(`[COMO CONECTAR O OLLAMA LOCAL]: Execute 'ngrok http 11434' no seu PC e use a URL pública HTTPS gerada (ex: https://xxxx.ngrok-free.app).`);
+      mainErrorMsg = `Ollama em '${baseUrl}' inacessível a partir da Nuvem. Use um túnel Ngrok ('ngrok http 11434') e informe a URL HTTPS gerada.`;
     }
 
     addAILog({
       level: 'ERROR',
-      type: 'SIGNAL_REVIEW',
+      type: logType,
       provider: 'local',
       modelId,
-      message: `Serviço Ollama/Local em '${baseUrl}' não respondeu a nenhuma requisição.`,
+      message: mainErrorMsg,
       durationMs,
-      details: { baseUrl, diagnosticSteps }
+      details: {
+        baseUrl,
+        promptSnippet: fullPrompt.slice(0, 200),
+        diagnosticSteps
+      }
     });
 
-    throw new Error(`Serviço Ollama/Local em '${baseUrl}' não respondeu.`);
+    throw new Error(mainErrorMsg);
   }
 
   if (provider === 'openai' || provider === 'openrouter') {
@@ -288,7 +374,7 @@ export async function generateContentWithModel(
       const errMsg = `Chave API para ${provider.toUpperCase()} não foi informada.`;
       addAILog({
         level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider,
         modelId: modelConfig.modelId,
         message: errMsg,
@@ -334,7 +420,7 @@ export async function generateContentWithModel(
         const errorMsg = `Erro na API ${provider.toUpperCase()} (${res.status}): ${errText.slice(0, 150)}`;
         addAILog({
           level: 'ERROR',
-          type: 'SIGNAL_REVIEW',
+          type: logType,
           provider,
           modelId: modelConfig.modelId,
           message: errorMsg,
@@ -349,7 +435,7 @@ export async function generateContentWithModel(
 
       addAILog({
         level: 'SUCCESS',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider,
         modelId: modelConfig.modelId,
         message: `Sucesso ao comunicar com ${provider.toUpperCase()} (${modelConfig.modelId}) em ${durationMs}ms`,
@@ -362,7 +448,7 @@ export async function generateContentWithModel(
       const durationMs = Date.now() - startTime;
       addAILog({
         level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider,
         modelId: modelConfig.modelId,
         message: `Exceção em ${provider.toUpperCase()}: ${err.message}`,
@@ -380,7 +466,7 @@ export async function generateContentWithModel(
       const errMsg = "Chave API da Anthropic não informada.";
       addAILog({
         level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider: 'anthropic',
         modelId: modelConfig.modelId,
         message: errMsg,
@@ -415,7 +501,7 @@ export async function generateContentWithModel(
         const errorMsg = `Erro na API Anthropic (${res.status}): ${errText.slice(0, 150)}`;
         addAILog({
           level: 'ERROR',
-          type: 'SIGNAL_REVIEW',
+          type: logType,
           provider: 'anthropic',
           modelId: modelConfig.modelId,
           message: errorMsg,
@@ -429,7 +515,7 @@ export async function generateContentWithModel(
 
       addAILog({
         level: 'SUCCESS',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider: 'anthropic',
         modelId: modelConfig.modelId,
         message: `Sucesso Anthropic (${modelConfig.modelId}) em ${durationMs}ms`,
@@ -441,7 +527,7 @@ export async function generateContentWithModel(
       const durationMs = Date.now() - startTime;
       addAILog({
         level: 'ERROR',
-        type: 'SIGNAL_REVIEW',
+        type: logType,
         provider: 'anthropic',
         modelId: modelConfig.modelId,
         message: `Exceção Anthropic: ${err.message}`,
@@ -498,6 +584,7 @@ Instructions:
     const result = await generateContentWithModel(targetModelConfig, {
       prompt,
       responseMimeType: "application/json",
+      logType: 'SIGNAL_REVIEW',
       jsonSchema: {
         type: Type.OBJECT,
         properties: {
@@ -625,7 +712,8 @@ Instructions:
     const result = await generateContentWithModel(targetModelConfig, {
       prompt,
       systemInstruction: 'You are Market Signals SuperBot Lead AI Strategist. Provide concise, professional institutional market analysis.',
-      responseMimeType: "application/json"
+      responseMimeType: "application/json",
+      logType: 'MARKET_AUDIT'
     });
 
     const json = JSON.parse(result.text || '{}');
@@ -661,26 +749,38 @@ export async function chatWithAITrader(
   aiAnalysisEnabled: boolean = true,
   requestedModel?: string,
   availableModels: AIModelConfig[] = []
-): Promise<string> {
+): Promise<{ reply: string; modelUsed: string }> {
   if (!aiAnalysisEnabled) {
-    return 'SuperBot AI (Modo de Contingência): A análise de IA está desativada no momento nas configurações.';
+    return {
+      reply: 'SuperBot AI (Modo de Contingência): A análise de IA está desativada no momento nas configurações.',
+      modelUsed: 'Desativado'
+    };
   }
 
   const targetModelConfig = resolveTargetModel(requestedModel, availableModels);
 
-  const context = ticker ? `Current Ticker Context: ${ticker.symbol} Price: ${ticker.price}, 24h: ${ticker.priceChangePercent24h}%, OI: ${ticker.openInterest}, CVD: ${ticker.cvdDirection}, Fibo Golden Pocket: [${ticker.fibonacci.fib68} - ${ticker.fibonacci.fib618}]` : 'General Market Context';
+  const context = ticker 
+    ? `Current Ticker Context: ${ticker.symbol} Price: ${ticker.price}, 24h: ${ticker.priceChangePercent24h}%, OI: ${ticker.openInterest}, CVD: ${ticker.cvdDirection}, Fibo Golden Pocket: [${ticker.fibonacci.fib68} - ${ticker.fibonacci.fib618}]` 
+    : 'General Market Context';
 
   const prompt = `${context}\nUser Question: ${userQuery}`;
 
   try {
     const result = await generateContentWithModel(targetModelConfig, {
       prompt,
-      systemInstruction: 'Você é o SuperBot AI Trader, um mentor e especialista sênior em negociação de criptomoedas e mercado financeiro. Responda de forma direta, técnica e prática em português.'
+      systemInstruction: 'Você é o SuperBot AI Trader, um mentor e especialista sênior em negociação de criptomoedas e mercado financeiro. Responda de forma direta, técnica e prática em português.',
+      logType: 'CHAT_AGENT'
     });
 
-    return result.text?.trim() || 'Análise indisponível no momento.';
+    return {
+      reply: result.text?.trim() || 'Análise indisponível no momento.',
+      modelUsed: result.modelUsed
+    };
   } catch (err: any) {
     console.error(`AI chat error with model ${targetModelConfig.name}:`, err);
-    return `SuperBot AI (${targetModelConfig.name}):\n${err.message}\n\n${ticker ? `Para ${ticker.symbol}, observe o perfil de volume (POC: ${ticker.rangeProfile.poc}) e a convergência com o Golden Pocket.` : 'Mantenha a cautela e observe a tendência macro.'}`;
+    return {
+      reply: `SuperBot AI (${targetModelConfig.name}):\n${err.message}\n\n${ticker ? `Para ${ticker.symbol}, observe o perfil de volume (POC: ${ticker.rangeProfile.poc}) e a convergência com o Golden Pocket.` : 'Mantenha a cautela e observe a tendência macro.'}`,
+      modelUsed: `${targetModelConfig.name} (Erro)`
+    };
   }
 }
