@@ -262,6 +262,8 @@ export default function App() {
             selectedTicker={selectedTicker}
             allTickers={tickers}
             onSelectTickerBySymbol={handleSelectTickerBySymbol}
+            signals={signals}
+            activeModels={botState.aiModels}
           />
         )}
 

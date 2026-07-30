@@ -41,7 +41,7 @@ const PRESET_PROFILES = [
     description: 'Temperatura baixa (0.1). Exige confluência máxima de CVD e Fibonacci.',
     temp: 0.1,
     topP: 0.90,
-    modelId: 'gemini-1.5-pro-latest',
+    modelId: 'gemini-2.5-pro',
     prompt: 'Atue como um gestor de risco ultra-conservador. Só confirme o sinal se o CVD e o Volume Profile estiverem perfeitamente alinhados com a direção do trade. Em dúvida ou divergência, REJEITE a operação.'
   },
   {
@@ -49,7 +49,7 @@ const PRESET_PROFILES = [
     description: 'Temperatura moderada (0.2). Foco em velocidade e reações rápidas de Book.',
     temp: 0.2,
     topP: 0.95,
-    modelId: 'gemini-1.5-flash-latest',
+    modelId: 'gemini-2.5-flash',
     prompt: 'Atue como um trader scalper de alta frequência. Avalie rompimentos rápidos de POC e desequilíbrios no Order Flow.'
   },
   {

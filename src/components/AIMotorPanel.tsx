@@ -20,14 +20,14 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   onToggleAI
 }) => {
   const activeModels = aiModels.filter(m => m.isActive).sort((a, b) => a.priority - b.priority);
-  const [selectedModel, setSelectedModel] = useState<string>(activeModels.length > 0 ? activeModels[0].modelId : 'none');
+  const [selectedModel, setSelectedModel] = useState<string>(activeModels.length > 0 ? activeModels[0].id : 'none');
   const [auditReport, setAuditReport] = useState<AIAuditReport | null>(null);
   const [loadingAudit, setLoadingAudit] = useState(false);
 
   useEffect(() => {
     if (activeModels.length > 0) {
-      if (!activeModels.some(m => m.modelId === selectedModel)) {
-        setSelectedModel(activeModels[0].modelId);
+      if (!activeModels.some(m => m.id === selectedModel || m.modelId === selectedModel)) {
+        setSelectedModel(activeModels[0].id);
       }
     } else {
       setSelectedModel('none');

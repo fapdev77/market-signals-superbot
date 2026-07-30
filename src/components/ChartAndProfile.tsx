@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid, LineChart, Line } from 'recharts';
-import { LineChart as ChartIcon, Layers, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent } from 'lucide-react';
+import { LineChart as ChartIcon, Layers, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu } from 'lucide-react';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -25,6 +25,18 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [aiReview, setAiReview] = useState<AIReviewResponse | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
   const [timeframe, setTimeframe] = useState('15m');
+  const [selectedModel, setSelectedModel] = useState<string>('');
+
+  const enabledModels = activeModels.filter(m => m.isActive);
+
+  useEffect(() => {
+    if (activeModels && activeModels.length > 0) {
+      const active = activeModels.find(m => m.isActive) || activeModels[0];
+      if (active && !selectedModel) {
+        setSelectedModel(active.id);
+      }
+    }
+  }, [activeModels]);
   
   const activeSignal = signals.find(s => s.symbol === ticker?.symbol);
 
@@ -50,7 +62,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     if (!ticker) return;
     setLoadingReview(true);
     try {
-      const model = activeModels.find(m => m.isActive)?.modelId || 'gemini-1.5-flash-latest';
+      const model = selectedModel || activeModels.find(m => m.isActive)?.id || undefined;
       const res = await fetch('/api/ai/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,19 +240,42 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={handleRunAIReview}
-            disabled={loadingReview}
-            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-black rounded-lg text-xs font-black transition flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 whitespace-nowrap cursor-pointer"
-          >
-            {loadingReview ? (
-              <><RefreshCw className="h-4 w-4 animate-spin" /> Auditando com IA...</>
-            ) : aiReview ? (
-              <><RefreshCw className="h-4 w-4" /> Re-Executar Auditoria</>
-            ) : (
-              <><Brain className="h-4 w-4" /> Executar Auditoria IA</>
-            )}
-          </button>
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+            {/* Active Model Selector */}
+            <div className="flex items-center gap-1.5 bg-[#050505] px-2.5 py-1.5 rounded-lg border border-white/10 text-xs">
+              <Cpu className="h-3.5 w-3.5 text-orange-400 shrink-0" />
+              <span className="text-[10px] text-neutral-400 font-bold uppercase hidden md:inline">Modelo:</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer max-w-[180px] sm:max-w-[220px] truncate"
+              >
+                {enabledModels.length > 0 ? (
+                  enabledModels.map(m => (
+                    <option key={m.id} value={m.id} className="bg-[#0A0A0A] text-white">
+                      {m.name} ({m.provider.toUpperCase()} - {m.modelId})
+                    </option>
+                  ))
+                ) : (
+                  <option value="" className="bg-[#0A0A0A] text-neutral-400">Motor IA Ativo (Auto)</option>
+                )}
+              </select>
+            </div>
+
+            <button
+              onClick={handleRunAIReview}
+              disabled={loadingReview}
+              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-black rounded-lg text-xs font-black transition flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+            >
+              {loadingReview ? (
+                <><RefreshCw className="h-4 w-4 animate-spin" /> Auditando com IA...</>
+              ) : aiReview ? (
+                <><RefreshCw className="h-4 w-4" /> Re-Executar Auditoria</>
+              ) : (
+                <><Brain className="h-4 w-4" /> Executar Auditoria IA</>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* AI Reasoning Header if AI Review exists */}
