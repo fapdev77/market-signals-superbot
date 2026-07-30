@@ -111,6 +111,11 @@ export async function generateContentWithModel(
       const durationMs = Date.now() - startTime;
       const textOutput = response.text?.trim() || '';
 
+      const sysInstruction = options.systemInstruction || modelConfig.parameters.systemInstruction;
+      const fullPromptText = sysInstruction 
+        ? `[SYSTEM INSTRUCTION]\n${sysInstruction}\n\n[USER PROMPT]\n${options.prompt}` 
+        : options.prompt;
+
       addAILog({
         level: 'SUCCESS',
         type: logType,
@@ -119,6 +124,8 @@ export async function generateContentWithModel(
         message: `Conteúdo gerado via Gemini (${targetModel}) em ${durationMs}ms`,
         durationMs,
         details: {
+          fullPrompt: fullPromptText,
+          fullResponse: textOutput,
           promptSnippet: options.prompt.slice(0, 150) + '...',
           outputSnippet: textOutput.slice(0, 150) + '...'
         }
@@ -195,6 +202,8 @@ export async function generateContentWithModel(
             diagnosticSteps.push(`Métricas Ollama: ${tokensPerSec} tokens/s (${data.eval_count} tokens em ${evalSec.toFixed(2)}s)`);
           }
 
+          const fullPromptText = sysPrompt ? `[SYSTEM]\n${sysPrompt}\n\n[USER]\n${fullPrompt}` : fullPrompt;
+
           addAILog({
             level: 'SUCCESS',
             type: logType,
@@ -204,6 +213,8 @@ export async function generateContentWithModel(
             durationMs,
             details: {
               baseUrl,
+              fullPrompt: fullPromptText,
+              fullResponse: output,
               promptSnippet: fullPrompt.slice(0, 200),
               outputSnippet: output.slice(0, 200),
               diagnosticSteps,
@@ -433,6 +444,8 @@ export async function generateContentWithModel(
       const data = await res.json();
       const output = data.choices?.[0]?.message?.content || '';
 
+      const fullPromptText = sysPrompt ? `[SYSTEM]\n${sysPrompt}\n\n[USER]\n${options.prompt}` : options.prompt;
+
       addAILog({
         level: 'SUCCESS',
         type: logType,
@@ -440,7 +453,12 @@ export async function generateContentWithModel(
         modelId: modelConfig.modelId,
         message: `Sucesso ao comunicar com ${provider.toUpperCase()} (${modelConfig.modelId}) em ${durationMs}ms`,
         durationMs,
-        details: { outputSnippet: output.slice(0, 150) }
+        details: { 
+          fullPrompt: fullPromptText,
+          fullResponse: output,
+          promptSnippet: options.prompt.slice(0, 150),
+          outputSnippet: output.slice(0, 150) 
+        }
       });
 
       return { text: output, modelUsed: `${provider.toUpperCase()} (${modelConfig.modelId})` };

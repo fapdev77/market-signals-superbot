@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AIAuditReport, TickerData, IndicatorWeights, AIModelConfig } from '../types';
 import { Brain, Cpu, RefreshCw, Send, ShieldAlert, Sparkles, CheckCircle, Sliders, MessageSquare } from 'lucide-react';
 
@@ -44,6 +44,15 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   const [inputQuery, setInputQuery] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
   const [selectedSymbolForChat, setSelectedSymbolForChat] = useState<string>('BTCUSDT');
+
+  // Ref for chat auto-scrolling
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages, loadingChat]);
 
   const fetchLatestAudit = async () => {
     try {
@@ -104,9 +113,9 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   };
 
   return (
-    <div className="space-y-4 font-mono">
-      {/* AI Motor Engine Header */}
-      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+    <div className="flex flex-col space-y-4 font-mono w-full">
+      {/* AI Motor Engine Header Card */}
+      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-orange-500/10 text-orange-400 rounded border border-orange-500/30">
             <Brain className="h-6 w-6" />
@@ -119,13 +128,13 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
               </span>
             </div>
             <p className="text-[10px] text-neutral-400 mt-0.5 max-w-2xl">
-              Auditoria estratégica e calibração quantitativa alimentadas por modelos Gemini server-side.
+              Auditoria estratégica e calibração quantitativa alimentadas por modelos de IA server-side.
             </p>
           </div>
         </div>
 
         {/* Model Selector and AI Toggle */}
-        <div className="bg-[#050505] p-2 rounded border border-white/10 flex items-center gap-3 w-full lg:w-auto">
+        <div className="bg-[#050505] p-2 rounded border border-white/10 flex items-center gap-3 w-full md:w-auto">
           {/* Toggle IA */}
           <button
             onClick={() => onToggleAI(!aiAnalysisEnabled)}
@@ -163,9 +172,10 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
             </div>
           </div>
         </div>
+      </div>
 
-      {/* Strategic Audit Section */}
-      <div className="bg-[#0A0A0A] rounded-lg border border-white/10 p-4 shadow-xl space-y-4">
+      {/* Strategic Audit Section Card */}
+      <div className="bg-[#0A0A0A] rounded-lg border border-white/10 p-4 shadow-xl space-y-4 w-full">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-orange-400" />
@@ -259,8 +269,8 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
         )}
       </div>
 
-      {/* Interactive AI Trader Assistant Chat */}
-      <div className="bg-[#0A0A0A] rounded-lg border border-white/10 p-4 shadow-xl space-y-3">
+      {/* Interactive AI Trader Assistant Chat Card */}
+      <div className="bg-[#0A0A0A] rounded-lg border border-white/10 p-4 shadow-xl space-y-3 w-full">
         <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
           <div className="flex items-center gap-2">
             <MessageSquare className="h-4 w-4 text-orange-400" />
@@ -282,7 +292,10 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
         </div>
 
         {/* Chat History Box */}
-        <div className="h-60 bg-[#050505] p-3 rounded border border-white/5 overflow-y-auto space-y-2.5 text-xs">
+        <div 
+          ref={chatContainerRef}
+          className="h-72 bg-[#050505] p-3 rounded border border-white/5 overflow-y-auto space-y-2.5 text-xs scroll-smooth"
+        >
           {chatMessages.map((m, idx) => (
             <div
               key={idx}
@@ -299,7 +312,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
                 )}
               </div>
               <div
-                className={`max-w-xl p-2.5 rounded text-xs leading-relaxed whitespace-pre-wrap ${
+                className={`max-w-2xl p-2.5 rounded text-xs leading-relaxed whitespace-pre-wrap ${
                   m.sender === 'user'
                     ? 'bg-orange-500 text-black font-bold'
                     : 'bg-[#0A0A0A] text-neutral-200 border border-white/10'
@@ -334,7 +347,6 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
             <Send className="h-3.5 w-3.5" />
             Enviar
           </button>
-        </div>
         </div>
       </div>
     </div>

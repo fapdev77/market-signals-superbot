@@ -545,22 +545,51 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
                             </div>
                           )}
 
-                          {/* Prompt or Preview snippet */}
-                          {log.details?.promptSnippet && (
-                            <div>
-                              <span className="text-neutral-500 text-[10px] block uppercase font-bold">Trecho do Prompt Enviado:</span>
-                              <pre className="bg-black/80 p-2 rounded border border-white/5 text-[10px] text-neutral-300 whitespace-pre-wrap overflow-x-auto max-h-32">
-                                {log.details.promptSnippet}
+                          {/* Full Prompt Payload */}
+                          {(log.details?.fullPrompt || log.details?.promptSnippet) && (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-orange-400 text-[10px] uppercase font-bold flex items-center gap-1">
+                                  📄 Payload Completo do Prompt Enviado:
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(log.details?.fullPrompt || log.details?.promptSnippet || '');
+                                    alert('Prompt copiado para a área de transferência!');
+                                  }}
+                                  className="text-[9px] bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-0.5 rounded border border-white/10 transition"
+                                >
+                                  Copiar Prompt
+                                </button>
+                              </div>
+                              <pre className="bg-black/90 p-3 rounded-lg border border-orange-500/20 text-[11px] text-orange-200/90 whitespace-pre-wrap overflow-y-auto max-h-60 leading-relaxed font-mono">
+                                {log.details?.fullPrompt || log.details?.promptSnippet}
                               </pre>
                             </div>
                           )}
 
-                          {log.details?.preview && (
-                            <div>
-                              <span className="text-neutral-500 text-[10px] block uppercase font-bold">Resposta do Modelo:</span>
-                              <div className="bg-emerald-950/20 p-2 rounded border border-emerald-500/20 text-[11px] text-emerald-300 font-mono">
-                                "{log.details.preview}"
+                          {/* Full AI Response Payload */}
+                          {(log.details?.fullResponse || log.details?.preview || log.details?.outputSnippet) && (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-emerald-400 text-[10px] uppercase font-bold flex items-center gap-1">
+                                  🤖 Resposta Completa Recebida da IA:
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(log.details?.fullResponse || log.details?.preview || log.details?.outputSnippet || '');
+                                    alert('Resposta copiada para a área de transferência!');
+                                  }}
+                                  className="text-[9px] bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-0.5 rounded border border-white/10 transition"
+                                >
+                                  Copiar Resposta
+                                </button>
                               </div>
+                              <pre className="bg-emerald-950/20 p-3 rounded-lg border border-emerald-500/30 text-[11px] text-emerald-200/90 whitespace-pre-wrap overflow-y-auto max-h-60 leading-relaxed font-mono">
+                                {log.details?.fullResponse || log.details?.preview || log.details?.outputSnippet}
+                              </pre>
                             </div>
                           )}
 
