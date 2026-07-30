@@ -422,58 +422,73 @@ async function startServer() {
         diagnosticSteps.push(`Modelo Testado: ${modelName}`);
 
         if (isLocalhost || isPrivateIp) {
-          diagnosticSteps.push(`[Informação de Rede] '${url}' é um endereço de rede local/privada.`);
-          diagnosticSteps.push(`O backend do SuperBot está rodando na Nuvem (Cloud Run). Se seu Ollama estiver rodando no seu computador pessoal nessa rede Wi-Fi local, o servidor na nuvem não conseguirá alcançá-lo sem um túnel público.`);
+          diagnosticSteps.push(`[Informação de Rede] '${url}' é um endereço de IP privado/local.`);
+          diagnosticSteps.push(`O backend do SuperBot está rodando na Nuvem (Cloud Run). Se seu Ollama estiver rodando no seu computador pessoal nessa rede Wi-Fi local, o servidor na nuvem não conseguirá alcançá-lo sem um túnel público HTTPS.`);
         }
 
-        let pingSuccess = false;
+        let serverResponded = false;
+        let generationSuccess = false;
         let activeEndpoint = '';
         let availableModelsList: string[] = [];
 
         // 1. Test GET /api/tags (List installed models on Ollama)
         diagnosticSteps.push(`[Passo 1/3] Testando GET ${url}/api/tags (Lista de Modelos do Ollama)...`);
         try {
-          const res1 = await fetch(`${url}/api/tags`, { method: 'GET' });
-          if (res1.ok) {
-            pingSuccess = true;
-            activeEndpoint = `${url}/api/tags`;
-            const data1 = await res1.json();
-            if (Array.isArray(data1.models)) {
-              availableModelsList = data1.models.map((m: any) => m.name || m.model);
-              diagnosticSteps.push(`[Sucesso /api/tags] Modelos detectados no seu servidor Ollama: ${availableModelsList.join(', ')}`);
-            } else {
-              diagnosticSteps.push(`[Sucesso /api/tags] Endpoint /api/tags respondeu HTTP 200`);
+          const res1 = await fetch(`${url}/api/tags`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(6000)
+          });
+          const contentType = res1.headers.get('content-type') || '';
+          if (res1.ok && contentType.includes('application/json')) {
+            const data1 = await res1.json().catch(() => null);
+            if (data1) {
+              serverResponded = true;
+              activeEndpoint = `${url}/api/tags`;
+              if (Array.isArray(data1.models)) {
+                availableModelsList = data1.models.map((m: any) => m.name || m.model);
+                diagnosticSteps.push(`[Sucesso /api/tags] Server respondendo. Modelos instalados no Ollama: ${availableModelsList.length > 0 ? availableModelsList.join(', ') : 'Nenhum modelo listado'}`);
+              } else {
+                diagnosticSteps.push(`[Sucesso /api/tags] Endpoint /api/tags respondeu HTTP 200 OK`);
+              }
             }
           } else {
-            diagnosticSteps.push(`[Passo 1/3] Endpoint /api/tags retornou HTTP ${res1.status}`);
+            diagnosticSteps.push(`[Passo 1/3] Endpoint /api/tags retornou HTTP ${res1.status} (${contentType})`);
           }
         } catch (e: any) {
-          diagnosticSteps.push(`[Passo 1/3] Falha em GET /api/tags: ${e.message}`);
+          diagnosticSteps.push(`[Passo 1/3] GET /api/tags não respondeu (${e.message})`);
         }
 
-        // 2. Test GET /v1/models
-        if (!pingSuccess) {
+        // 2. Test GET /v1/models (OpenAI compatibility)
+        if (!serverResponded) {
           diagnosticSteps.push(`[Passo 2/3] Testando GET ${url}/v1/models...`);
           try {
-            const res2 = await fetch(`${url}/v1/models`, { method: 'GET' });
-            if (res2.ok) {
-              pingSuccess = true;
-              activeEndpoint = `${url}/v1/models`;
-              diagnosticSteps.push(`[Passo 2/3] Sucesso! Endpoint /v1/models retornou HTTP ${res2.status}`);
+            const res2 = await fetch(`${url}/v1/models`, {
+              method: 'GET',
+              signal: AbortSignal.timeout(6000)
+            });
+            const contentType = res2.headers.get('content-type') || '';
+            if (res2.ok && contentType.includes('application/json')) {
+              const data2 = await res2.json().catch(() => null);
+              if (data2) {
+                serverResponded = true;
+                activeEndpoint = `${url}/v1/models`;
+                diagnosticSteps.push(`[Passo 2/3] Sucesso! Endpoint /v1/models respondeu HTTP ${res2.status} JSON`);
+              }
             } else {
               diagnosticSteps.push(`[Passo 2/3] Endpoint /v1/models retornou HTTP ${res2.status}`);
             }
           } catch (e: any) {
-            diagnosticSteps.push(`[Passo 2/3] Falha em GET /v1/models: ${e.message}`);
+            diagnosticSteps.push(`[Passo 2/3] GET /v1/models não respondeu (${e.message})`);
           }
         }
 
-        // 3. Test POST /api/generate (Real Generation Ping)
-        diagnosticSteps.push(`[Passo 3/3] Executando geração de teste POST ${url}/api/generate no modelo '${modelName}'...`);
+        // 3. Test POST /api/generate (Real Generation Ping with requested modelName)
+        diagnosticSteps.push(`[Passo 3/3] Testando inferência real com modelo '${modelName}' via POST ${url}/api/generate...`);
         try {
           const res3 = await fetch(`${url}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(15000),
             body: JSON.stringify({
               model: modelName,
               prompt: 'Ping test. Reply OK.',
@@ -481,23 +496,57 @@ async function startServer() {
             })
           });
           if (res3.ok) {
-            const data3 = await res3.json();
-            const outputStr = data3.response || data3.output || 'OK';
-            pingSuccess = true;
-            activeEndpoint = `${url}/api/generate`;
-            diagnosticSteps.push(`[Sucesso /api/generate] Modelo '${modelName}' respondeu com sucesso: "${outputStr.trim().slice(0, 100)}"`);
+            const data3 = await res3.json().catch(() => ({}));
+            const outputStr = data3.response || data3.output || data3.text || '';
+            if (outputStr && outputStr.trim()) {
+              generationSuccess = true;
+              serverResponded = true;
+              activeEndpoint = `${url}/api/generate`;
+              diagnosticSteps.push(`[Sucesso /api/generate] Modelo '${modelName}' respondeu: "${outputStr.trim().slice(0, 80)}"`);
+            } else {
+              diagnosticSteps.push(`[Aviso /api/generate] HTTP 200 recebido, mas texto de resposta veio vazio.`);
+            }
           } else {
             const errText = await res3.text().catch(() => '');
             diagnosticSteps.push(`[Passo 3/3] POST /api/generate no modelo '${modelName}' retornou HTTP ${res3.status}: ${errText.slice(0, 120)}`);
           }
         } catch (e: any) {
-          diagnosticSteps.push(`[Passo 3/3] Falha em POST /api/generate: ${e.message}`);
+          diagnosticSteps.push(`[Passo 3/3] Falha na geração com modelo '${modelName}': ${e.message}`);
+        }
+
+        // 4. Try POST /api/chat if generate failed
+        if (!generationSuccess) {
+          diagnosticSteps.push(`[Passo 3.1/3] Tentando inferência via POST ${url}/api/chat...`);
+          try {
+            const res4 = await fetch(`${url}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(15000),
+              body: JSON.stringify({
+                model: modelName,
+                messages: [{ role: 'user', content: 'Ping test' }],
+                stream: false
+              })
+            });
+            if (res4.ok) {
+              const data4 = await res4.json().catch(() => ({}));
+              const outputStr = data4.message?.content || data4.response || '';
+              if (outputStr && outputStr.trim()) {
+                generationSuccess = true;
+                serverResponded = true;
+                activeEndpoint = `${url}/api/chat`;
+                diagnosticSteps.push(`[Sucesso /api/chat] Modelo '${modelName}' respondeu: "${outputStr.trim().slice(0, 80)}"`);
+              }
+            }
+          } catch (e: any) {
+            diagnosticSteps.push(`[Passo 3.1/3] Falha em /api/chat: ${e.message}`);
+          }
         }
 
         const latency = Date.now() - startTime;
 
-        if (pingSuccess) {
-          const msg = `Serviço Ollama/Local em '${url}' ativo e respondendo (${latency}ms). Modelo: ${modelName}`;
+        if (generationSuccess) {
+          const msg = `Serviço Ollama/Local em '${url}' ativo e gerando respostas com sucesso (${latency}ms). Modelo: ${modelName}`;
           addAILog({
             level: 'SUCCESS',
             type: 'TEST_CONNECTION',
@@ -517,13 +566,13 @@ async function startServer() {
         }
 
         if (isLocalhost || isPrivateIp) {
-          diagnosticSteps.push(`[Guia de Conexão Ollama para Nuvem]:`);
-          diagnosticSteps.push(`1. No computador onde seu Ollama está rodando (com os modelos ${modelName}), abra o terminal.`);
-          diagnosticSteps.push(`2. Execute o Ngrok: 'ngrok http 11434'`);
-          diagnosticSteps.push(`3. Copie a URL pública HTTPS (ex: https://xxxx.ngrok-free.app).`);
-          diagnosticSteps.push(`4. Cole essa URL no campo 'URL da API' nas configurações do modelo Ollama.`);
+          diagnosticSteps.push(`\n[Instruções de Conexão Ollama -> Nuvem]:`);
+          diagnosticSteps.push(`1. Seu servidor SuperBot roda na Nuvem (Cloud Run). De lá, o IP '${url}' é inacessível.`);
+          diagnosticSteps.push(`2. No PC onde o Ollama está rodando, instale o Ngrok (https://ngrok.com).`);
+          diagnosticSteps.push(`3. Execute no terminal do PC: ngrok http 11434`);
+          diagnosticSteps.push(`4. Copie a URL pública gerada (ex: https://xxxx.ngrok-free.app) e cole no campo 'URL da API'.`);
 
-          const msg = `Ollama em '${url}' inacessível pela Nuvem. Para conectar seu Ollama local, execute 'ngrok http 11434' no seu PC e use a URL HTTPS gerada.`;
+          const msg = `Ollama em IP local '${url}' é inacessível a partir do servidor em Nuvem. Execute 'ngrok http 11434' no seu PC e use a URL HTTPS gerada.`;
           
           addAILog({
             level: 'ERROR',
@@ -543,7 +592,10 @@ async function startServer() {
           });
         }
 
-        const msg = `Servidor Ollama/Local em '${url}' não respondeu. Verifique se o serviço está ativo e o modelo '${modelName}' instalado.`;
+        const msg = serverResponded
+          ? `Servidor em '${url}' respondeu, mas o modelo '${modelName}' não gerou respostas. Verifique se o modelo está baixado ('ollama pull ${modelName}').`
+          : `Servidor Ollama/Local em '${url}' não respondeu. Verifique se o serviço está rodando e a URL está correta.`;
+
         addAILog({
           level: 'ERROR',
           type: 'TEST_CONNECTION',

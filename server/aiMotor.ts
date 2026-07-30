@@ -163,12 +163,22 @@ export async function generateContentWithModel(
         ? `[SYSTEM INSTRUCTION]\n${sysInstruction}\n\n[USER PROMPT]\n${options.prompt}` 
         : options.prompt;
 
+      const promptTokens = (response as any)?.usageMetadata?.promptTokenCount || Math.ceil(fullPromptText.length / 4);
+      const completionTokens = (response as any)?.usageMetadata?.candidatesTokenCount || Math.ceil(textOutput.length / 4);
+      const totalTokens = (response as any)?.usageMetadata?.totalTokenCount || (promptTokens + completionTokens);
+      const costEstimate = (promptTokens * 0.000000075) + (completionTokens * 0.0000003);
+
       addAILog({
         level: 'SUCCESS',
         type: logType,
         provider: 'gemini',
         modelId: targetModel,
-        message: `Conteúdo gerado via Gemini (${targetModel}) em ${durationMs}ms`,
+        modelName: modelConfig.name || targetModel,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        costEstimate,
+        message: `Conteúdo gerado via Gemini (${modelConfig.name || targetModel}) em ${durationMs}ms`,
         durationMs,
         details: {
           fullPrompt: fullPromptText,
@@ -232,6 +242,7 @@ export async function generateContentWithModel(
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(20000),
         body: JSON.stringify(bodyObj)
       });
 
@@ -250,13 +261,21 @@ export async function generateContentWithModel(
           }
 
           const fullPromptText = sysPrompt ? `[SYSTEM]\n${sysPrompt}\n\n[USER]\n${fullPrompt}` : fullPrompt;
+          const promptTokens = data.prompt_eval_count || Math.ceil(fullPromptText.length / 4);
+          const completionTokens = data.eval_count || Math.ceil(output.length / 4);
+          const totalTokens = promptTokens + completionTokens;
 
           addAILog({
             level: 'SUCCESS',
             type: logType,
             provider: 'local',
             modelId,
-            message: `Resposta obtida via Ollama Nativo /api/generate (${modelId}) em ${durationMs}ms${tokensPerSec ? ` [${tokensPerSec} tok/s]` : ''}`,
+            modelName: modelConfig.name || modelId,
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            costEstimate: 0,
+            message: `Resposta obtida via Ollama Nativo /api/generate (${modelConfig.name || modelId}) em ${durationMs}ms${tokensPerSec ? ` [${tokensPerSec} tok/s]` : ''}`,
             durationMs,
             details: {
               baseUrl,
@@ -304,6 +323,7 @@ export async function generateContentWithModel(
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(20000),
         body: JSON.stringify(bodyObj)
       });
 
@@ -314,12 +334,21 @@ export async function generateContentWithModel(
           const durationMs = Date.now() - startTime;
           diagnosticSteps.push(`[Sucesso /api/chat] Resposta obtida (${output.length} chars) em ${durationMs}ms`);
 
+          const promptTokens = data.prompt_eval_count || Math.ceil(fullPrompt.length / 4);
+          const completionTokens = data.eval_count || Math.ceil(output.length / 4);
+          const totalTokens = promptTokens + completionTokens;
+
           addAILog({
             level: 'SUCCESS',
             type: logType,
             provider: 'local',
             modelId,
-            message: `Resposta obtida via Ollama Nativo /api/chat (${modelId}) em ${durationMs}ms`,
+            modelName: modelConfig.name || modelId,
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            costEstimate: 0,
+            message: `Resposta obtida via Ollama Nativo /api/chat (${modelConfig.name || modelId}) em ${durationMs}ms`,
             durationMs,
             details: {
               baseUrl,
@@ -352,6 +381,7 @@ export async function generateContentWithModel(
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(20000),
         body: JSON.stringify({
           model: modelId,
           messages,
@@ -492,13 +522,24 @@ export async function generateContentWithModel(
       const output = data.choices?.[0]?.message?.content || '';
 
       const fullPromptText = sysPrompt ? `[SYSTEM]\n${sysPrompt}\n\n[USER]\n${options.prompt}` : options.prompt;
+      const promptTokens = data.usage?.prompt_tokens || Math.ceil(fullPromptText.length / 4);
+      const completionTokens = data.usage?.completion_tokens || Math.ceil(output.length / 4);
+      const totalTokens = data.usage?.total_tokens || (promptTokens + completionTokens);
+      const costEstimate = provider === 'openrouter' 
+        ? (promptTokens * 0.0000002) + (completionTokens * 0.0000008)
+        : (promptTokens * 0.0000015) + (completionTokens * 0.000002);
 
       addAILog({
         level: 'SUCCESS',
         type: logType,
         provider,
         modelId: modelConfig.modelId,
-        message: `Sucesso ao comunicar com ${provider.toUpperCase()} (${modelConfig.modelId}) em ${durationMs}ms`,
+        modelName: modelConfig.name || modelConfig.modelId,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        costEstimate,
+        message: `Sucesso ao comunicar com ${provider.toUpperCase()} (${modelConfig.name || modelConfig.modelId}) em ${durationMs}ms`,
         durationMs,
         details: { 
           fullPrompt: fullPromptText,

@@ -153,6 +153,33 @@ export interface BotState {
   aiAnalysisEnabled: boolean;
 }
 
+export interface AILogEntry {
+  id: string;
+  timestamp: string;
+  level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR';
+  type: 'TEST_CONNECTION' | 'SIGNAL_REVIEW' | 'MARKET_AUDIT' | 'CHAT_AGENT' | 'MODEL_CONFIG';
+  provider: 'gemini' | 'local' | 'openai' | 'openrouter' | 'anthropic' | 'system';
+  modelId: string;
+  modelName?: string;
+  message: string;
+  durationMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  costEstimate?: number;
+  details?: {
+    fullPrompt?: string;
+    fullResponse?: string;
+    promptSnippet?: string;
+    outputSnippet?: string;
+    apiUrl?: string;
+    apiKeyPresent?: boolean;
+    errorStack?: string;
+    diagnosticSteps?: string[];
+    [key: string]: any;
+  };
+}
+
 export type AIProvider = 'gemini' | 'openai' | 'openrouter' | 'anthropic' | 'local';
 
 export interface AIModelConfig {
