@@ -131,8 +131,17 @@ async function startServer() {
           openInterestChange24h: 0,
           openInterestChange1h: 0,
           fundingRate: 0,
+          fundingRateDaily: 0,
           fundingRateAnnualized: 0,
+          fundingRateAnalysis: {
+            status: 'NEUTRAL',
+            pressure: 'NEUTRO / EQUILIBRADO',
+            bias: 'NEUTRAL',
+            description: 'Ativo TradFi sem taxas de funding perpétuas aplicáveis.'
+          },
           cvd: varPct * 120000,
+          cvdDelta: varPct * 12000,
+          cvdDeltaPercent: Number(varPct.toFixed(2)),
           cvdDirection: varPct > 0 ? 'BUY' : 'SELL',
           takerBuyRatio: 0.5 + varPct * 0.05,
           fibonacci: {

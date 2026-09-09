@@ -29,14 +29,24 @@ export function processTickerState(
   // Compute Fibonacci (0.5, 0.618, 0.68)
   const fibonacci = calculateFibonacci(klines, price);
 
-  // Compute CVD (Cumulative Volume Delta)
+  // Compute CVD (Cumulative Volume Delta) & Short-term Delta
   let totalBuyVol = 0;
   let totalSellVol = 0;
-  klines.forEach(c => {
+  let recentBuyVol = 0;
+  let recentSellVol = 0;
+  const recentCount = Math.min(5, klines.length);
+  klines.forEach((c, idx) => {
     totalBuyVol += c.takerBuyVolume;
     totalSellVol += Math.max(0, c.volume - c.takerBuyVolume);
+    if (idx >= klines.length - recentCount) {
+      recentBuyVol += c.takerBuyVolume;
+      recentSellVol += Math.max(0, c.volume - c.takerBuyVolume);
+    }
   });
   const cvd = (totalBuyVol - totalSellVol) * price;
+  const cvdDelta = (recentBuyVol - recentSellVol) * price;
+  const totalRecentVol = (recentBuyVol + recentSellVol) || 1;
+  const cvdDeltaPercent = Number((((recentBuyVol - recentSellVol) / totalRecentVol) * 100).toFixed(2));
   const takerBuyRatio = totalBuyVol / (totalBuyVol + totalSellVol || 1);
   const cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL' =
     takerBuyRatio > 0.53 ? 'BUY' : takerBuyRatio < 0.47 ? 'SELL' : 'NEUTRAL';
@@ -93,13 +103,15 @@ export function processTickerState(
     }
   }
 
-  // 3. CVD Imbalance
+  // 3. CVD Imbalance & Short-term Delta
   if (cvdDirection === 'BUY') {
-    bullishPoints += weights.cvdImbalanceWeight;
-    confluenceFactors.push(`Strong CVD Net Buyer Flow (${(takerBuyRatio * 100).toFixed(1)}% Taker Buy)`);
+    const boost = cvdDeltaPercent > 10 ? 1.2 : 1.0;
+    bullishPoints += weights.cvdImbalanceWeight * boost;
+    confluenceFactors.push(`Strong CVD Net Buyer Flow (${(takerBuyRatio * 100).toFixed(1)}% Taker Buy · Delta Recente ${cvdDeltaPercent > 0 ? '+' : ''}${cvdDeltaPercent}%)`);
   } else if (cvdDirection === 'SELL') {
-    bearishPoints += weights.cvdImbalanceWeight;
-    confluenceFactors.push(`Aggressive CVD Market Selling (${((1 - takerBuyRatio) * 100).toFixed(1)}% Taker Sell)`);
+    const boost = cvdDeltaPercent < -10 ? 1.2 : 1.0;
+    bearishPoints += weights.cvdImbalanceWeight * boost;
+    confluenceFactors.push(`Aggressive CVD Market Selling (${((1 - takerBuyRatio) * 100).toFixed(1)}% Taker Sell · Delta Recente ${cvdDeltaPercent}%)`);
   }
 
   // 4. Volume Profile Range (VAL / VAH / POC)
@@ -118,15 +130,50 @@ export function processTickerState(
     confluenceFactors.push('Rejection at Range High (VAH) Resistance');
   }
 
-  // 5. Funding Rate Crowd Positioning
+  // 5. Funding Rate Crowd Positioning (Análise do Comportamento do Funding Rate)
+  const fundingRateDaily = fundingRate * 3;
   const annualFunding = fundingRate * 3 * 365 * 100;
-  if (fundingRate < -0.0002) {
-    bullishPoints += weights.fundingRateWeight;
-    confluenceFactors.push(`Negative Funding (${annualFunding.toFixed(1)}% APR) - Short Squeeze Potential`);
-  } else if (fundingRate > 0.0004) {
-    bearishPoints += weights.fundingRateWeight;
-    confluenceFactors.push(`Overheated Long Funding (${annualFunding.toFixed(1)}% APR) - Long Flush Risk`);
+  let fundingStatus: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE' = 'NEUTRAL';
+  let fundingPressure: any = 'NEUTRO / EQUILIBRADO';
+  let fundingBias: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
+  let fundingDesc = 'Funding rate em equilíbrio normal (' + (fundingRateDaily * 100).toFixed(3) + '%/dia). Sem pressões alavancadas em extremos.';
+
+  if (fundingRate > 0.0004) {
+    fundingStatus = 'EXTREME_POSITIVE';
+    fundingPressure = 'PRESSÃO COMPRADORA EXTREMA (RISCO LONG FLUSH)';
+    fundingBias = 'SELL';
+    fundingDesc = `Alavancagem compradora superaquecida (+${(fundingRateDaily * 100).toFixed(2)}%/dia · ${annualFunding.toFixed(1)}% APR). Risco elevado de liquidações em cascata de longs (pressão vendedora exaustiva).`;
+    bearishPoints += weights.fundingRateWeight * 1.5;
+    confluenceFactors.push(`Funding Fee Muito Positivo (+${(fundingRateDaily * 100).toFixed(3)}%/dia · ${annualFunding.toFixed(1)}% APR) - Pressão Compradora Excessiva / Risco Long Flush`);
+  } else if (fundingRate > 0.00015) {
+    fundingStatus = 'POSITIVE';
+    fundingPressure = 'PRESSÃO COMPRADORA MODERADA';
+    fundingBias = 'SELL';
+    fundingDesc = `Taxa de funding positiva (+${(fundingRateDaily * 100).toFixed(2)}%/dia). Longs pagando shorts, sugerindo otimismo e possível resistência compradora.`;
+    bearishPoints += weights.fundingRateWeight * 0.8;
+    confluenceFactors.push(`Funding Fee Positivo (+${(fundingRateDaily * 100).toFixed(3)}%/dia) - Longs Pagando Shorts / Atenção à Exaustão`);
+  } else if (fundingRate < -0.0003) {
+    fundingStatus = 'EXTREME_NEGATIVE';
+    fundingPressure = 'PRESSÃO VENDEDORA EXTREMA (POTENCIAL SHORT SQUEEZE)';
+    fundingBias = 'BUY';
+    fundingDesc = `Agressão vendedora exaustiva e shorts alavancados (${(fundingRateDaily * 100).toFixed(2)}%/dia · ${annualFunding.toFixed(1)}% APR). Forte potencial para short squeeze e reversão altista rápida.`;
+    bullishPoints += weights.fundingRateWeight * 1.5;
+    confluenceFactors.push(`Funding Fee Muito Negativo (${(fundingRateDaily * 100).toFixed(3)}%/dia · ${annualFunding.toFixed(1)}% APR) - Pressão Vendedora Exaustiva / Potencial Short Squeeze`);
+  } else if (fundingRate < -0.0001) {
+    fundingStatus = 'NEGATIVE';
+    fundingPressure = 'PRESSÃO VENDEDORA MODERADA';
+    fundingBias = 'BUY';
+    fundingDesc = `Taxa de funding negativa (${(fundingRateDaily * 100).toFixed(2)}%/dia). Shorts pagando longs, indicando pessimismo do varejo e suporte de compra reversa.`;
+    bullishPoints += weights.fundingRateWeight * 0.8;
+    confluenceFactors.push(`Funding Fee Negativo (${(fundingRateDaily * 100).toFixed(3)}%/dia) - Shorts Pagando Longs / Viés de Suporte`);
   }
+
+  const fundingRateAnalysis = {
+    status: fundingStatus,
+    pressure: fundingPressure,
+    bias: fundingBias,
+    description: fundingDesc
+  };
 
   // 6. Structure Break & FVG
   if (structureBreak === 'BULLISH') {
@@ -181,8 +228,12 @@ export function processTickerState(
     openInterestChange24h,
     openInterestChange1h,
     fundingRate,
+    fundingRateDaily,
     fundingRateAnnualized: annualFunding,
+    fundingRateAnalysis,
     cvd,
+    cvdDelta,
+    cvdDeltaPercent,
     cvdDirection,
     takerBuyRatio,
     fibonacci,

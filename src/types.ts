@@ -18,9 +18,18 @@ export interface TickerData {
   openInterest: number;             // USDT or Contract volume
   openInterestChange24h: number;     // % change
   openInterestChange1h: number;      // % change
-  fundingRate: number;              // e.g. 0.0001 (0.01%)
+  fundingRate: number;              // e.g. 0.0001 (0.01% atual / ciclo)
+  fundingRateDaily: number;         // e.g. 0.0003 (0.03% diário - 3 ciclos)
   fundingRateAnnualized: number;    // % annualized
+  fundingRateAnalysis?: {
+    status: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE';
+    pressure: 'PRESSÃO COMPRADORA EXTREMA (RISCO LONG FLUSH)' | 'PRESSÃO COMPRADORA MODERADA' | 'NEUTRO / EQUILIBRADO' | 'PRESSÃO VENDEDORA MODERADA' | 'PRESSÃO VENDEDORA EXTREMA (POTENCIAL SHORT SQUEEZE)';
+    bias: 'BUY' | 'SELL' | 'NEUTRAL';
+    description: string;
+  };
   cvd: number;                      // Cumulative Volume Delta (USDT)
+  cvdDelta: number;                 // Variação / Delta líquido da vela mais recente (USDT)
+  cvdDeltaPercent: number;          // Variação / Delta % do volume taker (+/- %)
   cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL';
   takerBuyRatio: number;            // 0.0 to 1.0
   

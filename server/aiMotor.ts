@@ -18,7 +18,7 @@ const getAiClient = (apiKeyOverride?: string) => {
 function normalizeGeminiModelName(modelName?: string): string {
   if (!modelName || modelName === 'none') return 'gemini-2.5-flash';
   const name = modelName.trim();
-  if (name === 'gemini-flash-latest' || name === 'gemini-1.5-flash-latest' || name === 'gemini-flash') return 'gemini-2.5-flash';
+  if (name === 'gemini-flash-latest' || name === 'gemini-1.5-flash-latest' || name === 'gemini-flash' || name === 'gemini-2.5-flash') return 'gemini-2.5-flash';
   if (name === 'gemini-pro-latest' || name === 'gemini-1.5-pro-latest' || name === 'gemini-pro') return 'gemini-2.5-pro';
   if (name.startsWith('gemini')) return name;
   return 'gemini-2.5-flash';
@@ -674,8 +674,9 @@ Confluence Factors: ${ticker.confluenceFactors.join(', ')}
 Live Market Metrics:
 - 24h Change: ${ticker.priceChangePercent24h}%
 - Open Interest: ${ticker.openInterest} (${ticker.openInterestChange1h > 0 ? '+' : ''}${ticker.openInterestChange1h.toFixed(2)}% in 1h)
-- Funding Rate: ${(ticker.fundingRate * 100).toFixed(4)}% (${ticker.fundingRateAnnualized.toFixed(1)}% APR)
-- CVD Net Delta: $${ticker.cvd.toLocaleString()} (${ticker.cvdDirection})
+- Funding Rate Atual (Ciclo): ${(ticker.fundingRate * 100).toFixed(4)}% | Funding Diário (24h): ${((ticker.fundingRateDaily ?? ticker.fundingRate * 3) * 100).toFixed(3)}%/dia (${ticker.fundingRateAnnualized.toFixed(1)}% APR)
+- Análise de Comportamento de Funding: ${ticker.fundingRateAnalysis?.pressure ?? 'NEUTRO / EQUILIBRADO'} (${ticker.fundingRateAnalysis?.description ?? 'Normal'})
+- CVD Total Acumulado: $${ticker.cvd.toLocaleString()} (${ticker.cvdDirection}) | Delta Recente: $${(ticker.cvdDelta ?? 0).toLocaleString()} (${(ticker.cvdDeltaPercent ?? 0) > 0 ? '+' : ''}${ticker.cvdDeltaPercent ?? 0}% Taker Delta)
 - Taker Buy Ratio: ${(ticker.takerBuyRatio * 100).toFixed(1)}%
 - Golden Pocket 0.618-0.68 Fib: [${ticker.fibonacci.fib68.toFixed(2)} - ${ticker.fibonacci.fib618.toFixed(2)}]
 - Volume Profile Range: VAL ${ticker.rangeProfile.val.toFixed(2)} | POC ${ticker.rangeProfile.poc.toFixed(2)} | VAH ${ticker.rangeProfile.vah.toFixed(2)}
@@ -800,8 +801,11 @@ export async function auditMarketWithAI(
     price: t.price,
     change24h: `${t.priceChangePercent24h}%`,
     oiChange1h: `${t.openInterestChange1h.toFixed(2)}%`,
-    fundingRate: `${(t.fundingRate * 100).toFixed(4)}%`,
+    fundingRateAtual: `${(t.fundingRate * 100).toFixed(4)}%`,
+    fundingRateDaily: `${((t.fundingRateDaily ?? t.fundingRate * 3) * 100).toFixed(3)}%/dia`,
+    fundingPressure: t.fundingRateAnalysis?.pressure ?? 'NEUTRO',
     cvdDirection: t.cvdDirection,
+    cvdDelta: `$${(t.cvdDelta ?? 0).toLocaleString()} (${(t.cvdDeltaPercent ?? 0)}% Taker Delta)`,
     confluence: `${t.confluenceScore}% (${t.signalType})`
   }));
 

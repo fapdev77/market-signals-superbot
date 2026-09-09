@@ -25,7 +25,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [aiReview, setAiReview] = useState<AIReviewResponse | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
   const [timeframe, setTimeframe] = useState('15m');
+  const [chartType, setChartType] = useState<'line' | 'candles'>('line');
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [zoomStart, setZoomStart] = useState<number>(0);
+  const [zoomEnd, setZoomEnd] = useState<number>(0);
 
   const enabledModels = activeModels.filter(m => m.isActive);
 
@@ -106,6 +109,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     return {
       time: timeStr,
       price: k.close,
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
       takerBuy: k.takerBuyVolume,
       takerSell: k.volume - k.takerBuyVolume,
       delta: delta,
@@ -123,10 +130,163 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     currentCVD -= delta;
   }
 
+  useEffect(() => {
+    if (chartData.length > 0) {
+      setZoomStart(0);
+      setZoomEnd(chartData.length);
+    }
+  }, [chartData.length, ticker?.symbol, timeframe]);
+
+  const effectiveStart = Math.max(0, Math.min(zoomStart, chartData.length - 2));
+  const effectiveEnd = Math.max(effectiveStart + 2, Math.min(zoomEnd, chartData.length));
+  const slicedData = chartData.slice(effectiveStart, effectiveEnd);
+
+  const handleZoomIn = () => {
+    const currentLen = effectiveEnd - effectiveStart;
+    if (currentLen <= 5) return;
+    const center = Math.floor((effectiveStart + effectiveEnd) / 2);
+    const newLen = Math.max(5, Math.floor(currentLen * 0.75));
+    const newStart = Math.max(0, center - Math.floor(newLen / 2));
+    const newEnd = Math.min(chartData.length, newStart + newLen);
+    setZoomStart(newStart);
+    setZoomEnd(newEnd);
+  };
+
+  const handleZoomOut = () => {
+    const currentLen = effectiveEnd - effectiveStart;
+    const center = Math.floor((effectiveStart + effectiveEnd) / 2);
+    const newLen = Math.min(chartData.length, Math.floor(currentLen * 1.33));
+    let newStart = Math.max(0, center - Math.floor(newLen / 2));
+    let newEnd = Math.min(chartData.length, newStart + newLen);
+    setZoomStart(newStart);
+    setZoomEnd(newEnd);
+  };
+
+  const handleResetZoom = () => {
+    setZoomStart(0);
+    setZoomEnd(chartData.length);
+  };
+
+  const handleWheelZoom = (e: React.WheelEvent) => {
+    e.preventDefault();
+    if (e.deltaY < 0) {
+      handleZoomIn();
+    } else {
+      handleZoomOut();
+    }
+  };
+
+  const touchStartDistRef = React.useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartDistRef.current = dist;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const diff = dist - touchStartDistRef.current;
+      if (Math.abs(diff) > 25) {
+        if (diff > 0) {
+          handleZoomIn();
+        } else {
+          handleZoomOut();
+        }
+        touchStartDistRef.current = dist;
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartDistRef.current = null;
+  };
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    const isUp = (data.close ?? 0) >= (data.open ?? 0);
+    const pct = data.open ? (((data.close - data.open) / data.open) * 100).toFixed(2) : '0.00';
+
+    return (
+      <div className="bg-neutral-950/95 backdrop-blur-md border border-neutral-800 p-3 rounded-xl shadow-2xl text-xs space-y-2 min-w-[210px] z-50 pointer-events-none">
+        <div className="flex items-center justify-between border-b border-neutral-800 pb-1.5">
+          <span className="font-mono text-neutral-400 font-semibold">{data.time || label}</span>
+          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isUp ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`}>
+            {isUp ? `+${pct}%` : `${pct}%`}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
+          <div className="text-neutral-400">Abertura: <span className="text-white">${data.open?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+          <div className="text-neutral-400">Fechamento: <span className="text-white">${data.close?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+          <div className="text-neutral-400">Máxima: <span className="text-emerald-400">${data.high?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+          <div className="text-neutral-400">Mínima: <span className="text-rose-400">${data.low?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+        </div>
+        {data.takerBuy !== undefined && (
+          <div className="border-t border-neutral-800/80 pt-1.5 flex justify-between text-[11px] text-neutral-400 font-mono">
+            <span>Vol: {(data.takerBuy + data.takerSell).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+            <span className="text-emerald-400">Compra: {((data.takerBuy / ((data.takerBuy + data.takerSell) || 1)) * 100).toFixed(0)}%</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const fib = ticker.fibonacci || { fib618: 0, fib68: 0, inGoldenPocket: false };
   const range = ticker.rangeProfile || { vah: 0, val: 0, poc: 0 };
   const price = ticker.price ?? 0;
   const changePct = ticker.priceChangePercent24h ?? 0;
+
+  const rawMinPrice = chartData.length > 0 ? Math.min(...chartData.map(d => d.low)) : 0;
+  const rawMaxPrice = chartData.length > 0 ? Math.max(...chartData.map(d => d.high)) : 1;
+  const padding = (rawMaxPrice - rawMinPrice) * 0.03 || 1;
+  const domainMin = rawMinPrice - padding;
+  const domainMax = rawMaxPrice + padding;
+  const priceRange = domainMax - domainMin || 1;
+  const chartHeightPx = 240;
+
+  const CandlestickShape = (props: any) => {
+    const { x, width, payload } = props;
+    if (!payload || typeof payload.open !== 'number' || typeof payload.close !== 'number') {
+      return null;
+    }
+
+    const isUp = payload.close >= payload.open;
+    const color = isUp ? '#10b981' : '#f43f5e';
+
+    const getY = (priceVal: number) => {
+      const clamped = Math.max(domainMin, Math.min(domainMax, priceVal));
+      return 15 + ((domainMax - clamped) / priceRange) * chartHeightPx;
+    };
+
+    const yOpen = getY(payload.open);
+    const yClose = getY(payload.close);
+    const yHigh = getY(payload.high);
+    const yLow = getY(payload.low);
+
+    const bodyTop = Math.min(yOpen, yClose);
+    const bodyBottom = Math.max(yOpen, yClose);
+    const bodyHeight = Math.max(2, bodyBottom - bodyTop);
+
+    const centerX = x + width / 2;
+    const barWidth = Math.max(3, Math.min(12, width * 0.7));
+    const barX = centerX - barWidth / 2;
+
+    return (
+      <g>
+        <line x1={centerX} y1={yHigh} x2={centerX} y2={yLow} stroke={color} strokeWidth={1.5} />
+        <rect x={barX} y={bodyTop} width={barWidth} height={bodyHeight} fill={color} stroke={color} rx={1} />
+      </g>
+    );
+  };
 
   // --- Determine Market Structure from Klines ---
   let structureLabel = 'NEUTRAL';
@@ -552,6 +712,47 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 ))}
               </div>
 
+              {/* Chart Type Toggle (Linhas vs Velas/Candles) */}
+              <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
+                <button
+                  onClick={() => setChartType('line')}
+                  className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${chartType === 'line' ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
+                >
+                  Linha
+                </button>
+                <button
+                  onClick={() => setChartType('candles')}
+                  className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${chartType === 'candles' ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
+                >
+                  Velas (Candles)
+                </button>
+              </div>
+
+              {/* Zoom Controls */}
+              <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
+                <button
+                  onClick={handleZoomIn}
+                  title="Zoom In (+)"
+                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                >
+                  +
+                </button>
+                <button
+                  onClick={handleZoomOut}
+                  title="Zoom Out (-)"
+                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                >
+                  -
+                </button>
+                <button
+                  onClick={handleResetZoom}
+                  title="Reset Zoom"
+                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                >
+                  100%
+                </button>
+              </div>
+
               {/* Golden Pocket Banner */}
               <div className={`px-2.5 py-1 rounded border text-[10px] font-bold flex items-center gap-1.5 ${
                 fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 animate-pulse' : 'bg-neutral-900 text-neutral-400 border-white/10'
@@ -562,15 +763,21 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             </div>
           </div>
 
-          {/* Recharts Area Chart */}
-          <div className="h-72 w-full pt-2">
+          {/* Recharts Area Chart / Candlestick Chart */}
+          <div 
+            className="h-72 w-full pt-2"
+            onWheel={handleWheelZoom}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
             {loading ? (
               <div className="h-full flex items-center justify-center text-neutral-500 text-xs">
                 <RefreshCw className="h-5 w-5 animate-spin mr-2" /> Carregando gráfico...
               </div>
-            ) : (
+            ) : chartType === 'line' ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <AreaChart data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
@@ -580,9 +787,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
                   <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
                   <YAxis domain={['auto', 'auto']} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#050505', borderColor: '#262626', borderRadius: '6px', fontSize: '11px', color: '#fff' }}
-                  />
+                  <Tooltip content={<CustomTooltip />} />
                   {/* Fibonacci Retracement Levels */}
                   {fib.fib618 > 0 && (
                     <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
@@ -603,13 +808,40 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" />
                 </AreaChart>
               </ResponsiveContainer>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
+                  <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
+                  <YAxis domain={[domainMin, domainMax]} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
+                  <Tooltip content={<CustomTooltip />} />
+                  {/* Fibonacci Retracement Levels */}
+                  {fib.fib618 > 0 && (
+                    <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
+                  )}
+                  {fib.fib68 > 0 && (
+                    <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 (${formatPrice(fib.fib68, { currency: true })})`, fill: '#ea580c', fontSize: 9 }} />
+                  )}
+                  {range.poc > 0 && (
+                    <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
+                  )}
+                  {/* Active Signal / AI Review targets */}
+                  {(aiReview?.takeProfit1 || activeSignal?.target1) && (
+                     <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />
+                  )}
+                  {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
+                     <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
+                  )}
+                  <Bar dataKey="close" shape={<CandlestickShape />} />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </div>
 
           {/* Volume Taker Buy/Sell Bar Chart */}
           <div className="h-24 w-full pt-1">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
+              <BarChart data={slicedData} margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
                 <XAxis dataKey="time" hide />
                 <YAxis hide />
                 <Bar dataKey="takerBuy" name="Taker Compra" stackId="a" fill="#10b981" />
@@ -622,7 +854,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           <div className="h-24 w-full pt-1 border-t border-white/5 mt-2 relative group">
             <span className="absolute top-1 left-2 text-[9px] font-bold text-neutral-500 uppercase z-10 group-hover:text-white transition">CVD (Delta Acumulado)</span>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
+              <AreaChart data={slicedData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="cvdGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={ticker.cvdDirection === 'BUY' ? '#10b981' : '#f43f5e'} stopOpacity={0.3}/>
@@ -679,9 +911,9 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
             <div className="flex items-center gap-2 border-b border-white/10 pb-2">
               <Activity className="h-4 w-4 text-emerald-400" />
-              <h3 className="text-xs font-bold text-white uppercase">Métricas de Order Flow</h3>
+              <h3 className="text-xs font-bold text-white uppercase">Métricas de Order Flow & Funding</h3>
             </div>
-            <div className="space-y-2.5 text-xs">
+            <div className="space-y-2 text-xs">
               <div>
                 <div className="flex justify-between text-neutral-400 mb-1">
                   <span>CVD (Delta Acumulado):</span>
@@ -696,17 +928,63 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   />
                 </div>
               </div>
+
+              <div className="flex justify-between p-2 bg-[#050505] rounded border border-white/5 items-center">
+                <span className="text-neutral-400">CVD Delta (Vela Recente):</span>
+                <span className={`font-bold ${(ticker.cvdDeltaPercent ?? 0) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  ${formatCompactNumber(Math.abs(ticker.cvdDelta ?? 0))} ({(ticker.cvdDeltaPercent ?? 0) > 0 ? '+' : ''}{ticker.cvdDeltaPercent ?? 0}%)
+                </span>
+              </div>
+
               <div className="flex justify-between p-2 bg-[#050505] rounded border border-white/5">
                 <span className="text-neutral-400">Var Open Interest (1h):</span>
                 <span className={`font-bold ${(ticker.openInterestChange1h ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {(ticker.openInterestChange1h ?? 0) >= 0 ? '+' : ''}{(ticker.openInterestChange1h ?? 0).toFixed(2)}%
                 </span>
               </div>
+
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                <div className="p-2 bg-[#050505] rounded border border-white/5">
+                  <span className="text-[10px] text-neutral-400 block">Funding Fee Atual</span>
+                  <span className="font-extrabold text-white">
+                    {((ticker.fundingRate ?? 0) * 100).toFixed(4)}%
+                  </span>
+                </div>
+                <div className="p-2 bg-[#050505] rounded border border-white/5">
+                  <span className="text-[10px] text-neutral-400 block">Funding Fee Diário</span>
+                  <span className={`font-extrabold ${(ticker.fundingRate ?? 0) < 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                    {((ticker.fundingRateDaily ?? (ticker.fundingRate ?? 0) * 3) * 100).toFixed(3)}%/d
+                  </span>
+                </div>
+              </div>
+
               <div className="flex justify-between p-2 bg-[#050505] rounded border border-white/5">
                 <span className="text-neutral-400">Funding Rate Anualizado:</span>
                 <span className="font-bold text-orange-400">
-                  {(ticker.fundingRateAnnualized ?? 0).toFixed(2)}% APR
+                  {(ticker.fundingRateAnnualized ?? 0).toFixed(1)}% APR
                 </span>
+              </div>
+
+              {/* Análise do Comportamento do Funding Rate */}
+              <div className={`p-2.5 rounded border text-[11px] space-y-1 ${
+                ticker.fundingRateAnalysis?.status === 'EXTREME_NEGATIVE' || ticker.fundingRateAnalysis?.status === 'NEGATIVE'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : ticker.fundingRateAnalysis?.status === 'EXTREME_POSITIVE' || ticker.fundingRateAnalysis?.status === 'POSITIVE'
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  : 'bg-neutral-900 border-white/10 text-neutral-300'
+              }`}>
+                <div className="flex items-center justify-between font-extrabold">
+                  <span>ANALISADOR DE FUNDING</span>
+                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
+                    {ticker.fundingRateAnalysis?.bias ?? 'NEUTRAL'}
+                  </span>
+                </div>
+                <div className="font-black text-[10px] uppercase">
+                  {ticker.fundingRateAnalysis?.pressure ?? 'NEUTRO / EQUILIBRADO'}
+                </div>
+                <div className="text-[10px] opacity-90 leading-relaxed">
+                  {ticker.fundingRateAnalysis?.description ?? 'Taxa de funding em equilíbrio normal.'}
+                </div>
               </div>
             </div>
           </div>
