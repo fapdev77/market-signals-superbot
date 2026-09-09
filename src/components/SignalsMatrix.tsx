@@ -622,7 +622,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             return (
               <div
                 key={s.id}
-                className={`bg-[#0A0A0A] rounded-lg border p-3 hover:border-neutral-700 transition shadow-md relative overflow-hidden ${
+                className={`bg-[#0A0A0A] rounded-lg border p-3 hover:border-neutral-700 transition shadow-md relative ${
                   s.validationStatus === 'CONFIRMED'
                     ? 'border-emerald-500/30'
                     : s.validationStatus === 'REJECTED_SPIKE'
@@ -651,16 +651,32 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                         {assetClassBadge}
                       </Tooltip>
 
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border flex items-center gap-1 ${
+                      {/* Direction & Signal Type Badge */}
+                      <Tooltip
+                        position="top"
+                        title="Direção & Força Operacional"
+                        badge={`${s.direction} (${s.signalType})`}
+                        content={
                           isLong
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                        }`}
+                            ? s.signalType === 'STRONG_LONG'
+                              ? 'Operação de COMPRA FORTE (LONG): Alta probabilidade estatística com forte pressão compradora institucional no CVD e confluência em zonas de suporte e retração Fibonacci.'
+                              : 'Operação de COMPRA (LONG): Viés altista configurado com confirmação em níveis de suporte e fluxo comprador.'
+                            : s.signalType === 'STRONG_SHORT'
+                            ? 'Operação de VENDA FORTE (SHORT): Alta probabilidade estatística com forte pressão agressora vendedora no CVD e rejeição acentuada em níveis de resistência técnica.'
+                            : 'Operação de VENDA (SHORT): Viés baixista configurado com rejeição em níveis de topo e fluxo vendedor predominante.'
+                        }
                       >
-                        {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                        {s.direction} ({s.signalType})
-                      </span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border flex items-center gap-1 cursor-help transition-opacity hover:opacity-90 ${
+                            isLong
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                          }`}
+                        >
+                          {isLong ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                          {s.direction} ({s.signalType})
+                        </span>
+                      </Tooltip>
 
                       <Tooltip
                         position="top"

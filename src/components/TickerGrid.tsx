@@ -307,7 +307,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                 onClick={() => onSelectTicker(t)}
                 className={`bg-[#0A0A0A] rounded-xl border ${
                   t.confluenceScore >= 65 ? 'border-orange-500/40 hover:border-orange-500' : 'border-white/10 hover:border-orange-500/60'
-                } p-3.5 transition-all duration-200 hover:-translate-y-0.5 flex flex-col justify-between shadow-md hover:shadow-orange-500/10 cursor-pointer relative overflow-hidden group font-mono`}
+                } p-3.5 transition-all duration-200 hover:-translate-y-0.5 flex flex-col justify-between shadow-md hover:shadow-orange-500/10 cursor-pointer relative group font-mono`}
               >
                 <div>
                   {/* Header Row */}
