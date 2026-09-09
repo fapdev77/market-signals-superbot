@@ -335,7 +335,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Bot Monitoring Toggle */}
           <Tooltip
-            position="bottom"
+            position="bottom-right"
             title={`Robô de Monitoramento: ${botState.isMonitoring ? 'ATIVO' : 'PAUSADO'}`}
             badge={botState.isMonitoring ? 'ONLINE' : 'OFFLINE'}
             content={
@@ -360,7 +360,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Refresh Action */}
           <Tooltip
-            position="bottom"
+            position="bottom-right"
             title="Sincronizar Dados do Mercado"
             badge="MANUAL"
             content="Força uma nova leitura das cotações da Binance, recalcula os níveis de confluência dos pares e sincroniza a telemetria do robô."
@@ -376,7 +376,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Sound Tone Toggle */}
           <Tooltip
-            position="bottom"
+            position="bottom-right"
             title={`Alertas Sonoros: ${soundOn ? 'LIGADOS' : 'DESLIGADOS'}`}
             badge={soundOn ? 'WEB AUDIO' : 'MUTE'}
             content={
@@ -399,7 +399,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Push Notification Toggle */}
           <Tooltip
-            position="bottom"
+            position="bottom-right"
             title={`Notificações Desktop: ${notifEnabled ? 'ATIVADAS' : 'DESATIVADAS'}`}
             badge={notifEnabled ? 'ALERTAS ON' : 'SILENCIADO'}
             content={
