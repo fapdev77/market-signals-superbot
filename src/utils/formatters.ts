@@ -74,6 +74,45 @@ export function formatPercent(value: number | null | undefined, includeSign = tr
 }
 
 /**
+ * Formata timestamps numéricos ou strings de datas para formato legível de hora/data (HH:mm ou dd/MM HH:mm)
+ */
+export function formatTimestamp(
+  timestamp: number | string | Date | null | undefined,
+  includeDate = false
+): string {
+  if (!timestamp) return '--:--';
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) return '--:--';
+
+  if (includeDate) {
+    return date.toLocaleDateString(undefined, {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+
+  return date.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+/**
+ * Formata valores em dólares com precisão padrão
+ */
+export function formatUsd(value: number | null | undefined, minDecimals = 2): string {
+  if (value === null || value === undefined || isNaN(value)) return '$0.00';
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: minDecimals,
+    maximumFractionDigits: minDecimals,
+  })}`;
+}
+
+/**
  * Formata grandes volumes e CVD em K, M, B (ex: $12.5M, -450K)
  */
 export function formatCompactNumber(value: number | null | undefined, currency = false): string {

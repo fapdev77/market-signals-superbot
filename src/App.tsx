@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { TickerGrid } from './components/TickerGrid';
 import { SignalsMatrix } from './components/SignalsMatrix';
@@ -13,12 +13,15 @@ import { defaultModels } from './config/defaultModels';
 import { useBinanceWebSocket } from './hooks/useBinanceWebSocket';
 import { TickerData, TradeSignal, BotState, IndicatorWeights, AIModelConfig } from './types';
 import { Zap, Flame, ShieldCheck, RefreshCw, Activity, ArrowUpRight, Database } from 'lucide-react';
+import { playSignalTone, sendDesktopNotification } from './utils/soundAlerts';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [tickers, setTickers] = useState<TickerData[]>([]);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<TickerData | null>(null);
+  const knownSignalIdsRef = useRef<Set<string>>(new Set());
+  const isInitialSignalsLoadRef = useRef(true);
 
   const { status: clientWsStatus, logs: clientWsLogs } = useBinanceWebSocket(tickers, (updatedTickers) => {
     setTickers(updatedTickers);
@@ -45,7 +48,9 @@ export default function App() {
       cvdImbalanceWeight: 20,
       fibonacciZoneWeight: 15,
       rangePocWeight: 10,
-      supportResistanceWeight: 10
+      supportResistanceWeight: 10,
+      minRiskRewardRatio: 1.5,
+      volumeProfileRange: 20
     },
     aiModels: defaultModels,
     aiAnalysisEnabled: true
@@ -75,6 +80,24 @@ export default function App() {
       const resS = await fetch('/api/signals');
       if (resS.ok) {
         const dataS: TradeSignal[] = await resS.json();
+
+        if (isInitialSignalsLoadRef.current) {
+          isInitialSignalsLoadRef.current = false;
+          dataS.forEach(s => knownSignalIdsRef.current.add(s.id));
+        } else {
+          // Check for newly generated signals
+          const newSignals = dataS.filter(s => !knownSignalIdsRef.current.has(s.id));
+          if (newSignals.length > 0) {
+            newSignals.forEach(s => knownSignalIdsRef.current.add(s.id));
+            const latest = newSignals[0];
+            playSignalTone(latest.direction);
+            sendDesktopNotification(
+              `Novo Sinal SuperBot: ${latest.direction} em ${latest.symbol}`,
+              `Confluência ${latest.confluenceScore}% • Entrada: ${latest.entryZone[0]}-${latest.entryZone[1]}`
+            );
+          }
+        }
+
         setSignals(dataS);
       }
 

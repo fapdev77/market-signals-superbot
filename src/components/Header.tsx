@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, Volume2, VolumeX, Bell, BellOff } from 'lucide-react';
 import { BotState, TickerData } from '../types';
 import { formatPrice, formatPercent } from '../utils/formatters';
+import { isAudioEnabled, setAudioEnabled, requestNotificationPermission, playSignalTone } from '../utils/soundAlerts';
 
 interface HeaderProps {
   botState: BotState;
@@ -21,6 +22,30 @@ export const Header: React.FC<HeaderProps> = ({
   onRefresh
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const [notifGranted, setNotifGranted] = useState(false);
+
+  useEffect(() => {
+    setSoundOn(isAudioEnabled());
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotifGranted(Notification.permission === 'granted');
+    }
+  }, []);
+
+  const handleToggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    setAudioEnabled(next);
+    if (next) {
+      playSignalTone('ALERT');
+    }
+  };
+
+  const handleToggleNotif = async () => {
+    const granted = await requestNotificationPermission();
+    setNotifGranted(granted);
+  };
+
   const topTickers = (tickers || []).slice(0, 6);
 
   const navItems = [
@@ -166,6 +191,32 @@ export const Header: React.FC<HeaderProps> = ({
             title="Forçar Atualização"
           >
             <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+
+          {/* Sound Tone Toggle */}
+          <button
+            onClick={handleToggleSound}
+            className={`p-1.5 rounded border transition ${
+              soundOn 
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20' 
+                : 'bg-neutral-900 border-white/10 text-neutral-500 hover:text-neutral-300'
+            }`}
+            title={soundOn ? 'Alertas Sonoros: ATIVADO (Sintetizador Web Audio)' : 'Alertas Sonoros: DESATIVADO'}
+          >
+            {soundOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+          </button>
+
+          {/* Push Notification Toggle */}
+          <button
+            onClick={handleToggleNotif}
+            className={`p-1.5 rounded border transition hidden sm:flex items-center justify-center ${
+              notifGranted
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                : 'bg-neutral-900 border-white/10 text-neutral-500 hover:text-neutral-300'
+            }`}
+            title={notifGranted ? 'Notificações Desktop: ATIVADAS' : 'Ativar Notificações Desktop'}
+          >
+            {notifGranted ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
           </button>
 
           {/* Mobile Menu Hamburger Button */}

@@ -19,9 +19,12 @@ import {
   Award,
   ArrowRight,
   Sparkles,
-  Trash2
+  Trash2,
+  Download,
+  Activity
 } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ReferenceLine } from 'recharts';
+import { exportTradesToCSV } from '../utils/backtestMetrics';
 
 interface BacktestDashboardProps {
   tickers: TickerData[];
@@ -42,6 +45,22 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
   const [useCache, setUseCache] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [appliedSuccessMsg, setAppliedSuccessMsg] = useState<string | null>(null);
+  const [makerTakerFeePct, setMakerTakerFeePct] = useState(0.04);
+  const [slippagePct, setSlippagePct] = useState(0.02);
+
+  const handleDownloadCSV = () => {
+    if (!backtestResult?.trades?.length) return;
+    const csv = exportTradesToCSV(backtestResult.trades);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `trades_${backtestResult.symbol}_${backtestResult.profile}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   // Advanced Visual Backtest States
   const [dbStats, setDbStats] = useState<any>(null);
@@ -122,7 +141,15 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
       const res = await fetch('/api/backtest/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: selectedSymbol, days, profile, weights, useCache })
+        body: JSON.stringify({ 
+          symbol: selectedSymbol, 
+          days, 
+          profile, 
+          weights, 
+          useCache,
+          makerTakerFeePct,
+          slippagePct
+        })
       });
       const data = await res.json();
       if (data.success) {
@@ -323,6 +350,43 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
               <option value={20}>20 Iterações (Padrão)</option>
               <option value={40}>40 Iterações (Profundo)</option>
             </select>
+          </div>
+        </div>
+
+        {/* Taxas & Slippage de Execução Realista */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-white/5">
+          <div>
+            <label className="text-[10px] text-neutral-400 uppercase font-bold flex justify-between mb-1">
+              <span>Taxa Corretagem Maker/Taker por Ordem</span>
+              <span className="text-cyan-400 font-mono">{makerTakerFeePct}%</span>
+            </label>
+            <input
+              type="range"
+              min="0.00"
+              max="0.10"
+              step="0.01"
+              value={makerTakerFeePct}
+              onChange={e => setMakerTakerFeePct(parseFloat(e.target.value))}
+              className="w-full accent-cyan-500 cursor-pointer"
+            />
+            <span className="text-[9px] text-neutral-500">Padrão Binance VIP 0 Futures: 0.02% Maker / 0.05% Taker</span>
+          </div>
+
+          <div>
+            <label className="text-[10px] text-neutral-400 uppercase font-bold flex justify-between mb-1">
+              <span>Slippage de Mercado Estimado</span>
+              <span className="text-amber-400 font-mono">{slippagePct}%</span>
+            </label>
+            <input
+              type="range"
+              min="0.00"
+              max="0.10"
+              step="0.01"
+              value={slippagePct}
+              onChange={e => setSlippagePct(parseFloat(e.target.value))}
+              className="w-full accent-amber-500 cursor-pointer"
+            />
+            <span className="text-[9px] text-neutral-500">Deslizamento de spread na execução a mercado</span>
           </div>
         </div>
 
@@ -533,6 +597,48 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
             </div>
           </div>
 
+          {/* Fitness Score Evolution Chart */}
+          {autoTuneResult.fitnessHistory && autoTuneResult.fitnessHistory.length > 1 && (
+            <div className="bg-[#050505] p-3 rounded-lg border border-white/5 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-neutral-400 font-bold uppercase">
+                <span className="flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5 text-amber-400" />
+                  Evolução do Fitness Score Algorítmico ({autoTuneResult.fitnessHistory.length} iterações)
+                </span>
+                <span className="text-amber-400 font-mono text-[9px]">
+                  Inicial: {autoTuneResult.fitnessHistory[0].fitnessScore} ➔ Otimizado: {autoTuneResult.fitnessHistory[autoTuneResult.fitnessHistory.length - 1].fitnessScore}
+                </span>
+              </div>
+              <div className="h-16 w-full pt-1">
+                <svg className="w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 400 60">
+                  {(() => {
+                    const scores = autoTuneResult.fitnessHistory.map(f => f.fitnessScore);
+                    const minScore = Math.min(...scores);
+                    const maxScore = Math.max(...scores);
+                    const range = Math.max(1, maxScore - minScore);
+
+                    const points = autoTuneResult.fitnessHistory.map((f, i) => {
+                      const x = (i / (autoTuneResult.fitnessHistory.length - 1)) * 400;
+                      const y = 55 - ((f.fitnessScore - minScore) / range) * 50;
+                      return `${x},${y}`;
+                    }).join(' ');
+
+                    return (
+                      <>
+                        <polyline
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth="2"
+                          points={points}
+                        />
+                      </>
+                    );
+                  })()}
+                </svg>
+              </div>
+            </div>
+          )}
+
           {/* Best Weights Grid */}
           <div className="pt-2">
             <span className="text-[10px] text-neutral-400 font-bold uppercase block mb-1.5">
@@ -642,6 +748,57 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
             </div>
           </div>
 
+          {/* Institutional Risk & Execution Realism (Sharpe, Sortino, Fees, Slippage) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#070707] p-3.5 rounded-lg border border-cyan-500/20">
+            <div>
+              <span className="text-[9px] text-neutral-400 font-bold uppercase block mb-0.5 flex items-center gap-1">
+                <ShieldCheck className="h-3 w-3 text-cyan-400" />
+                Sharpe Ratio
+              </span>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-base font-black ${(backtestResult.sharpeRatio ?? 0) >= 1.5 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {backtestResult.sharpeRatio !== undefined ? backtestResult.sharpeRatio : 'N/A'}
+                </span>
+                <span className="text-[9px] text-neutral-500 font-mono">
+                  {(backtestResult.sharpeRatio ?? 0) >= 2.0 ? 'Excelente' : (backtestResult.sharpeRatio ?? 0) >= 1.0 ? 'Aceitável' : 'Alto Risco'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[9px] text-neutral-400 font-bold uppercase block mb-0.5 flex items-center gap-1">
+                <Target className="h-3 w-3 text-emerald-400" />
+                Sortino Ratio
+              </span>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-base font-black ${(backtestResult.sortinoRatio ?? 0) >= 2.0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {backtestResult.sortinoRatio !== undefined ? backtestResult.sortinoRatio : 'N/A'}
+                </span>
+                <span className="text-[9px] text-neutral-500 font-mono">Risco Downside</span>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[9px] text-neutral-400 font-bold uppercase block mb-0.5">
+                Taxas Pagas (Maker/Taker)
+              </span>
+              <span className="text-sm font-bold text-rose-400 font-mono">
+                ${backtestResult.totalFeesPaid !== undefined ? backtestResult.totalFeesPaid.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'} USDT
+              </span>
+              <span className="text-[9px] text-neutral-500 block">@ {makerTakerFeePct}% por ordem</span>
+            </div>
+
+            <div>
+              <span className="text-[9px] text-neutral-400 font-bold uppercase block mb-0.5">
+                Slippage Considerado
+              </span>
+              <span className="text-sm font-bold text-amber-400 font-mono">
+                {slippagePct}% por trade
+              </span>
+              <span className="text-[9px] text-neutral-500 block">Dedução direta no PnL</span>
+            </div>
+          </div>
+
           {/* Equity Curve SVG Chart */}
           {backtestResult.equityCurve && backtestResult.equityCurve.length > 1 && (
             <div className="bg-[#050505] p-4 rounded-lg border border-white/5 space-y-2">
@@ -689,13 +846,23 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           {backtestResult.trades && backtestResult.trades.length > 0 && (
             <div className="bg-[#050505] p-4 rounded-lg border border-white/5 space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-white/5 pb-2">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5 uppercase">
-                  <Sliders className="h-4 w-4 text-cyan-400" />
-                  Lista de Trades do Backtest & Gráfico Visual
-                </span>
-                <span className="text-[10px] text-neutral-400">
-                  Clique em qualquer trade para abrir a análise visual completa de Entry, Exit, TP e SL.
-                </span>
+                <div>
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5 uppercase">
+                    <Sliders className="h-4 w-4 text-cyan-400" />
+                    Lista de Trades do Backtest & Gráfico Visual
+                  </span>
+                  <span className="text-[10px] text-neutral-400">
+                    Clique em qualquer trade para abrir a análise visual completa de Entry, Exit, TP e SL.
+                  </span>
+                </div>
+                <button
+                  onClick={handleDownloadCSV}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-cyan-400 border border-cyan-500/30 rounded text-xs font-bold transition shadow"
+                  title="Exportar todos os trades para arquivo CSV"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Exportar CSV ({backtestResult.trades.length} trades)
+                </button>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -813,7 +980,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
                               <CartesianGrid stroke="#111" strokeDasharray="3 3" />
                               <ChartTooltip
                                 contentStyle={{ backgroundColor: '#090909', borderColor: '#222', fontSize: 10 }}
-                                labelFormatter={(label) => new Date(label).toLocaleString()}
+                                labelFormatter={(label: any) => new Date(Number(label) || String(label)).toLocaleString()}
                                 formatter={(val: any) => [val.toLocaleString(undefined, { minimumFractionDigits: 2 }), "Preço"]}
                               />
                               <Line type="monotone" dataKey="close" stroke="#888" strokeWidth={1.5} dot={false} />

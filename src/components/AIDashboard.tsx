@@ -231,7 +231,7 @@ export const AIDashboard: React.FC = () => {
           name: log.modelName || log.modelId || 'Modelo Genérico',
           provider: log.provider,
           modelId: log.modelId,
-          apiUrl: log.details?.apiUrl || log.details?.baseUrl,
+          apiUrl: (log.details as any)?.apiUrl || (log.details as any)?.baseUrl || undefined,
           isActive: false,
           isFallback: false,
           priority: 99,

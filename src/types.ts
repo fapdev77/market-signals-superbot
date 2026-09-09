@@ -185,7 +185,7 @@ export interface AILogEntry {
     apiKeyPresent?: boolean;
     errorStack?: string;
     diagnosticSteps?: string[];
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -275,6 +275,43 @@ export interface BacktestResult {
   config: BacktestConfig;
   createdAt: number;
   trades?: BacktestTrade[];
+  sharpeRatio?: number;
+  sortinoRatio?: number;
+  makerTakerFeePct?: number;
+  slippagePct?: number;
+  grossProfit?: number;
+  totalFeesPaid?: number;
+}
+
+export interface LiquidityBucket {
+  priceMin: number;
+  priceMax: number;
+  priceCenter: number;
+  volume: number;
+  density: number; // 0.0 to 1.0
+  isHighVolumeNode: boolean;
+  isLowVolumeNode: boolean;
+  isSupplyZone: boolean;
+  isDemandZone: boolean;
+  isPOC: boolean;
+}
+
+export interface LiquidityHeatmapData {
+  buckets: LiquidityBucket[];
+  pocBucket: LiquidityBucket | null;
+  topSupplyCluster: { min: number; max: number; volume: number } | null;
+  topDemandCluster: { min: number; max: number; volume: number } | null;
+  maxBucketVolume: number;
+}
+
+export interface AIPersona {
+  id: string;
+  name: string;
+  description: string;
+  systemPromptAddendum: string;
+  riskTolerance: 'HIGH' | 'MEDIUM' | 'LOW';
+  preferredTimeframes: string[];
+  minRRRatio: number;
 }
 
 export interface AutoTuneIteration {

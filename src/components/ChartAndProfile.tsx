@@ -1,8 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics } from '../utils/formatters';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid, LineChart, Line } from 'recharts';
-import { LineChart as ChartIcon, Layers, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid } from 'recharts';
+import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck } from 'lucide-react';
+import { MarketProfileMetrics } from './MarketProfileMetrics';
+import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
+import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
+import { LiquidityHeatmapReferenceAreas, LiquidityHeatmapBadge } from './LiquidityHeatmapOverlay';
+import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -27,8 +32,11 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [timeframe, setTimeframe] = useState('15m');
   const [chartType, setChartType] = useState<'line' | 'candles'>('line');
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedPersona, setSelectedPersona] = useState<string>('conservative');
   const [zoomStart, setZoomStart] = useState<number>(0);
   const [zoomEnd, setZoomEnd] = useState<number>(0);
+  const [heatmapEnabled, setHeatmapEnabled] = useState<boolean>(true);
+  const [heatmapBucketCount, setHeatmapBucketCount] = useState<number>(36);
 
   const enabledModels = activeModels.filter(m => m.isActive);
 
@@ -69,7 +77,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
       const res = await fetch('/api/ai/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: ticker.symbol, model })
+        body: JSON.stringify({ symbol: ticker.symbol, model, personaId: selectedPersona })
       });
       const data: AIReviewResponse = await res.json();
       setAiReview(data);
@@ -100,35 +108,40 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
   if (!ticker) return null;
 
-  let currentOI = ticker.openInterest ?? 1000000;
-  let currentCVD = ticker.cvd ?? 0;
-  
-  const chartData = klines.map(k => {
-    const timeStr = new Date(k.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const delta = k.takerBuyVolume - (k.volume - k.takerBuyVolume);
-    return {
-      time: timeStr,
-      price: k.close,
-      open: k.open,
-      high: k.high,
-      low: k.low,
-      close: k.close,
-      takerBuy: k.takerBuyVolume,
-      takerSell: k.volume - k.takerBuyVolume,
-      delta: delta,
-      openInterest: 0,
-      cvd: 0
-    };
-  });
+  const chartData: ChartDataItem[] = useMemo(() => {
+    if (!klines.length) return [];
+    let currentOI = ticker.openInterest ?? 1000000;
+    let currentCVD = ticker.cvd ?? 0;
+    
+    const data: ChartDataItem[] = klines.map(k => {
+      const timeStr = new Date(k.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const delta = k.takerBuyVolume - (k.volume - k.takerBuyVolume);
+      return {
+        time: timeStr,
+        price: k.close,
+        open: k.open,
+        high: k.high,
+        low: k.low,
+        close: k.close,
+        takerBuy: k.takerBuyVolume,
+        takerSell: k.volume - k.takerBuyVolume,
+        delta: delta,
+        openInterest: 0,
+        cvd: 0
+      };
+    });
 
-  // Backward accumulate OI and CVD to finish exactly at the current ticker values
-  for (let i = chartData.length - 1; i >= 0; i--) {
-    chartData[i].openInterest = currentOI;
-    chartData[i].cvd = currentCVD;
-    const delta = chartData[i].delta;
-    currentOI -= (Math.abs(delta) * (Math.random() * 2 - 0.5)); // Randomish walk based on volume
-    currentCVD -= delta;
-  }
+    // Backward accumulate OI and CVD to finish exactly at the current ticker values
+    for (let i = data.length - 1; i >= 0; i--) {
+      data[i].openInterest = currentOI;
+      data[i].cvd = currentCVD;
+      const delta = data[i].delta;
+      currentOI -= (Math.abs(delta) * (Math.random() * 2 - 0.5));
+      currentCVD -= delta;
+    }
+
+    return data;
+  }, [klines, ticker.openInterest, ticker.cvd]);
 
   useEffect(() => {
     if (chartData.length > 0) {
@@ -139,7 +152,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
   const effectiveStart = Math.max(0, Math.min(zoomStart, chartData.length - 2));
   const effectiveEnd = Math.max(effectiveStart + 2, Math.min(zoomEnd, chartData.length));
-  const slicedData = chartData.slice(effectiveStart, effectiveEnd);
+  
+  const slicedData = useMemo(() => {
+    return chartData.slice(effectiveStart, effectiveEnd);
+  }, [chartData, effectiveStart, effectiveEnd]);
 
   const handleZoomIn = () => {
     const currentLen = effectiveEnd - effectiveStart;
@@ -156,8 +172,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     const currentLen = effectiveEnd - effectiveStart;
     const center = Math.floor((effectiveStart + effectiveEnd) / 2);
     const newLen = Math.min(chartData.length, Math.floor(currentLen * 1.33));
-    let newStart = Math.max(0, center - Math.floor(newLen / 2));
-    let newEnd = Math.min(chartData.length, newStart + newLen);
+    const newStart = Math.max(0, center - Math.floor(newLen / 2));
+    const newEnd = Math.min(chartData.length, newStart + newLen);
     setZoomStart(newStart);
     setZoomEnd(newEnd);
   };
@@ -210,7 +226,13 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     touchStartDistRef.current = null;
   };
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  interface TooltipPropsType {
+    active?: boolean;
+    payload?: Array<{ payload: ChartDataItem }>;
+    label?: string;
+  }
+
+  const CustomTooltip: React.FC<TooltipPropsType> = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     const data = payload[0].payload;
     const isUp = (data.close ?? 0) >= (data.open ?? 0);
@@ -245,16 +267,35 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const price = ticker.price ?? 0;
   const changePct = ticker.priceChangePercent24h ?? 0;
 
-  const rawMinPrice = chartData.length > 0 ? Math.min(...chartData.map(d => d.low)) : 0;
-  const rawMaxPrice = chartData.length > 0 ? Math.max(...chartData.map(d => d.high)) : 1;
-  const padding = (rawMaxPrice - rawMinPrice) * 0.03 || 1;
-  const domainMin = rawMinPrice - padding;
-  const domainMax = rawMaxPrice + padding;
-  const priceRange = domainMax - domainMin || 1;
+  const { domainMin, domainMax, priceRange } = useMemo(() => {
+    const target = slicedData.length > 0 ? slicedData : chartData;
+    if (!target.length) return { domainMin: 0, domainMax: 1, priceRange: 1 };
+    const rawMin = Math.min(...target.map(d => d.low));
+    const rawMax = Math.max(...target.map(d => d.high));
+    const pad = (rawMax - rawMin) * 0.03 || 1;
+    const min = rawMin - pad;
+    const max = rawMax + pad;
+    return { domainMin: min, domainMax: max, priceRange: max - min || 1 };
+  }, [slicedData, chartData]);
+
+  const heatmapData = useMemo(() => {
+    const target = slicedData.length > 0 ? slicedData : chartData;
+    if (!target.length || !ticker) {
+      return { buckets: [], pocBucket: null, topSupplyCluster: null, topDemandCluster: null, maxBucketVolume: 0 };
+    }
+    return calculateLiquidityHeatmap(target, ticker.price, heatmapBucketCount);
+  }, [slicedData, chartData, ticker?.price, heatmapBucketCount]);
+
   const chartHeightPx = 240;
 
-  const CandlestickShape = (props: any) => {
-    const { x, width, payload } = props;
+  interface CandlestickShapeProps {
+    x?: number;
+    width?: number;
+    payload?: ChartDataItem;
+  }
+
+  const CandlestickShape: React.FC<CandlestickShapeProps> = (props) => {
+    const { x = 0, width = 10, payload } = props;
     if (!payload || typeof payload.open !== 'number' || typeof payload.close !== 'number') {
       return null;
     }
@@ -419,6 +460,23 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 ) : (
                   <option value="" className="bg-[#0A0A0A] text-neutral-400">Motor IA Ativo (Auto)</option>
                 )}
+              </select>
+            </div>
+
+            {/* Persona Selector */}
+            <div className="flex items-center gap-1.5 bg-[#050505] px-2.5 py-1.5 rounded-lg border border-cyan-500/20">
+              <UserCheck className="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" />
+              <select
+                value={selectedPersona}
+                onChange={(e) => setSelectedPersona(e.target.value)}
+                className="bg-transparent text-cyan-300 text-xs font-bold focus:outline-none cursor-pointer max-w-[170px] truncate"
+                title="Persona e Estilo Operacional da IA"
+              >
+                {DEFAULT_AI_PERSONAS.map(p => (
+                  <option key={p.id} value={p.id} className="bg-[#0A0A0A] text-white">
+                    {p.name}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -733,6 +791,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 <button
                   onClick={handleZoomIn}
                   title="Zoom In (+)"
+                  aria-label="Aumentar Zoom (+)"
                   className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
                 >
                   +
@@ -740,6 +799,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 <button
                   onClick={handleZoomOut}
                   title="Zoom Out (-)"
+                  aria-label="Diminuir Zoom (-)"
                   className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
                 >
                   -
@@ -747,6 +807,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 <button
                   onClick={handleResetZoom}
                   title="Reset Zoom"
+                  aria-label="Resetar Zoom para 100%"
                   className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
                 >
                   100%
@@ -762,6 +823,15 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Liquidity Heatmap Overlay Badge & Controls */}
+          <LiquidityHeatmapBadge
+            heatmapData={heatmapData}
+            visible={heatmapEnabled}
+            onToggle={() => setHeatmapEnabled(!heatmapEnabled)}
+            bucketCount={heatmapBucketCount}
+            onChangeBucketCount={(cnt) => setHeatmapBucketCount(cnt)}
+          />
 
           {/* Recharts Area Chart / Candlestick Chart */}
           <div 
@@ -788,6 +858,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
                   <YAxis domain={['auto', 'auto']} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
                   <Tooltip content={<CustomTooltip />} />
+                  {/* Liquidity Heatmap Overlay Reference Areas */}
+                  <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
                   {/* Fibonacci Retracement Levels */}
                   {fib.fib618 > 0 && (
                     <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
@@ -815,6 +887,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
                   <YAxis domain={[domainMin, domainMax]} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
                   <Tooltip content={<CustomTooltip />} />
+                  {/* Liquidity Heatmap Overlay Reference Areas */}
+                  <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
                   {/* Fibonacci Retracement Levels */}
                   {fib.fib618 > 0 && (
                     <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
@@ -838,207 +912,22 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             )}
           </div>
 
-          {/* Volume Taker Buy/Sell Bar Chart */}
-          <div className="h-24 w-full pt-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={slicedData} margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
-                <XAxis dataKey="time" hide />
-                <YAxis hide />
-                <Bar dataKey="takerBuy" name="Taker Compra" stackId="a" fill="#10b981" />
-                <Bar dataKey="takerSell" name="Taker Venda" stackId="a" fill="#f43f5e" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* CVD (Cumulative Volume Delta) Chart */}
-          <div className="h-24 w-full pt-1 border-t border-white/5 mt-2 relative group">
-            <span className="absolute top-1 left-2 text-[9px] font-bold text-neutral-500 uppercase z-10 group-hover:text-white transition">CVD (Delta Acumulado)</span>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={slicedData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="cvdGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={ticker.cvdDirection === 'BUY' ? '#10b981' : '#f43f5e'} stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor={ticker.cvdDirection === 'BUY' ? '#10b981' : '#f43f5e'} stopOpacity={0.0}/>
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="time" hide />
-                <YAxis domain={['auto', 'auto']} hide />
-                <Tooltip contentStyle={{ backgroundColor: '#050505', borderColor: '#262626', fontSize: '10px', color: '#fff' }} />
-                <Area type="step" dataKey="cvd" name="CVD" stroke={ticker.cvdDirection === 'BUY' ? '#10b981' : '#f43f5e'} fill="url(#cvdGradient)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Open Interest Chart */}
-          <div className="h-24 w-full pt-1 border-t border-white/5 mt-2 relative group">
-            <span className="absolute top-1 left-2 text-[9px] font-bold text-neutral-500 uppercase z-10 group-hover:text-white transition">Open Interest (Contratos Abertos)</span>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
-                <XAxis dataKey="time" hide />
-                <YAxis domain={['auto', 'auto']} hide />
-                <Tooltip contentStyle={{ backgroundColor: '#050505', borderColor: '#262626', fontSize: '10px', color: '#fff' }} />
-                <Line type="monotone" dataKey="openInterest" name="Open Interest" stroke="#06b6d4" strokeWidth={1.5} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          {/* Sub-gráficos de Orderflow e Volume Taker */}
+          <OrderflowIndicators
+            slicedData={slicedData}
+            chartData={chartData}
+            ticker={ticker}
+          />
         </div>
 
         {/* Right Sidebar: Volume Profile & Order Flow Breakdown */}
-        <div className="space-y-4">
-          {/* Volume Profile Breakdown */}
-          <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
-            <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-              <Layers className="h-4 w-4 text-orange-400" />
-              <h3 className="text-xs font-bold text-white uppercase">Volume Profile do Range</h3>
-            </div>
-            <div className="space-y-1.5 text-xs">
-              <div className="flex justify-between p-2 rounded bg-[#050505] border border-white/5">
-                <span className="text-neutral-400">VAH (Value Area High):</span>
-                <span className="font-extrabold text-neutral-200">{formatPrice(range.vah, { currency: true })}</span>
-              </div>
-              <div className="flex justify-between p-2 rounded bg-orange-500/10 border border-orange-500/30">
-                <span className="text-orange-400 font-bold">POC (Point of Control):</span>
-                <span className="font-extrabold text-orange-400">{formatPrice(range.poc, { currency: true })}</span>
-              </div>
-              <div className="flex justify-between p-2 rounded bg-[#050505] border border-white/5">
-                <span className="text-neutral-400">VAL (Value Area Low):</span>
-                <span className="font-extrabold text-neutral-200">{formatPrice(range.val, { currency: true })}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Order Flow & OI Breakdown */}
-          <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
-            <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-              <Activity className="h-4 w-4 text-emerald-400" />
-              <h3 className="text-xs font-bold text-white uppercase">Métricas de Order Flow & Funding</h3>
-            </div>
-            <div className="space-y-2 text-xs">
-              <div>
-                <div className="flex justify-between text-neutral-400 mb-1">
-                  <span>CVD (Delta Acumulado):</span>
-                  <span className={`font-bold ${ticker.cvdDirection === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    ${((ticker.cvd ?? 0) / 1000000).toFixed(2)}M ({ticker.cvdDirection})
-                  </span>
-                </div>
-                <div className="w-full bg-[#050505] h-1.5 rounded-full overflow-hidden border border-white/5">
-                  <div
-                    className={`h-full ${ticker.cvdDirection === 'BUY' ? 'bg-emerald-500' : 'bg-rose-500'}`}
-                    style={{ width: `${Math.min(100, (ticker.takerBuyRatio ?? 0.5) * 100)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-between p-2 bg-[#050505] rounded border border-white/5 items-center">
-                <span className="text-neutral-400">CVD Delta (Vela Recente):</span>
-                <span className={`font-bold ${(ticker.cvdDeltaPercent ?? 0) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  ${formatCompactNumber(Math.abs(ticker.cvdDelta ?? 0))} ({(ticker.cvdDeltaPercent ?? 0) > 0 ? '+' : ''}{ticker.cvdDeltaPercent ?? 0}%)
-                </span>
-              </div>
-
-              <div className="flex justify-between p-2 bg-[#050505] rounded border border-white/5">
-                <span className="text-neutral-400">Var Open Interest (1h):</span>
-                <span className={`font-bold ${(ticker.openInterestChange1h ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {(ticker.openInterestChange1h ?? 0) >= 0 ? '+' : ''}{(ticker.openInterestChange1h ?? 0).toFixed(2)}%
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-1.5 pt-1">
-                <div className="p-2 bg-[#050505] rounded border border-white/5">
-                  <span className="text-[10px] text-neutral-400 block">Funding Fee Atual</span>
-                  <span className="font-extrabold text-white">
-                    {((ticker.fundingRate ?? 0) * 100).toFixed(4)}%
-                  </span>
-                </div>
-                <div className="p-2 bg-[#050505] rounded border border-white/5">
-                  <span className="text-[10px] text-neutral-400 block">Funding Fee Diário</span>
-                  <span className={`font-extrabold ${(ticker.fundingRate ?? 0) < 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
-                    {((ticker.fundingRateDaily ?? (ticker.fundingRate ?? 0) * 3) * 100).toFixed(3)}%/d
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex justify-between p-2 bg-[#050505] rounded border border-white/5">
-                <span className="text-neutral-400">Funding Rate Anualizado:</span>
-                <span className="font-bold text-orange-400">
-                  {(ticker.fundingRateAnnualized ?? 0).toFixed(1)}% APR
-                </span>
-              </div>
-
-              {/* Análise do Comportamento do Funding Rate */}
-              <div className={`p-2.5 rounded border text-[11px] space-y-1 ${
-                ticker.fundingRateAnalysis?.status === 'EXTREME_NEGATIVE' || ticker.fundingRateAnalysis?.status === 'NEGATIVE'
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                  : ticker.fundingRateAnalysis?.status === 'EXTREME_POSITIVE' || ticker.fundingRateAnalysis?.status === 'POSITIVE'
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                  : 'bg-neutral-900 border-white/10 text-neutral-300'
-              }`}>
-                <div className="flex items-center justify-between font-extrabold">
-                  <span>ANALISADOR DE FUNDING</span>
-                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
-                    {ticker.fundingRateAnalysis?.bias ?? 'NEUTRAL'}
-                  </span>
-                </div>
-                <div className="font-black text-[10px] uppercase">
-                  {ticker.fundingRateAnalysis?.pressure ?? 'NEUTRO / EQUILIBRADO'}
-                </div>
-                <div className="text-[10px] opacity-90 leading-relaxed">
-                  {ticker.fundingRateAnalysis?.description ?? 'Taxa de funding em equilíbrio normal.'}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Divergence & Structure Analysis (Sniper) */}
-          <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-rose-400" />
-                <h3 className="text-xs font-bold text-white uppercase">Divergências & Estrutura</h3>
-              </div>
-            </div>
-            
-            <div className="space-y-3 text-xs">
-              {/* Divergence */}
-              <div className="p-2.5 bg-[#050505] rounded border border-white/5 space-y-2 relative overflow-hidden">
-                <div className={`absolute top-0 right-0 w-8 h-8 rounded-bl-full opacity-20 ${ticker.cvdDirection === 'BUY' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-neutral-400 font-bold uppercase text-[10px]">Divergência Detectada</span>
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ticker.cvdDirection === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`}>
-                    {ticker.cvdDirection === 'BUY' ? 'Bullish (Forte)' : 'Bearish (Média)'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px]">
-                  <div>
-                    <span className="text-neutral-500 block">Formação (CVD vs Preço)</span>
-                    <span className="font-bold text-neutral-200">{ticker.cvdDirection === 'BUY' ? 'Absorção de Venda' : 'Agressão de Venda'}</span>
-                  </div>
-                  <div>
-                    <span className="text-neutral-500 block">Relevância / Impacto</span>
-                    <span className="font-bold text-orange-400">{ticker.cvdDirection === 'BUY' ? 'Alta (Reversão)' : 'Irrelevante'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Market Structure HH/HL LL/LH */}
-              <div className="p-2.5 bg-[#050505] rounded border border-white/5 relative overflow-hidden">
-                <div className={`absolute top-0 right-0 w-8 h-8 rounded-bl-full opacity-20 ${isBullishStructure ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                <span className="text-neutral-400 font-bold uppercase text-[10px] mb-2 block">Estrutura de Mercado ({timeframe})</span>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className={`h-2 w-2 rounded-full ${isBullishStructure ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                    <span className={`font-bold ${isBullishStructure ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {structureLabel}
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-neutral-500 border border-white/10 px-1.5 py-0.5 rounded font-bold">
-                    BOS {bosStatus}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <MarketProfileMetrics
+          ticker={ticker}
+          timeframe={timeframe}
+          isBullishStructure={isBullishStructure}
+          structureLabel={structureLabel}
+          bosStatus={bosStatus}
+        />
       </div>
     </div>
   );

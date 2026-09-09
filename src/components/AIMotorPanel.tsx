@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AIAuditReport, TickerData, IndicatorWeights, AIModelConfig } from '../types';
-import { Brain, Cpu, RefreshCw, Send, ShieldAlert, Sparkles, CheckCircle, Sliders, MessageSquare } from 'lucide-react';
+import { Brain, Cpu, RefreshCw, Send, ShieldAlert, Sparkles, CheckCircle, Sliders, MessageSquare, UserCheck } from 'lucide-react';
+import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 
 interface AIMotorPanelProps {
   tickers: TickerData[];
@@ -44,6 +45,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   const [inputQuery, setInputQuery] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
   const [selectedSymbolForChat, setSelectedSymbolForChat] = useState<string>('BTCUSDT');
+  const [selectedPersona, setSelectedPersona] = useState<string>('conservative');
 
   // Ref for chat auto-scrolling
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -97,7 +99,12 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, symbol: selectedSymbolForChat, model: selectedModel })
+        body: JSON.stringify({ 
+          message: msg, 
+          symbol: selectedSymbolForChat, 
+          model: selectedModel,
+          personaId: selectedPersona
+        })
       });
       const data = await res.json();
       setChatMessages(prev => [...prev, { 
@@ -271,23 +278,41 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
 
       {/* Interactive AI Trader Assistant Chat Card */}
       <div className="bg-[#0A0A0A] rounded-lg border border-white/10 p-4 shadow-xl space-y-3 w-full">
-        <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-2.5 gap-2">
           <div className="flex items-center gap-2">
             <MessageSquare className="h-4 w-4 text-orange-400" />
             <h3 className="text-xs font-extrabold text-white uppercase">Chat Direto com o SuperBot AI Trader</h3>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-neutral-400 font-bold">Contexto:</span>
-            <select
-              value={selectedSymbolForChat}
-              onChange={(e) => setSelectedSymbolForChat(e.target.value)}
-              className="bg-[#050505] border border-white/10 text-neutral-300 text-xs px-2 py-0.5 rounded"
-            >
-              {(tickers || []).map(t => (
-                <option key={t.symbol} value={t.symbol}>{t.symbol}</option>
-              ))}
-            </select>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-[#050505] px-2 py-1 rounded border border-cyan-500/20">
+              <UserCheck className="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" />
+              <select
+                value={selectedPersona}
+                onChange={(e) => setSelectedPersona(e.target.value)}
+                className="bg-transparent text-cyan-300 text-xs font-bold focus:outline-none cursor-pointer"
+                title="Persona do Agente de Chat"
+              >
+                {DEFAULT_AI_PERSONAS.map(p => (
+                  <option key={p.id} value={p.id} className="bg-[#0A0A0A] text-white">
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-neutral-400 font-bold">Contexto:</span>
+              <select
+                value={selectedSymbolForChat}
+                onChange={(e) => setSelectedSymbolForChat(e.target.value)}
+                className="bg-[#050505] border border-white/10 text-neutral-300 text-xs px-2 py-1 rounded font-bold"
+              >
+                {(tickers || []).map(t => (
+                  <option key={t.symbol} value={t.symbol}>{t.symbol}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 

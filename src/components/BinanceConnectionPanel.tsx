@@ -37,7 +37,7 @@ export interface AILogEntry {
     apiKeyPresent?: boolean;
     errorStack?: string;
     diagnosticSteps?: string[];
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -46,7 +46,7 @@ interface BinanceLog {
   level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS';
   type: 'WEBSOCKET' | 'REST_API';
   message: string;
-  details?: any;
+  details?: unknown;
 }
 
 interface WSStatus {
@@ -195,7 +195,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
 
   // Unified Feed (Binance + AI)
   const unifiedLogs = [
-    ...combinedBinanceLogs.map(l => ({
+    ...combinedBinanceLogs.map((l: any) => ({
       id: l.id,
       timestamp: l.timestamp,
       category: 'BINANCE' as const,
@@ -204,7 +204,8 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
       provider: 'Binance',
       modelOrUrl: 'fstream.binance.com',
       message: l.message,
-      details: l.details
+      details: l.details,
+      durationMs: l.durationMs as number | undefined
     })),
     ...aiLogs.map(l => ({
       id: l.id,
@@ -555,7 +556,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    navigator.clipboard.writeText(log.details?.fullPrompt || log.details?.promptSnippet || '');
+                                    navigator.clipboard.writeText((log.details as any)?.fullPrompt || (log.details as any)?.promptSnippet || '');
                                     alert('Prompt copiado para a área de transferência!');
                                   }}
                                   className="text-[9px] bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-0.5 rounded border border-white/10 transition"
@@ -564,13 +565,13 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
                                 </button>
                               </div>
                               <pre className="bg-black/90 p-3 rounded-lg border border-orange-500/20 text-[11px] text-orange-200/90 whitespace-pre-wrap overflow-y-auto max-h-60 leading-relaxed font-mono">
-                                {log.details?.fullPrompt || log.details?.promptSnippet}
+                                {(log.details as any)?.fullPrompt || (log.details as any)?.promptSnippet}
                               </pre>
                             </div>
                           )}
 
                           {/* Full AI Response Payload */}
-                          {(log.details?.fullResponse || log.details?.preview || log.details?.outputSnippet) && (
+                          {((log.details as any)?.fullResponse || (log.details as any)?.preview || (log.details as any)?.outputSnippet) && (
                             <div className="space-y-1">
                               <div className="flex items-center justify-between">
                                 <span className="text-emerald-400 text-[10px] uppercase font-bold flex items-center gap-1">
@@ -579,7 +580,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    navigator.clipboard.writeText(log.details?.fullResponse || log.details?.preview || log.details?.outputSnippet || '');
+                                    navigator.clipboard.writeText((log.details as any)?.fullResponse || (log.details as any)?.preview || (log.details as any)?.outputSnippet || '');
                                     alert('Resposta copiada para a área de transferência!');
                                   }}
                                   className="text-[9px] bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-0.5 rounded border border-white/10 transition"
@@ -588,7 +589,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
                                 </button>
                               </div>
                               <pre className="bg-emerald-950/20 p-3 rounded-lg border border-emerald-500/30 text-[11px] text-emerald-200/90 whitespace-pre-wrap overflow-y-auto max-h-60 leading-relaxed font-mono">
-                                {log.details?.fullResponse || log.details?.preview || log.details?.outputSnippet}
+                                {(log.details as any)?.fullResponse || (log.details as any)?.preview || (log.details as any)?.outputSnippet}
                               </pre>
                             </div>
                           )}

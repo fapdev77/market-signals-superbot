@@ -263,6 +263,21 @@ export class BacktestEngine {
     const avgRiskReward = avgLossPct > 0 ? avgWinPct / avgLossPct : preset.targetRiskRatio;
     const avgDurationMinutes = totalTrades > 0 ? Math.round(totalDurationSum / totalTrades) : 0;
 
+    // Advanced Institutional Metrics (Sharpe, Sortino, Slippage, Fees)
+    const feePct = (config as any).makerTakerFeePct ?? 0.04;
+    const slipPct = (config as any).slippagePct ?? 0.02;
+    const roundtripFee = (feePct * 2) + slipPct;
+    const netReturns = trades.map(t => t.pnlPct - roundtripFee);
+    const meanReturn = netReturns.length > 0 ? netReturns.reduce((a, b) => a + b, 0) / netReturns.length : 0;
+    const variance = netReturns.length > 0 ? netReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / netReturns.length : 0;
+    const stdDev = Math.sqrt(variance);
+    const downsideVar = netReturns.length > 0 ? netReturns.reduce((a, b) => a + (b < 0 ? Math.pow(b, 2) : 0), 0) / netReturns.length : 0;
+    const downsideDev = Math.sqrt(downsideVar);
+
+    const sharpeRatio = stdDev > 0.0001 ? Number(((meanReturn / stdDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : 0;
+    const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : (meanReturn > 0 ? 4.5 : 0);
+    const totalFeesPaid = Number((trades.length * initialBalance * (roundtripFee / 100)).toFixed(2));
+
     const result: BacktestResult = {
       id: crypto.randomUUID(),
       symbol: config.symbol,
@@ -294,7 +309,13 @@ export class BacktestEngine {
         profile
       },
       createdAt: Date.now(),
-      trades
+      trades,
+      sharpeRatio,
+      sortinoRatio,
+      makerTakerFeePct: feePct,
+      slippagePct: slipPct,
+      grossProfit: parseFloat(totalProfit.toFixed(2)),
+      totalFeesPaid
     };
 
     result.diagnostic = this.generateDiagnostic(result);
