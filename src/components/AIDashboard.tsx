@@ -28,6 +28,7 @@ import {
   Tooltip,
   ResponsiveContainer
 } from 'recharts';
+import { Tooltip as AppTooltip } from './Tooltip';
 import { AILogEntry, AIModelConfig } from '../types';
 
 export const AIDashboard: React.FC = () => {
@@ -369,26 +370,38 @@ export const AIDashboard: React.FC = () => {
           </select>
 
           {/* Refresh Button */}
-          <button
-            onClick={fetchDashboardData}
-            disabled={isLoading}
-            className="px-3 py-2 bg-white/5 hover:bg-white/10 text-neutral-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-white/10 disabled:opacity-50"
-            title="Atualizar Telemetria"
+          <AppTooltip
+            position="bottom"
+            title="Atualizar Telemetria de IA"
+            badge="METRICS"
+            content="Recarrega as estatísticas de chamadas, latência média, consumo de tokens e custos estimados dos modelos de IA."
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-cyan-400' : ''}`} />
-            Atualizar
-          </button>
+            <button
+              onClick={fetchDashboardData}
+              disabled={isLoading}
+              className="px-3 py-2 bg-white/5 hover:bg-white/10 text-neutral-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-white/10 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-cyan-400' : ''}`} />
+              Atualizar
+            </button>
+          </AppTooltip>
 
           {/* Clear Logs Button */}
-          <button
-            onClick={handleClearLogs}
-            disabled={isClearing || logs.length === 0}
-            className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-30"
+          <AppTooltip
+            position="bottom"
             title="Zerar Logs de Telemetria"
+            badge="RESET DATA"
+            content="Exclui o histórico de auditorias e chamadas aos modelos de linguagem armazenado localmente."
           >
-            <Trash2 className="h-3.5 w-3.5" />
-            Limpar Logs
-          </button>
+            <button
+              onClick={handleClearLogs}
+              disabled={isClearing || logs.length === 0}
+              className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-30"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Limpar Logs
+            </button>
+          </AppTooltip>
         </div>
       </div>
 

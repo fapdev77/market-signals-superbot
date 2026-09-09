@@ -4,6 +4,7 @@ import { LiquidityHeatmapData, LiquidityBucket } from '../types';
 import { getLiquidityBucketColor } from '../utils/heatmapUtils';
 import { formatPrice, formatCompactNumber } from '../utils/formatters';
 import { Flame, ShieldCheck, AlertOctagon, Layers } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 interface LiquidityHeatmapReferenceAreasProps {
   heatmapData: LiquidityHeatmapData;
@@ -68,18 +69,24 @@ export const LiquidityHeatmapBadge: React.FC<LiquidityHeatmapBadgeProps> = ({
   return (
     <div className="bg-[#0A0A0A]/90 backdrop-blur-md p-2.5 rounded-lg border border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg">
       <div className="flex items-center gap-2">
-        <button
-          onClick={onToggle}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-bold transition border ${
-            visible
-              ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 shadow-sm'
-              : 'bg-neutral-900 text-neutral-400 border-white/5 hover:text-white'
-          }`}
-          title="Alternar camada de Heatmap de Liquidez"
+        <Tooltip
+          position="bottom"
+          title="Camada de Heatmap de Liquidez"
+          badge={visible ? "ATIVO" : "DESLIGADO"}
+          content="Projeta zonas de densidade de ordens limites do livro em faixas de cores no gráfico para mapear suporte institucional e bolsões de liquidez."
         >
-          <Flame className={`h-3.5 w-3.5 ${visible ? 'text-orange-400 animate-pulse' : 'text-neutral-500'}`} />
-          <span>Heatmap de Liquidez: {visible ? 'ATIVO' : 'DESLIGADO'}</span>
-        </button>
+          <button
+            onClick={onToggle}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-bold transition border ${
+              visible
+                ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 shadow-sm'
+                : 'bg-neutral-900 text-neutral-400 border-white/5 hover:text-white'
+            }`}
+          >
+            <Flame className={`h-3.5 w-3.5 ${visible ? 'text-orange-400 animate-pulse' : 'text-neutral-500'}`} />
+            <span>Heatmap de Liquidez: {visible ? 'ATIVO' : 'DESLIGADO'}</span>
+          </button>
+        </Tooltip>
 
         {visible && (
           <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5">

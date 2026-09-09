@@ -20,6 +20,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { WSClientStatus, WSLogEntry } from '../hooks/useBinanceWebSocket';
+import { Tooltip } from './Tooltip';
 
 export interface AILogEntry {
   id: string;
@@ -260,23 +261,36 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
 
         <div className="flex items-center gap-2">
           {activeTab === 'ai' && (
-            <button
-              onClick={clearAiLogs}
-              className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-rose-500/30 cursor-pointer"
-              title="Zerar o histórico em memória dos logs de IA"
+            <Tooltip
+              position="bottom"
+              title="Limpar Histórico de IA"
+              badge="PURGE"
+              content="Zera a lista de logs de requisições, prompts e respostas dos modelos de inteligência artificial armazenados nesta sessão."
             >
-              <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-              Zerar Logs IA
-            </button>
+              <button
+                onClick={clearAiLogs}
+                className="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-rose-500/30 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                Zerar Logs IA
+              </button>
+            </Tooltip>
           )}
 
-          <button
-            onClick={fetchLogsAndStatus}
-            className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-white/10 cursor-pointer"
+          <Tooltip
+            position="bottom"
+            title="Recarregar Logs e Status"
+            badge="REFRESH"
+            content="Consulta o estado mais recente do WebSocket da Binance e as últimas requisições registradas no console."
           >
-            <RefreshCw className={`h-3.5 w-3.5 text-orange-400 ${loading ? 'animate-spin' : ''}`} />
-            Atualizar
-          </button>
+            <button
+              onClick={fetchLogsAndStatus}
+              className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-white/10 cursor-pointer"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 text-orange-400 ${loading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </button>
+          </Tooltip>
 
           {onClose && (
             <button

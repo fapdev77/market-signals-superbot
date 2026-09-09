@@ -21,7 +21,11 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 export const useToast = () => {
   const context = useContext(ToastContext);
   if (!context) {
-    throw new Error('useToast must be used within a ToastProvider');
+    console.warn('useToast was called outside of a ToastProvider. Using fallback no-op toast handler.');
+    return {
+      showToast: () => {},
+      removeToast: () => {},
+    };
   }
   return context;
 };

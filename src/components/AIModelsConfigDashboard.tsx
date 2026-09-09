@@ -26,6 +26,7 @@ import {
   Play
 } from 'lucide-react';
 import { AIModelConfig, AIProvider } from '../types';
+import { Tooltip } from './Tooltip';
 
 const GEMINI_MODEL_SUGGESTIONS = [
   { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash (Ultrarrápido & Econômico)' },
@@ -555,25 +556,39 @@ export const AIModelsConfigDashboard: React.FC<{
             
             {/* Priority & Status Controls */}
             <div className="flex items-center gap-2 md:flex-col md:gap-1">
-              <button 
-                onClick={() => movePriority(index, 'up')}
-                disabled={index === 0}
-                className="text-neutral-500 hover:text-white disabled:opacity-20 transition"
-                title="Aumentar prioridade"
+              <Tooltip
+                position="top"
+                title="Aumentar Prioridade"
+                badge={`ORDEM #${model.priority}`}
+                content="Eleva o modelo na fila de execução. Modelos com prioridade menor (ex: #1) são consultados primeiro pelo motor de auditoria."
               >
-                <ArrowUp className="h-4 w-4" />
-              </button>
+                <button 
+                  onClick={() => movePriority(index, 'up')}
+                  disabled={index === 0}
+                  className="text-neutral-500 hover:text-white disabled:opacity-20 transition"
+                >
+                  <ArrowUp className="h-4 w-4" />
+                </button>
+              </Tooltip>
+
               <div className="bg-[#050505] text-neutral-300 text-[10px] font-bold px-2 py-0.5 rounded border border-white/10 shadow">
                 #{model.priority}
               </div>
-              <button 
-                onClick={() => movePriority(index, 'down')}
-                disabled={index === models.length - 1}
-                className="text-neutral-500 hover:text-white disabled:opacity-20 transition"
-                title="Diminuir prioridade"
+
+              <Tooltip
+                position="bottom"
+                title="Diminuir Prioridade"
+                badge={`ORDEM #${model.priority}`}
+                content="Rebaixa o modelo na fila de execução. O robô só o consultará se os modelos de maior prioridade falharem."
               >
-                <ArrowDown className="h-4 w-4" />
-              </button>
+                <button 
+                  onClick={() => movePriority(index, 'down')}
+                  disabled={index === models.length - 1}
+                  className="text-neutral-500 hover:text-white disabled:opacity-20 transition"
+                >
+                  <ArrowDown className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </div>
 
             {/* Main Info */}
@@ -623,57 +638,96 @@ export const AIModelsConfigDashboard: React.FC<{
 
             {/* Actions */}
             <div className="flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-none border-white/5">
-              <button
-                onClick={() => testConnection(model)}
-                className="p-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg hover:bg-blue-500/20 transition"
-                title="Testar Conexão / Latência"
+              <Tooltip
+                position="top"
+                title="Testar Conexão e Latência"
+                badge="PING / HEALTH"
+                content="Envia um prompt de verificação ao endpoint do modelo para atestar credenciais, status online e tempo de resposta em milissegundos."
               >
-                <Play className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleToggleActive(model.id)}
-                className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
-                  model.isActive 
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20' 
-                    : 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
-                }`}
+                <button
+                  onClick={() => testConnection(model)}
+                  className="p-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg hover:bg-blue-500/20 transition"
+                >
+                  <Play className="h-4 w-4" />
+                </button>
+              </Tooltip>
+
+              <Tooltip
+                position="top"
+                title={model.isActive ? "Desativar Modelo" : "Ativar Modelo"}
+                badge={model.isActive ? "ONLINE" : "OFFLINE"}
+                content={model.isActive ? "Pausa o uso deste modelo na fila de auditoria de sinais." : "Reativa este modelo para participar das análises de mercado."}
               >
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                {model.isActive ? 'Ativo' : 'Inativo'}
-              </button>
-              <button
-                onClick={() => handleToggleFallback(model.id)}
-                className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
-                  model.isFallback 
-                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20' 
-                    : 'bg-neutral-900 text-neutral-500 border-white/5 hover:text-neutral-300'
-                }`}
-                title="Ativar como motor de contingência (Fallback)"
+                <button
+                  onClick={() => handleToggleActive(model.id)}
+                  className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                    model.isActive 
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20' 
+                      : 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
+                  }`}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  {model.isActive ? 'Ativo' : 'Inativo'}
+                </button>
+              </Tooltip>
+
+              <Tooltip
+                position="top"
+                title="Motor de Contingência (Fallback)"
+                badge="FAILOVER"
+                content="Define este modelo como backup automático caso os provedores principais excedam rate limits (429) ou fiquem instáveis."
               >
-                <ShieldAlert className="h-3.5 w-3.5" />
-                Fallback
-              </button>
-              <button
-                onClick={() => handleDuplicate(model)}
-                className="p-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-lg hover:bg-purple-500/20 transition"
+                <button
+                  onClick={() => handleToggleFallback(model.id)}
+                  className={`flex-1 md:flex-none px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                    model.isFallback 
+                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20' 
+                      : 'bg-neutral-900 text-neutral-500 border-white/5 hover:text-neutral-300'
+                  }`}
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  Fallback
+                </button>
+              </Tooltip>
+
+              <Tooltip
+                position="top"
                 title="Duplicar Modelo"
+                content="Cria uma cópia idêntica deste perfil para você customizar parâmetros de temperatura, tokens ou system instructions separadamente."
               >
-                <Copy className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => openEditModal(model)}
-                className="p-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg hover:bg-blue-500/20 transition"
+                <button
+                  onClick={() => handleDuplicate(model)}
+                  className="p-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-lg hover:bg-purple-500/20 transition"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+              </Tooltip>
+
+              <Tooltip
+                position="top"
                 title="Editar Configurações"
+                content="Abre o painel completo para alterar Model ID, Chave de API, Temperatura, Top-P e Instruções de Sistema."
               >
-                <Edit3 className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleDelete(model.id)}
-                className="p-1.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-lg hover:bg-rose-500/20 transition"
+                <button
+                  onClick={() => openEditModal(model)}
+                  className="p-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg hover:bg-blue-500/20 transition"
+                >
+                  <Edit3 className="h-4 w-4" />
+                </button>
+              </Tooltip>
+
+              <Tooltip
+                position="top"
                 title="Remover Modelo"
+                content="Exclui este modelo da lista de provedores cadastrados da sua aplicação."
               >
-                <Trash2 className="h-4 w-4" />
-              </button>
+                <button
+                  onClick={() => handleDelete(model.id)}
+                  className="p-1.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-lg hover:bg-rose-500/20 transition"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </div>
           </div>
         ))}

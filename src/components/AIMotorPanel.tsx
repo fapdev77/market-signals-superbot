@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AIAuditReport, TickerData, IndicatorWeights, AIModelConfig } from '../types';
 import { Brain, Cpu, RefreshCw, Send, ShieldAlert, Sparkles, CheckCircle, Sliders, MessageSquare, UserCheck } from 'lucide-react';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
+import { Tooltip } from './Tooltip';
 
 interface AIMotorPanelProps {
   tickers: TickerData[];
@@ -143,17 +144,24 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
         {/* Model Selector and AI Toggle */}
         <div className="bg-[#050505] p-2 rounded border border-white/10 flex items-center gap-3 w-full md:w-auto">
           {/* Toggle IA */}
-          <button
-            onClick={() => onToggleAI(!aiAnalysisEnabled)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded text-[10px] font-bold border transition ${
-              aiAnalysisEnabled
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-            }`}
+          <Tooltip
+            position="bottom"
+            title="Chave Geral de Inteligência Artificial"
+            badge={aiAnalysisEnabled ? "MOTOR ONLINE" : "OFFLINE"}
+            content="Habilita ou suspende as consultas automatizadas e auditorias contextuais dos modelos de linguagem nas análises do robô."
           >
-             {aiAnalysisEnabled ? <Brain className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
-             {aiAnalysisEnabled ? 'IA ATIVA' : 'IA DESABILITADA'}
-          </button>
+            <button
+              onClick={() => onToggleAI(!aiAnalysisEnabled)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded text-[10px] font-bold border transition ${
+                aiAnalysisEnabled
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+              }`}
+            >
+               {aiAnalysisEnabled ? <Brain className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+               {aiAnalysisEnabled ? 'IA ATIVA' : 'IA DESABILITADA'}
+            </button>
+          </Tooltip>
 
           <div className="h-6 w-px bg-white/10" />
 
@@ -189,23 +197,30 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
             <h3 className="text-xs font-extrabold text-white uppercase">Auditoria Estratégica do Mercado em Tempo Real</h3>
           </div>
 
-          <button
-            onClick={handleRunAudit}
-            disabled={loadingAudit}
-            className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-black rounded text-xs font-bold transition flex items-center gap-1.5 shadow disabled:opacity-50"
+          <Tooltip
+            position="left"
+            title="Executar Auditoria Geral de Mercado"
+            badge="IA SYNTHESIS"
+            content="Gera um diagnóstico macro completo com os ativos monitorados, apontando melhores oportunidades, riscos iminentes e ajustes recomendados."
           >
-            {loadingAudit ? (
-              <>
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                Auditando Mercado...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="h-3.5 w-3.5" />
-                Executar Auditoria de Mercado
-              </>
-            )}
-          </button>
+            <button
+              onClick={handleRunAudit}
+              disabled={loadingAudit}
+              className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-black rounded text-xs font-bold transition flex items-center gap-1.5 shadow disabled:opacity-50"
+            >
+              {loadingAudit ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  Auditando Mercado...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Executar Auditoria de Mercado
+                </>
+              )}
+            </button>
+          </Tooltip>
         </div>
 
         {auditReport ? (
@@ -285,21 +300,27 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1.5 bg-[#050505] px-2 py-1 rounded border border-cyan-500/20">
-              <UserCheck className="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" />
-              <select
-                value={selectedPersona}
-                onChange={(e) => setSelectedPersona(e.target.value)}
-                className="bg-transparent text-cyan-300 text-xs font-bold focus:outline-none cursor-pointer"
-                title="Persona do Agente de Chat"
-              >
-                {DEFAULT_AI_PERSONAS.map(p => (
-                  <option key={p.id} value={p.id} className="bg-[#0A0A0A] text-white">
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Tooltip
+              position="bottom"
+              title="Estilo de Análise da IA"
+              badge="PERSONA"
+              content="Altera a postura analítica do bot (Conservador, Agressivo, Mestre Wyckoff, Scalper ou Price Action Puro) durante o chat."
+            >
+              <div className="flex items-center gap-1.5 bg-[#050505] px-2 py-1 rounded border border-cyan-500/20">
+                <UserCheck className="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" />
+                <select
+                  value={selectedPersona}
+                  onChange={(e) => setSelectedPersona(e.target.value)}
+                  className="bg-transparent text-cyan-300 text-xs font-bold focus:outline-none cursor-pointer"
+                >
+                  {DEFAULT_AI_PERSONAS.map(p => (
+                    <option key={p.id} value={p.id} className="bg-[#0A0A0A] text-white">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </Tooltip>
 
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-neutral-400 font-bold">Contexto:</span>
@@ -364,14 +385,21 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
             onKeyDown={(e) => e.key === 'Enter' && handleSendChatMessage()}
             className="flex-1 bg-[#050505] border border-white/10 text-neutral-200 placeholder-neutral-500 px-3 py-1.5 rounded text-xs focus:outline-none focus:border-orange-500"
           />
-          <button
-            onClick={handleSendChatMessage}
-            disabled={loadingChat || !inputQuery.trim()}
-            className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-black font-bold rounded text-xs transition flex items-center gap-1 disabled:opacity-50"
+          <Tooltip
+            position="top"
+            title="Enviar Pergunta ao SuperBot"
+            badge="ENTER"
+            content="Envia a sua dúvida sobre preço, suporte, resistência ou configuração para o assistente de IA analisar."
           >
-            <Send className="h-3.5 w-3.5" />
-            Enviar
-          </button>
+            <button
+              onClick={handleSendChatMessage}
+              disabled={loadingChat || !inputQuery.trim()}
+              className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-black font-bold rounded text-xs transition flex items-center gap-1 disabled:opacity-50"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Enviar
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>

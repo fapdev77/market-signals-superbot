@@ -86,15 +86,39 @@ export async function requestNotificationPermission(): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return false;
   }
-  if (Notification.permission === 'granted') return true;
-  if (Notification.permission !== 'denied') {
-    const perm = await Notification.requestPermission();
-    return perm === 'granted';
+  try {
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission !== 'denied') {
+      const perm = await Notification.requestPermission();
+      return perm === 'granted';
+    }
+  } catch (err) {
+    console.warn('Desktop Notification permission request blocked or unsupported in this context:', err);
+    return false;
   }
   return false;
 }
 
+export function isNotificationEnabled(): boolean {
+  if (typeof window === 'undefined' || !window.localStorage) return false;
+  const stored = window.localStorage.getItem('superbot_desktop_notifications');
+  if (stored !== null) {
+    return stored === 'true';
+  }
+  // Default to true if browser already granted permission
+  if (typeof window !== 'undefined' && 'Notification' in window) {
+    return Notification.permission === 'granted';
+  }
+  return false;
+}
+
+export function setNotificationEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  window.localStorage.setItem('superbot_desktop_notifications', enabled ? 'true' : 'false');
+}
+
 export function sendDesktopNotification(title: string, body: string): void {
+  if (!isNotificationEnabled()) return;
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   if (Notification.permission === 'granted') {
     try {
@@ -108,3 +132,4 @@ export function sendDesktopNotification(title: string, body: string): void {
     }
   }
 }
+

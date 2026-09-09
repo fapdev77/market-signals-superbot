@@ -23,6 +23,7 @@ import {
   Download,
   Activity
 } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ReferenceLine } from 'recharts';
 import { exportTradesToCSV } from '../utils/backtestMetrics';
 
@@ -413,46 +414,73 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           </div>
 
           <div className="flex items-center gap-2 w-full md:w-auto">
-            <button
-              onClick={() => handleSync(false)}
-              disabled={syncState?.status === 'SYNCING'}
-              className="flex-grow md:flex-grow-0 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-neutral-800 text-cyan-400 rounded text-[10px] font-bold transition border border-cyan-500/20 flex items-center justify-center gap-1.5"
-              title="Baixa apenas novos dados a partir do último registro"
+            <Tooltip
+              position="top"
+              title="Sincronizar Atualizações"
+              badge="DELTA SYNC"
+              content="Baixa apenas as velas mais recentes da Binance a partir do último registro salvo no IndexedDB local, economizando dados e tempo."
             >
-              <RefreshCw className={`h-3 w-3 ${syncState?.status === 'SYNCING' && !syncState?.forceFull ? 'animate-spin' : ''}`} />
-              Sincronizar Atualizações
-            </button>
-            <button
-              onClick={() => handleSync(true)}
-              disabled={syncState?.status === 'SYNCING'}
-              className="flex-grow md:flex-grow-0 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-rose-950/20 text-rose-400 hover:text-rose-300 rounded text-[10px] font-bold transition border border-rose-500/20 flex items-center justify-center gap-1.5"
-              title="Apaga os registros locais e realiza o download completo do período selecionado"
+              <button
+                onClick={() => handleSync(false)}
+                disabled={syncState?.status === 'SYNCING'}
+                className="w-full md:w-auto px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-neutral-800 text-cyan-400 rounded text-[10px] font-bold transition border border-cyan-500/20 flex items-center justify-center gap-1.5"
+              >
+                <RefreshCw className={`h-3 w-3 ${syncState?.status === 'SYNCING' && !syncState?.forceFull ? 'animate-spin' : ''}`} />
+                Sincronizar Atualizações
+              </button>
+            </Tooltip>
+
+            <Tooltip
+              position="top"
+              title="Download Completo"
+              badge="RESET & FULL"
+              content="Apaga os registros locais e realiza o download integral do período selecionado diretamente da API pública da Binance."
             >
-              <Trash2 className="h-3 w-3" />
-              Forçar Download Completo
-            </button>
+              <button
+                onClick={() => handleSync(true)}
+                disabled={syncState?.status === 'SYNCING'}
+                className="w-full md:w-auto px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-rose-950/20 text-rose-400 hover:text-rose-300 rounded text-[10px] font-bold transition border border-rose-500/20 flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="h-3 w-3" />
+                Forçar Download Completo
+              </button>
+            </Tooltip>
           </div>
         </div>
 
         {/* Action Buttons Row */}
         <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2 border-t border-white/5">
-          <button
-            onClick={handleRunBacktest}
-            disabled={loading || tuningLoading || syncState?.status === 'SYNCING'}
-            className="w-full sm:w-auto px-5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg font-bold transition flex items-center justify-center gap-2 border border-white/10 disabled:opacity-50"
+          <Tooltip
+            position="top"
+            title="Executar Backtest Atual"
+            badge="SIMULAÇÃO"
+            content="Simula a execução histórica das estratégias quantitativas com os pesos e configurações ativas no momento."
           >
-            {loading ? <RefreshCw className="h-4 w-4 animate-spin text-orange-400" /> : <Play className="h-4 w-4 fill-current text-orange-400" />}
-            {loading ? 'Rodando Simulação...' : 'Executar Backtest Atual'}
-          </button>
+            <button
+              onClick={handleRunBacktest}
+              disabled={loading || tuningLoading || syncState?.status === 'SYNCING'}
+              className="w-full sm:w-auto px-5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg font-bold transition flex items-center justify-center gap-2 border border-white/10 disabled:opacity-50"
+            >
+              {loading ? <RefreshCw className="h-4 w-4 animate-spin text-orange-400" /> : <Play className="h-4 w-4 fill-current text-orange-400" />}
+              {loading ? 'Rodando Simulação...' : 'Executar Backtest Atual'}
+            </button>
+          </Tooltip>
 
-          <button
-            onClick={handleRunAutoTune}
-            disabled={loading || tuningLoading || syncState?.status === 'SYNCING'}
-            className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black rounded-lg font-black transition flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50"
+          <Tooltip
+            position="top"
+            title="Auto-Tuning Algorítmico"
+            badge="ALGORITMO GENÉTICO"
+            content="Executa busca iterativa para descobrir a combinação ótima de pesos dos indicadores que maximiza a taxa de acerto e minimiza o drawdown."
           >
-            {tuningLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Cpu className="h-4 w-4" />}
-            {tuningLoading ? 'Executando Fine-Tuning...' : '⚡ Iniciar Auto-Tuning de Pesos'}
-          </button>
+            <button
+              onClick={handleRunAutoTune}
+              disabled={loading || tuningLoading || syncState?.status === 'SYNCING'}
+              className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black rounded-lg font-black transition flex items-center justify-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50"
+            >
+              {tuningLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Cpu className="h-4 w-4" />}
+              {tuningLoading ? 'Executando Fine-Tuning...' : '⚡ Iniciar Auto-Tuning de Pesos'}
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -855,14 +883,20 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
                     Clique em qualquer trade para abrir a análise visual completa de Entry, Exit, TP e SL.
                   </span>
                 </div>
-                <button
-                  onClick={handleDownloadCSV}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-cyan-400 border border-cyan-500/30 rounded text-xs font-bold transition shadow"
-                  title="Exportar todos os trades para arquivo CSV"
+                <Tooltip
+                  position="left"
+                  title="Exportar Relatório em Planilha"
+                  badge="CSV DOWNLOAD"
+                  content="Gera e baixa um arquivo CSV contendo data/hora, par, lado (Long/Short), preço de entrada, saída, TP, SL e PNL detalhado de cada operação."
                 >
-                  <Download className="h-3.5 w-3.5" />
-                  Exportar CSV ({backtestResult.trades.length} trades)
-                </button>
+                  <button
+                    onClick={handleDownloadCSV}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-cyan-400 border border-cyan-500/30 rounded text-xs font-bold transition shadow"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Exportar CSV ({backtestResult.trades.length} trades)
+                  </button>
+                </Tooltip>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

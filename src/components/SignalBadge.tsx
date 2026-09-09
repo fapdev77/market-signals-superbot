@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 interface SignalBadgeProps {
   type?: 'LONG' | 'SHORT' | 'NEUTRAL' | string;
@@ -7,6 +8,7 @@ interface SignalBadgeProps {
   showIcon?: boolean;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
+  withTooltip?: boolean;
 }
 
 export const SignalBadge: React.FC<SignalBadgeProps> = ({
@@ -15,10 +17,11 @@ export const SignalBadge: React.FC<SignalBadgeProps> = ({
   showIcon = true,
   size = 'md',
   className = '',
+  withTooltip = true,
 }) => {
   const normalized = (type || 'NEUTRAL').toUpperCase();
-  const isLong = normalized === 'LONG';
-  const isShort = normalized === 'SHORT';
+  const isLong = normalized.includes('LONG');
+  const isShort = normalized.includes('SHORT');
 
   const sizeClasses = {
     sm: 'text-[9px] px-1.5 py-0.5 font-bold',
@@ -32,7 +35,7 @@ export const SignalBadge: React.FC<SignalBadgeProps> = ({
     ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
     : 'bg-neutral-800/60 text-neutral-400 border-neutral-700/40';
 
-  return (
+  const badgeElement = (
     <span
       className={`inline-flex items-center gap-1 rounded-md border font-mono tracking-wider ${sizeClasses} ${colorClasses} ${className}`}
       aria-label={`Sinal: ${normalized}${score !== undefined ? `, Confluência: ${score}` : ''}`}
@@ -50,4 +53,32 @@ export const SignalBadge: React.FC<SignalBadgeProps> = ({
       )}
     </span>
   );
+
+  if (!withTooltip) return badgeElement;
+
+  const tooltipTitle = isLong
+    ? 'Sinal de Compra (LONG)'
+    : isShort
+    ? 'Sinal de Venda (SHORT)'
+    : 'Sinal Neutro / Consolidação';
+
+  const tooltipBadge = score !== undefined ? `${score}% Confluência` : normalized;
+
+  const tooltipContent = isLong
+    ? 'Forte pressão compradora identificada: Delta de CVD positivo, acúmulo de contratos em suporte e rejeição de mínimas.'
+    : isShort
+    ? 'Forte pressão vendedora identificada: Delta de CVD negativo, absorção agressiva em resistência e aumento de OI em queda.'
+    : 'Sem confluência suficiente para tomada de posição. O bot aguarda alinhamento de Order Flow e níveis de Fibonacci.';
+
+  return (
+    <Tooltip
+      title={tooltipTitle}
+      badge={tooltipBadge}
+      content={tooltipContent}
+      position="top"
+    >
+      {badgeElement}
+    </Tooltip>
+  );
 };
+

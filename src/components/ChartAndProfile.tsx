@@ -8,6 +8,7 @@ import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
 import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
 import { LiquidityHeatmapReferenceAreas, LiquidityHeatmapBadge } from './LiquidityHeatmapOverlay';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
+import { Tooltip as AppTooltip } from './Tooltip';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -464,35 +465,48 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             </div>
 
             {/* Persona Selector */}
-            <div className="flex items-center gap-1.5 bg-[#050505] px-2.5 py-1.5 rounded-lg border border-cyan-500/20">
-              <UserCheck className="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" />
-              <select
-                value={selectedPersona}
-                onChange={(e) => setSelectedPersona(e.target.value)}
-                className="bg-transparent text-cyan-300 text-xs font-bold focus:outline-none cursor-pointer max-w-[170px] truncate"
-                title="Persona e Estilo Operacional da IA"
-              >
-                {DEFAULT_AI_PERSONAS.map(p => (
-                  <option key={p.id} value={p.id} className="bg-[#0A0A0A] text-white">
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              onClick={handleRunAIReview}
-              disabled={loadingReview}
-              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-black rounded-lg text-xs font-black transition flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+            <AppTooltip
+              position="bottom"
+              title="Estilo Operacional do Agente"
+              badge="PERSONA"
+              content="Configura o viés da inteligência artificial (Conservador, Agressivo, Wyckoff, Scalper ou Price Action) na análise técnica deste gráfico."
             >
-              {loadingReview ? (
-                <><RefreshCw className="h-4 w-4 animate-spin" /> Auditando com IA...</>
-              ) : aiReview ? (
-                <><RefreshCw className="h-4 w-4" /> Re-Executar Auditoria</>
-              ) : (
-                <><Brain className="h-4 w-4" /> Executar Auditoria IA</>
-              )}
-            </button>
+              <div className="flex items-center gap-1.5 bg-[#050505] px-2.5 py-1.5 rounded-lg border border-cyan-500/20">
+                <UserCheck className="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" />
+                <select
+                  value={selectedPersona}
+                  onChange={(e) => setSelectedPersona(e.target.value)}
+                  className="bg-transparent text-cyan-300 text-xs font-bold focus:outline-none cursor-pointer max-w-[170px] truncate"
+                >
+                  {DEFAULT_AI_PERSONAS.map(p => (
+                    <option key={p.id} value={p.id} className="bg-[#0A0A0A] text-white">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </AppTooltip>
+
+            <AppTooltip
+              position="left"
+              title={aiReview ? "Re-Executar Auditoria de IA" : "Executar Auditoria IA do Ativo"}
+              badge="AUDIT"
+              content="Envia os dados de Orderflow, Volume Profile, Suporte/Resistência e Médias para o motor de IA avaliar o risco/retorno atual."
+            >
+              <button
+                onClick={handleRunAIReview}
+                disabled={loadingReview}
+                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-black rounded-lg text-xs font-black transition flex items-center gap-2 shadow-lg shadow-orange-500/20 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+              >
+                {loadingReview ? (
+                  <><RefreshCw className="h-4 w-4 animate-spin" /> Auditando com IA...</>
+                ) : aiReview ? (
+                  <><RefreshCw className="h-4 w-4" /> Re-Executar Auditoria</>
+                ) : (
+                  <><Brain className="h-4 w-4" /> Executar Auditoria IA</>
+                )}
+              </button>
+            </AppTooltip>
           </div>
         </div>
 
@@ -788,30 +802,50 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
               {/* Zoom Controls */}
               <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
-                <button
-                  onClick={handleZoomIn}
-                  title="Zoom In (+)"
-                  aria-label="Aumentar Zoom (+)"
-                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                <AppTooltip
+                  position="top"
+                  title="Aumentar Zoom"
+                  badge="ZOOM IN (+)"
+                  content="Foca a visualização nas velas e no perfil de volume mais recentes."
                 >
-                  +
-                </button>
-                <button
-                  onClick={handleZoomOut}
-                  title="Zoom Out (-)"
-                  aria-label="Diminuir Zoom (-)"
-                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                  <button
+                    onClick={handleZoomIn}
+                    aria-label="Aumentar Zoom (+)"
+                    className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                  >
+                    +
+                  </button>
+                </AppTooltip>
+
+                <AppTooltip
+                  position="top"
+                  title="Diminuir Zoom"
+                  badge="ZOOM OUT (-)"
+                  content="Amplia a janela temporal exibida para visualizar um histórico maior de velas e níveis de suporte."
                 >
-                  -
-                </button>
-                <button
-                  onClick={handleResetZoom}
-                  title="Reset Zoom"
-                  aria-label="Resetar Zoom para 100%"
-                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                  <button
+                    onClick={handleZoomOut}
+                    aria-label="Diminuir Zoom (-)"
+                    className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                  >
+                    -
+                  </button>
+                </AppTooltip>
+
+                <AppTooltip
+                  position="top"
+                  title="Redefinir Zoom"
+                  badge="100%"
+                  content="Restaura a escala padrão do gráfico exibindo todas as velas carregadas da série."
                 >
-                  100%
-                </button>
+                  <button
+                    onClick={handleResetZoom}
+                    aria-label="Resetar Zoom para 100%"
+                    className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                  >
+                    100%
+                  </button>
+                </AppTooltip>
               </div>
 
               {/* Golden Pocket Banner */}
