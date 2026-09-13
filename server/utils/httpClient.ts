@@ -27,6 +27,18 @@ export function requestJson<T = any>(urlStr: string, options: HttpRequestOptions
       const lib = isHttps ? https : http;
       const timeoutMs = options.timeoutMs ?? 4500;
 
+      let settled = false;
+      const resolveOnce = (val: any) => {
+        if (settled) return;
+        settled = true;
+        resolve(val);
+      };
+      const rejectOnce = (err: any) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
       const req = lib.request(
         parsedUrl,
         {
@@ -48,28 +60,35 @@ export function requestJson<T = any>(urlStr: string, options: HttpRequestOptions
             body += chunk;
           });
 
+          res.on('error', (resErr) => {
+            try { req.destroy(); } catch (_) {}
+            rejectOnce(resErr);
+          });
+
           res.on('end', () => {
             if (status >= 200 && status < 300) {
               try {
                 const data = JSON.parse(body);
-                resolve({ status, data, headers: res.headers });
+                resolveOnce({ status, data, headers: res.headers });
               } catch (parseErr) {
-                reject(new Error(`Falha no parse JSON de ${urlStr}: ${parseErr}`));
+                rejectOnce(new Error(`Falha no parse JSON de ${urlStr}: ${parseErr}`));
               }
             } else {
               // Body is drained to avoid memory leaks or hung sockets
-              reject(new Error(`HTTP status ${status} de ${parsedUrl.hostname}`));
+              rejectOnce(new Error(`HTTP status ${status} de ${parsedUrl.hostname}`));
             }
           });
         }
       );
 
       req.on('timeout', () => {
-        req.destroy(new Error(`Timeout de requisição (${timeoutMs}ms)`));
+        const timeoutErr = new Error(`Timeout de requisição (${timeoutMs}ms)`);
+        try { req.destroy(timeoutErr); } catch (_) {}
+        rejectOnce(timeoutErr);
       });
 
       req.on('error', (err) => {
-        reject(err);
+        rejectOnce(err);
       });
 
       req.end();

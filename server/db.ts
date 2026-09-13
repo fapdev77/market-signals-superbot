@@ -101,7 +101,9 @@ export function saveDbToDisk() {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
-    fs.writeFileSync(dbFilePath, buffer);
+    const tempPath = `${dbFilePath}.tmp`;
+    fs.writeFileSync(tempPath, buffer);
+    fs.renameSync(tempPath, dbFilePath);
   } catch (err) {
     console.error('Failed to save SQLite DB to disk:', err);
   }

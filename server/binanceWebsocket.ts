@@ -45,6 +45,7 @@ export function getBinanceLogs(): BinanceLogEntry[] {
 
 let wsInstance: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let watchdogTimer: NodeJS.Timeout | null = null;
 
 const wsStatus: WSStatus = {
   connected: false,
@@ -72,7 +73,37 @@ export function getWebSocketStatus(): WSStatus {
   return { ...wsStatus };
 }
 
+function cleanupSocket() {
+  if (wsInstance) {
+    try {
+      wsInstance.removeAllListeners();
+      wsInstance.terminate();
+    } catch (_) {}
+    wsInstance = null;
+  }
+}
+
+function startWatchdog() {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => {
+    // If connected but no tick received in the last 45 seconds, socket is a silent zombie
+    if (wsStatus.connected && wsStatus.lastTickAt && Date.now() - wsStatus.lastTickAt > 45000) {
+      addBinanceLog(
+        'WARN',
+        'WEBSOCKET',
+        'Stream WebSocket sem ticks por mais de 45 segundos. Reiniciando conexão preventiva...'
+      );
+      cleanupSocket();
+      wsStatus.connected = false;
+      wsStatus.connecting = false;
+      initBinanceWebSocket();
+    }
+  }, 15000);
+}
+
 export function initBinanceWebSocket() {
+  startWatchdog();
+
   if (wsStatus.connecting || (wsInstance && wsInstance.readyState === WebSocket.OPEN)) {
     return;
   }
@@ -81,6 +112,8 @@ export function initBinanceWebSocket() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+
+  cleanupSocket();
 
   wsStatus.connecting = true;
   const wsUrl = wsStatus.url;
@@ -94,9 +127,16 @@ export function initBinanceWebSocket() {
       wsStatus.connected = true;
       wsStatus.connecting = false;
       wsStatus.lastConnectedAt = Date.now();
+      wsStatus.lastTickAt = Date.now();
       wsStatus.lastError = null;
 
       addBinanceLog('SUCCESS', 'WEBSOCKET', `Conexão WebSocket estabelecida com sucesso com Binance Futures (${wsUrl})`);
+    });
+
+    wsInstance.on('ping', () => {
+      try {
+        wsInstance?.pong();
+      } catch (_) {}
     });
 
     wsInstance.on('message', (data: WebSocket.Data) => {
@@ -153,6 +193,9 @@ export function initBinanceWebSocket() {
       );
 
       wsStatus.reconnectCount++;
+      cleanupSocket();
+
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(() => {
         initBinanceWebSocket();
       }, 4000);
@@ -163,7 +206,9 @@ export function initBinanceWebSocket() {
     wsStatus.connecting = false;
     wsStatus.lastError = err.message;
     addBinanceLog('ERROR', 'WEBSOCKET', `Falha ao instanciar cliente WebSocket: ${err.message}`);
+    cleanupSocket();
 
+    if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
       initBinanceWebSocket();
     }, 5000);

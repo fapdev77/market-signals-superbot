@@ -48,6 +48,18 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
         headers['Content-Length'] = String(Buffer.byteLength(reqBody));
       }
 
+      let settled = false;
+      const resolveOnce = (val: any) => {
+        if (settled) return;
+        settled = true;
+        resolve(val);
+      };
+      const rejectOnce = (err: any) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
       const timeoutMs = init.timeoutMs || 10000;
 
       const req = lib.request(
@@ -64,6 +76,11 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
 
           res.on('data', (chunk) => {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+
+          res.on('error', (resErr) => {
+            try { req.destroy(); } catch (_) {}
+            rejectOnce(resErr);
           });
 
           res.on('end', () => {
@@ -93,7 +110,7 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
               blob: async () => new Blob([rawBuffer]),
             };
 
-            resolve(responseObj);
+            resolveOnce(responseObj);
           });
         }
       );
@@ -101,7 +118,9 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
       // Handle AbortSignal
       if (init.signal) {
         const onAbort = () => {
-          req.destroy(init.signal.reason || new Error('This operation was aborted'));
+          const abortErr = init.signal.reason || new Error('This operation was aborted');
+          try { req.destroy(abortErr); } catch (_) {}
+          rejectOnce(abortErr);
         };
         init.signal.addEventListener('abort', onAbort, { once: true });
         req.on('close', () => {
@@ -110,11 +129,13 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
       }
 
       req.on('timeout', () => {
-        req.destroy(new Error(`Timeout de conexão (${timeoutMs}ms) em ${parsedUrl.hostname}`));
+        const timeoutErr = new Error(`Timeout de conexão (${timeoutMs}ms) em ${parsedUrl.hostname}`);
+        try { req.destroy(timeoutErr); } catch (_) {}
+        rejectOnce(timeoutErr);
       });
 
       req.on('error', (err) => {
-        reject(err);
+        rejectOnce(err);
       });
 
       if (reqBody) {

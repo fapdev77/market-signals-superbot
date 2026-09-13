@@ -197,8 +197,10 @@ async function startServer() {
   /**
    * Continuous Tick-by-Tick Market Monitoring Loop
    */
+  let isMarketTickRunning = false;
   async function runMarketTick() {
-    if (!botState.isMonitoring) return;
+    if (!botState.isMonitoring || isMarketTickRunning) return;
+    isMarketTickRunning = true;
 
     try {
       // 1. Fetch live Binance Futures 24h Tickers
@@ -348,6 +350,8 @@ async function startServer() {
       botState.lastTickTime = Date.now();
     } catch (err) {
       console.error('Market tick loop error:', err);
+    } finally {
+      isMarketTickRunning = false;
     }
   }
 

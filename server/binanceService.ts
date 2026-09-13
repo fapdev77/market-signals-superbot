@@ -119,40 +119,77 @@ export async function fetchBinanceFuturesTickers(): Promise<any[]> {
   }
 }
 
+// In-memory cache for Open Interest (30s TTL) and Funding Rate (60s TTL) to minimize outbound requests
+const oiCache: Record<string, { value: number; timestamp: number }> = {};
+const fundingCache: Record<string, { value: number; timestamp: number }> = {};
+
 /**
- * Fetches Open Interest for a Futures symbol
+ * Fetches Open Interest for a Futures symbol with 30s cache and multi-endpoint fallback
  */
 export async function fetchOpenInterest(symbol: string): Promise<{ openInterest: number }> {
-  try {
-    const ep = REST_ENDPOINTS[currentWorkingBaseIndex];
-    if (ep.type === 'futures') {
-      const res = await requestJson<{ openInterest?: string }>(`${ep.base}/fapi/v1/openInterest?symbol=${symbol}`, { timeoutMs: 3000 });
-      if (res.data?.openInterest) {
-        return { openInterest: parseFloat(res.data.openInterest || '0') };
-      }
-    }
-    return { openInterest: 0 };
-  } catch (err) {
-    return { openInterest: 0 };
+  const cached = oiCache[symbol];
+  const now = Date.now();
+  if (cached && now - cached.timestamp < 30000) {
+    return { openInterest: cached.value };
   }
+
+  const futuresEndpoints = [
+    'https://fapi.binance.com',
+    'https://fapi1.binance.com',
+    'https://data-api.binance.vision'
+  ];
+
+  for (const base of futuresEndpoints) {
+    try {
+      const res = await requestJson<{ openInterest?: string }>(`${base}/fapi/v1/openInterest?symbol=${symbol}`, { timeoutMs: 3000 });
+      if (res.data?.openInterest) {
+        const val = parseFloat(res.data.openInterest);
+        if (!isNaN(val) && val > 0) {
+          oiCache[symbol] = { value: val, timestamp: now };
+          return { openInterest: val };
+        }
+      }
+    } catch {
+      // Try next endpoint
+    }
+  }
+
+  // If remote is unreachable, return previous cached value or 0
+  return { openInterest: cached?.value || 0 };
 }
 
 /**
- * Fetches Premium Index & Funding Rate for a Futures symbol
+ * Fetches Premium Index & Funding Rate for a Futures symbol with 60s cache
  */
 export async function fetchFundingRate(symbol: string): Promise<{ fundingRate: number }> {
-  try {
-    const ep = REST_ENDPOINTS[currentWorkingBaseIndex];
-    if (ep.type === 'futures') {
-      const res = await requestJson<{ lastFundingRate?: string }>(`${ep.base}/fapi/v1/premiumIndex?symbol=${symbol}`, { timeoutMs: 3000 });
-      if (res.data?.lastFundingRate) {
-        return { fundingRate: parseFloat(res.data.lastFundingRate || '0.0001') };
-      }
-    }
-    return { fundingRate: 0.0001 };
-  } catch (err) {
-    return { fundingRate: 0.0001 };
+  const cached = fundingCache[symbol];
+  const now = Date.now();
+  if (cached && now - cached.timestamp < 60000) {
+    return { fundingRate: cached.value };
   }
+
+  const futuresEndpoints = [
+    'https://fapi.binance.com',
+    'https://fapi1.binance.com',
+    'https://data-api.binance.vision'
+  ];
+
+  for (const base of futuresEndpoints) {
+    try {
+      const res = await requestJson<{ lastFundingRate?: string }>(`${base}/fapi/v1/premiumIndex?symbol=${symbol}`, { timeoutMs: 3000 });
+      if (res.data?.lastFundingRate) {
+        const val = parseFloat(res.data.lastFundingRate);
+        if (!isNaN(val)) {
+          fundingCache[symbol] = { value: val, timestamp: now };
+          return { fundingRate: val };
+        }
+      }
+    } catch {
+      // Try next endpoint
+    }
+  }
+
+  return { fundingRate: cached?.value ?? 0.0001 };
 }
 
 /**

@@ -24,8 +24,21 @@ process.on('uncaughtException', (err: any) => {
   }
   
   // Also guard against socket reset errors (ECONNRESET, EPIPE, etc.)
-  if (err?.code === 'ECONNRESET' || err?.code === 'EPIPE' || err?.code === 'ETIMEDOUT') {
-    console.warn(`⚠️ [Network Guard] Conexão resetada ou abortada (${err.code}). Conexão ignorada com segurança.`);
+  const transientNetworkCodes = [
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'EPIPE',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'ERR_STREAM_PREMATURE_CLOSE',
+    'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'ABORT_ERR'
+  ];
+
+  if (err?.code && transientNetworkCodes.includes(err.code)) {
+    console.warn(`⚠️ [Network Guard] Conexão resetada ou abortada (${err.code}). Conexão tratada com segurança.`);
     return;
   }
 
