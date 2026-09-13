@@ -1,6 +1,7 @@
 import { db } from '../backtest_db';
 import { historicalKlines } from '../backtest_db/schema';
 import { eq, desc, and, sql, gte, lte } from 'drizzle-orm';
+import { requestJson } from '../utils/httpClient.js';
 
 export interface SyncProgress {
   symbol: string;
@@ -91,22 +92,11 @@ export class HistoricalDataService {
 
         for (const ep of endpoints) {
           try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000);
-
             const url = `${ep}?symbol=${symbol}&interval=1m&limit=1000&startTime=${fetchTime}`;
-            const res = await fetch(url, {
-              headers: { 'User-Agent': 'Mozilla/5.0' },
-              signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-
-            if (res.ok) {
-              const data = await res.json();
-              if (Array.isArray(data) && data.length > 0) {
-                fetchedData = data;
-                break;
-              }
+            const res = await requestJson(url, { timeoutMs: 4000 });
+            if (Array.isArray(res.data) && res.data.length > 0) {
+              fetchedData = res.data;
+              break;
             }
           } catch (e) {
             // Try next endpoint

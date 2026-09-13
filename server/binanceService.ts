@@ -1,5 +1,6 @@
 import { TickerData, KlineCandle } from '../src/types.js';
 import { addBinanceLog, getLiveWSTickers } from './binanceWebsocket.js';
+import { requestJson } from './utils/httpClient.js';
 
 // Order of preference for Binance REST endpoints (vision public archive data first to bypass Cloud Run 451 geo-restrictions)
 const REST_ENDPOINTS = [
@@ -47,48 +48,23 @@ async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => stri
     const fullUrl = `${ep.base}${getPath(ep)}`;
     const startTime = Date.now();
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
     try {
-      const res = await fetch(fullUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MarketSignalsSuperBot/2.0',
-          'Accept': 'application/json'
-        },
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
+      const response = await requestJson(fullUrl, { timeoutMs: 4000 });
       const latency = Date.now() - startTime;
-
-      if (!res.ok) {
-        addBinanceLog(
-          'WARN',
-          'REST_API',
-          `Requisição para ${ep.base} retornou status HTTP ${res.status} (${latency}ms). Tentando próximo servidor de fallback...`,
-          { url: fullUrl, status: res.status }
-        );
-        continue;
-      }
-
-      const json = await res.json();
       currentWorkingBaseIndex = idx; // Remember working endpoint
 
       addBinanceLog(
         'SUCCESS',
         'REST_API',
-        `Conexão bem-sucedida com Binance API (${ep.base}) em ${latency}ms [Status ${res.status}]`,
+        `Conexão bem-sucedida com Binance API (${ep.base}) em ${latency}ms [Status ${response.status}]`,
         { url: fullUrl, latencyMs: latency }
       );
 
-      return { data: json, endpoint: ep.base };
+      return { data: response.data, endpoint: ep.base };
 
     } catch (err: any) {
-      clearTimeout(timeoutId);
       const latency = Date.now() - startTime;
-      const errMsg = err.name === 'AbortError' ? 'Timeout de requisição (4000ms)' : err.message;
+      const errMsg = err?.message || 'Falha de conexão com a API';
 
       addBinanceLog(
         'WARN',
@@ -150,12 +126,9 @@ export async function fetchOpenInterest(symbol: string): Promise<{ openInterest:
   try {
     const ep = REST_ENDPOINTS[currentWorkingBaseIndex];
     if (ep.type === 'futures') {
-      const res = await fetch(`${ep.base}/fapi/v1/openInterest?symbol=${symbol}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return { openInterest: parseFloat(data.openInterest || '0') };
+      const res = await requestJson<{ openInterest?: string }>(`${ep.base}/fapi/v1/openInterest?symbol=${symbol}`, { timeoutMs: 3000 });
+      if (res.data?.openInterest) {
+        return { openInterest: parseFloat(res.data.openInterest || '0') };
       }
     }
     return { openInterest: 0 };
@@ -171,12 +144,9 @@ export async function fetchFundingRate(symbol: string): Promise<{ fundingRate: n
   try {
     const ep = REST_ENDPOINTS[currentWorkingBaseIndex];
     if (ep.type === 'futures') {
-      const res = await fetch(`${ep.base}/fapi/v1/premiumIndex?symbol=${symbol}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return { fundingRate: parseFloat(data.lastFundingRate || '0.0001') };
+      const res = await requestJson<{ lastFundingRate?: string }>(`${ep.base}/fapi/v1/premiumIndex?symbol=${symbol}`, { timeoutMs: 3000 });
+      if (res.data?.lastFundingRate) {
+        return { fundingRate: parseFloat(res.data.lastFundingRate || '0.0001') };
       }
     }
     return { fundingRate: 0.0001 };

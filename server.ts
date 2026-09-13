@@ -10,6 +10,19 @@ import { createMarketRouter } from './server/routes/marketRoutes.js';
 import { createAIRouter } from './server/routes/aiRoutes.js';
 import { createBacktestRouter } from './server/routes/backtestRoutes.js';
 
+// Prevent unhandled internal runtime assertions (e.g. Node 24 undici socket parser ERR_ASSERTION: false == true) from crashing the server
+process.on('uncaughtException', (err: any) => {
+  if (err?.code === 'ERR_ASSERTION' && (err?.stack?.includes('undici') || String(err?.message || '').includes('false == true'))) {
+    console.warn('⚠️ [Node.js Engine Guard] Intercepted internal Undici socket assertion (false == true); process preserved.');
+    return;
+  }
+  console.error('❌ [Uncaught Exception]:', err);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.warn('⚠️ [Unhandled Promise Rejection]:', reason?.message || reason);
+});
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -191,73 +204,78 @@ async function startServer() {
       const rawFutures = await fetchBinanceFuturesTickers();
       const weights = botState.weights;
 
-      await Promise.allSettled(DEFAULT_SYMBOLS.map(async (symbol) => {
-        try {
-          const raw = rawFutures.find((t: any) => t.symbol === symbol) || {
-            symbol,
-            lastPrice: symbol.includes('BTC') ? '92450.5' : symbol.includes('ETH') ? '3420.1' : symbol.includes('SOL') ? '188.4' : '12.5',
-            priceChangePercent: (Math.sin(Date.now() / 10000 + symbol.length) * 3.5).toFixed(2),
-            highPrice: '94000',
-            lowPrice: '90500',
-            volume: '450000',
-            quoteVolume: '4100000000'
-          };
+      // Process in batches of 4 to prevent socket burst congestion and avoid rate limits
+      const BATCH_SIZE = 4;
+      for (let i = 0; i < DEFAULT_SYMBOLS.length; i += BATCH_SIZE) {
+        const batch = DEFAULT_SYMBOLS.slice(i, i + BATCH_SIZE);
+        await Promise.allSettled(batch.map(async (symbol) => {
+          try {
+            const raw = rawFutures.find((t: any) => t.symbol === symbol) || {
+              symbol,
+              lastPrice: symbol.includes('BTC') ? '92450.5' : symbol.includes('ETH') ? '3420.1' : symbol.includes('SOL') ? '188.4' : '12.5',
+              priceChangePercent: (Math.sin(Date.now() / 10000 + symbol.length) * 3.5).toFixed(2),
+              highPrice: '94000',
+              lowPrice: '90500',
+              volume: '450000',
+              quoteVolume: '4100000000'
+            };
 
-          // Fetch Kline, Open Interest, Funding Rate
-          const klines = await fetchKlines(symbol, '15m', 40);
-          const { openInterest } = await fetchOpenInterest(symbol);
-          const { fundingRate } = await fetchFundingRate(symbol);
+            // Fetch Kline, Open Interest, Funding Rate
+            const klines = await fetchKlines(symbol, '15m', 40);
+            const { openInterest } = await fetchOpenInterest(symbol);
+            const { fundingRate } = await fetchFundingRate(symbol);
 
-          // Process quantitative state
-          const processed = processTickerState(
-            raw,
-            klines,
-            openInterest || (parseFloat(raw.lastPrice || '100') * 50000),
-            fundingRate,
-            weights
-          );
+            // Process quantitative state
+            const processed = processTickerState(
+              raw,
+              klines,
+              openInterest || (parseFloat(raw.lastPrice || '100') * 50000),
+              fundingRate,
+              weights
+            );
 
-          tickerStateCache[symbol] = processed;
+            tickerStateCache[symbol] = processed;
 
-          // Generate signal if high confluence with 1m & 5m validation
-          const potentialSignal = buildTradeSignal(processed, klines, weights.minRiskRewardRatio);
-          if (potentialSignal) {
-            const activeSignals = await getActiveSignalsBySymbol(symbol);
-            let shouldInsert = true;
+            // Generate signal if high confluence with 1m & 5m validation
+            const potentialSignal = buildTradeSignal(processed, klines, weights.minRiskRewardRatio);
+            if (potentialSignal) {
+              const activeSignals = await getActiveSignalsBySymbol(symbol);
+              let shouldInsert = true;
 
-            for (const active of activeSignals) {
-              if (active.direction === potentialSignal.direction) {
-                // Direction is the same, so no new signal is needed
-                shouldInsert = false;
-                
-                // Only update if validation status changed (e.g. from PENDING to CONFIRMED or REJECTED)
-                if (active.validationStatus !== potentialSignal.validationStatus || active.validationStage !== potentialSignal.validationStage) {
-                  active.validationStatus = potentialSignal.validationStatus;
-                  active.validationStage = potentialSignal.validationStage;
-                  active.candle1mConfirmed = potentialSignal.candle1mConfirmed;
-                  active.candle5mConfirmed = potentialSignal.candle5mConfirmed;
+              for (const active of activeSignals) {
+                if (active.direction === potentialSignal.direction) {
+                  // Direction is the same, so no new signal is needed
+                  shouldInsert = false;
                   
-                  // If rejected, mark as EXPIRED/REJECTED_SPIKE to remove it from active list
-                  if (active.validationStatus === 'REJECTED_SPIKE') {
-                    active.status = 'EXPIRED';
+                  // Only update if validation status changed (e.g. from PENDING to CONFIRMED or REJECTED)
+                  if (active.validationStatus !== potentialSignal.validationStatus || active.validationStage !== potentialSignal.validationStage) {
+                    active.validationStatus = potentialSignal.validationStatus;
+                    active.validationStage = potentialSignal.validationStage;
+                    active.candle1mConfirmed = potentialSignal.candle1mConfirmed;
+                    active.candle5mConfirmed = potentialSignal.candle5mConfirmed;
+                    
+                    // If rejected, mark as EXPIRED/REJECTED_SPIKE to remove it from active list
+                    if (active.validationStatus === 'REJECTED_SPIKE') {
+                      active.status = 'EXPIRED';
+                    }
+                    await updateSignal(active);
                   }
-                  await updateSignal(active);
+                } else {
+                  // Direction changed! The old signal is no longer valid
+                  await updateSignalStatus(active.id, 'EXPIRED');
                 }
-              } else {
-                // Direction changed! The old signal is no longer valid
-                await updateSignalStatus(active.id, 'EXPIRED');
+              }
+
+              if (shouldInsert && potentialSignal.validationStatus !== 'REJECTED_SPIKE') {
+                await saveSignal(potentialSignal);
+                botState.signalsGenerated24h++;
               }
             }
-
-            if (shouldInsert && potentialSignal.validationStatus !== 'REJECTED_SPIKE') {
-              await saveSignal(potentialSignal);
-              botState.signalsGenerated24h++;
-            }
+          } catch (symErr) {
+            // Keep loop resilient per symbol
           }
-        } catch (symErr) {
-          // Keep loop resilient per symbol
-        }
-      }));
+        }));
+      }
 
       // Add TradFi Asset Tickers (S&P500, Nasdaq, Gold, stocks)
       const now = Date.now();
