@@ -4,6 +4,7 @@ import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
 import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights } from '../db.js';
 import { buildTradeSignal } from '../signalEngine.js';
 import { TickerData, TradeSignal, BotState } from '../../src/types.js';
+import { safeFetch } from '../utils/safeFetch.js';
 
 export function createAIRouter(
   getBotState: () => BotState,
@@ -181,7 +182,7 @@ export function createAIRouter(
         // 1. Test GET /api/tags (List installed models on Ollama)
         diagnosticSteps.push(`[Passo 1/3] Testando GET ${url}/api/tags (Lista de Modelos do Ollama)...`);
         try {
-          const res1 = await fetch(`${url}/api/tags`, {
+          const res1 = await safeFetch(`${url}/api/tags`, {
             method: 'GET',
             signal: AbortSignal.timeout(6000)
           });
@@ -210,7 +211,7 @@ export function createAIRouter(
         if (!serverResponded) {
           diagnosticSteps.push(`[Passo 2/3] Testando GET ${url}/v1/models...`);
           try {
-            const res2 = await fetch(`${url}/v1/models`, {
+            const res2 = await safeFetch(`${url}/v1/models`, {
               method: 'GET',
               signal: AbortSignal.timeout(6000)
             });
@@ -234,7 +235,7 @@ export function createAIRouter(
         // 3. Test POST /api/generate
         diagnosticSteps.push(`[Passo 3/3] Testando inferência real com modelo '${modelName}' via POST ${url}/api/generate...`);
         try {
-          const res3 = await fetch(`${url}/api/generate`, {
+          const res3 = await safeFetch(`${url}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: AbortSignal.timeout(15000),
@@ -268,7 +269,7 @@ export function createAIRouter(
         if (!generationSuccess) {
           diagnosticSteps.push(`[Passo 3.1/3] Tentando inferência via POST ${url}/api/chat...`);
           try {
-            const res4 = await fetch(`${url}/api/chat`, {
+            const res4 = await safeFetch(`${url}/api/chat`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               signal: AbortSignal.timeout(15000),
@@ -388,7 +389,7 @@ export function createAIRouter(
         }
 
         diagnosticSteps.push(`Testando GET ${url}/models...`);
-        const testRes = await fetch(`${url}/models`, {
+        const testRes = await safeFetch(`${url}/models`, {
           headers: {
             'Authorization': `Bearer ${key}`,
             ...(provider === 'openrouter' ? { 'HTTP-Referer': 'https://superbot.ai', 'X-Title': 'SuperBot' } : {})

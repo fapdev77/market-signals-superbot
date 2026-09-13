@@ -2,6 +2,7 @@ import { TickerData, TradeSignal, AIReviewResponse, AIAuditReport, IndicatorWeig
 import { GoogleGenAI, Type } from '@google/genai';
 import { addAILog } from './aiLogger.js';
 import { getAIPersonaById } from '../src/constants/aiPersonas.js';
+import { safeFetch } from './utils/safeFetch.js';
 
 const getAiClient = (apiKeyOverride?: string) => {
   const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
@@ -240,7 +241,7 @@ export async function generateContentWithModel(
       if (sysPrompt) bodyObj.system = sysPrompt;
       if (options.responseMimeType === 'application/json') bodyObj.format = 'json';
 
-      const res = await fetch(endpoint, {
+      const res = await safeFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(20000),
@@ -321,7 +322,7 @@ export async function generateContentWithModel(
       };
       if (options.responseMimeType === 'application/json') bodyObj.format = 'json';
 
-      const res = await fetch(endpoint, {
+      const res = await safeFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(20000),
@@ -379,7 +380,7 @@ export async function generateContentWithModel(
       if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
       messages.push({ role: 'user', content: fullPrompt });
 
-      const res = await fetch(endpoint, {
+      const res = await safeFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(20000),
@@ -490,7 +491,7 @@ export async function generateContentWithModel(
     }
 
     try {
-      const res = await fetch(endpoint, {
+      const res = await safeFetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -586,7 +587,7 @@ export async function generateContentWithModel(
     const sysPrompt = options.systemInstruction || modelConfig.parameters.systemInstruction;
 
     try {
-      const res = await fetch(endpoint, {
+      const res = await safeFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
