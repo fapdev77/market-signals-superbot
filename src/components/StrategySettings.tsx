@@ -425,7 +425,7 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
               <input
                 type="range"
                 min="10"
-                max="150"
+                max="250"
                 step="5"
                 value={formWeights.volumeProfileRange}
                 onChange={(e) => handleSliderChange('volumeProfileRange', parseInt(e.target.value))}
