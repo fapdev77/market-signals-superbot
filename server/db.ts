@@ -62,6 +62,8 @@ export async function getDb(): Promise<Database> {
       ai_review TEXT,
       ai_confidence REAL,
       created_at INTEGER,
+      validated_at INTEGER,
+      rejected_at INTEGER,
       status TEXT
     );
 
@@ -87,6 +89,18 @@ export async function getDb(): Promise<Database> {
       updated_at INTEGER
     );
   `);
+
+  // Safe table migrations for new columns
+  try {
+    db.run(`ALTER TABLE trade_signals ADD COLUMN validated_at INTEGER;`);
+  } catch {
+    // Column may already exist
+  }
+  try {
+    db.run(`ALTER TABLE trade_signals ADD COLUMN rejected_at INTEGER;`);
+  } catch {
+    // Column may already exist
+  }
 
   saveDbToDisk();
   return db;
@@ -116,8 +130,8 @@ export async function saveSignal(signal: TradeSignal) {
       id, symbol, market_type, signal_type, direction, entry_min, entry_max,
       current_price, stop_loss, target1, target2, risk_reward, confluence_score,
       confluence_factors, timeframe, validation_status, validation_stage, 
-      candle_1m_confirmed, candle_5m_confirmed, ai_review, ai_confidence, created_at, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      candle_1m_confirmed, candle_5m_confirmed, ai_review, ai_confidence, created_at, validated_at, rejected_at, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       signal.id,
       signal.symbol,
@@ -141,6 +155,8 @@ export async function saveSignal(signal: TradeSignal) {
       signal.aiReview || '',
       signal.aiConfidence || 0,
       signal.createdAt,
+      signal.validatedAt || (signal.validationStatus === 'CONFIRMED' ? signal.createdAt : null),
+      signal.rejectedAt || (signal.validationStatus?.includes('REJECTED') ? signal.createdAt : null),
       signal.status
     ]
   );
@@ -180,6 +196,8 @@ export async function getActiveSignalsBySymbol(symbol: string): Promise<TradeSig
       aiReview: obj.ai_review,
       aiConfidence: obj.ai_confidence,
       createdAt: obj.created_at,
+      validatedAt: obj.validated_at || (obj.validation_status === 'CONFIRMED' ? obj.created_at : undefined),
+      rejectedAt: obj.rejected_at || (obj.validation_status?.includes('REJECTED') ? obj.created_at : undefined),
       status: obj.status
     };
   });
@@ -229,6 +247,8 @@ export async function getRecentSignals(limit: number = 30): Promise<TradeSignal[
       aiReview: obj.ai_review,
       aiConfidence: obj.ai_confidence,
       createdAt: obj.created_at,
+      validatedAt: obj.validated_at || (obj.validation_status === 'CONFIRMED' ? obj.created_at : undefined),
+      rejectedAt: obj.rejected_at || (obj.validation_status?.includes('REJECTED') ? obj.created_at : undefined),
       status: obj.status
     };
   });

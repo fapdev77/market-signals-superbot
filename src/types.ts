@@ -125,7 +125,9 @@ export interface TradeSignal {
     rejectionReason?: string;
   };
 
-  createdAt: number;
+  createdAt: number;                // Data e hora de identificação do sinal
+  validatedAt?: number;             // Data e hora de validação/confirmação
+  rejectedAt?: number;              // Data e hora de rejeição/descarte
   status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
 }
 

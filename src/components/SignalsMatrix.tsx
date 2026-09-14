@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { TradeSignal, TickerData, AIReviewResponse, MarketType } from '../types';
-import { formatPrice, formatPriceRange, calculateTradeMetrics } from '../utils/formatters';
+import { formatPrice, formatPriceRange, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
 import { 
   Zap, 
   TrendingUp, 
@@ -8,6 +8,7 @@ import {
   Brain, 
   RefreshCw, 
   Clock, 
+  Calendar,
   AlertTriangle, 
   CheckCircle2, 
   Activity,
@@ -748,6 +749,91 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                         ↳ {s.validationStage}
                       </p>
                     )}
+
+                    {/* Temporal Metadata: Identificação & Validação / Rejeição */}
+                    <div className="bg-[#050505] p-2 rounded border border-white/5 space-y-1 text-[9px] font-mono">
+                      {/* Data/Hora de Identificação */}
+                      <Tooltip
+                        position="top"
+                        title="Momento da Identificação"
+                        badge="DETECÇÃO"
+                        content={`Sinal identificado pelo motor quantitativo às ${formatDateTime(s.createdAt)} (${formatTimeAgo(s.createdAt)}).`}
+                      >
+                        <div className="flex items-center justify-between gap-2 cursor-help text-neutral-300">
+                          <span className="flex items-center gap-1 text-neutral-400">
+                            <Clock className="h-3 w-3 text-cyan-400 shrink-0" />
+                            <strong className="text-neutral-400 font-bold uppercase text-[8.5px]">Identificado em:</strong>
+                          </span>
+                          <span className="text-white font-bold flex items-center gap-1">
+                            <span>{formatDateTime(s.createdAt)}</span>
+                            <span className="text-[8px] text-cyan-400/80 font-normal">({formatTimeAgo(s.createdAt)})</span>
+                          </span>
+                        </div>
+                      </Tooltip>
+
+                      {/* Data/Hora de Validação ou Rejeição */}
+                      {s.validationStatus === 'CONFIRMED' && (
+                        <Tooltip
+                          position="top"
+                          title="Momento da Validação"
+                          badge="CONFIRMADO"
+                          content={`Sinal validado e aprovado pelo filtro multi-timeframe (1m/5m) às ${formatDateTime(s.validatedAt || s.createdAt)}.`}
+                        >
+                          <div className="flex items-center justify-between gap-2 cursor-help text-emerald-400 border-t border-white/5 pt-1">
+                            <span className="flex items-center gap-1 text-emerald-400/90">
+                              <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+                              <strong className="font-bold uppercase text-[8.5px]">Validado em:</strong>
+                            </span>
+                            <span className="text-emerald-300 font-extrabold flex items-center gap-1">
+                              <span>{formatDateTime(s.validatedAt || s.createdAt)}</span>
+                              {s.validatedAt && s.createdAt && s.validatedAt > s.createdAt && (
+                                <span className="text-[8px] text-emerald-400/80 font-normal">
+                                  (+{Math.max(1, Math.round((s.validatedAt - s.createdAt) / 1000))}s)
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        </Tooltip>
+                      )}
+
+                      {(s.validationStatus === 'REJECTED_SPIKE' || s.validationStatus === 'REJECTED_BACKTEST') && (
+                        <Tooltip
+                          position="top"
+                          title="Momento da Rejeição"
+                          badge="DESCARTADO"
+                          content={`Sinal rejeitado e invalidado pelo filtro anti-spike às ${formatDateTime(s.rejectedAt || s.validatedAt || s.createdAt)}.`}
+                        >
+                          <div className="flex items-center justify-between gap-2 cursor-help text-rose-400 border-t border-white/5 pt-1">
+                            <span className="flex items-center gap-1 text-rose-400/90">
+                              <AlertTriangle className="h-3 w-3 text-rose-400 shrink-0" />
+                              <strong className="font-bold uppercase text-[8.5px]">Rejeitado em:</strong>
+                            </span>
+                            <span className="text-rose-300 font-extrabold">
+                              {formatDateTime(s.rejectedAt || s.validatedAt || s.createdAt)}
+                            </span>
+                          </div>
+                        </Tooltip>
+                      )}
+
+                      {s.validationStatus === 'PENDING_VALIDATION' && (
+                        <Tooltip
+                          position="top"
+                          title="Status da Validação"
+                          badge="EM ANDAMENTO"
+                          content="Aguardando fechamento da vela de 1m e confirmação de 5m para atestar validação definitiva."
+                        >
+                          <div className="flex items-center justify-between gap-2 cursor-help text-amber-400 border-t border-white/5 pt-1 animate-pulse">
+                            <span className="flex items-center gap-1 text-amber-400/90">
+                              <Clock className="h-3 w-3 text-amber-400 shrink-0" />
+                              <strong className="font-bold uppercase text-[8.5px]">Validação:</strong>
+                            </span>
+                            <span className="text-amber-300 font-bold text-[8.5px]">
+                              Aguardando 1m/5m...
+                            </span>
+                          </div>
+                        </Tooltip>
+                      )}
+                    </div>
 
                     {/* Confluence Factors with dynamic trigger highlight */}
                     <div className="flex flex-wrap gap-1 pt-1">

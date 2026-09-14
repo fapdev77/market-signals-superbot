@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
-import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics } from '../utils/formatters';
+import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
-import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2 } from 'lucide-react';
+import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock } from 'lucide-react';
 import { MarketProfileMetrics, VolumeProfileCard, OrderFlowFundingCard, DivergenceStructureCard } from './MarketProfileMetrics';
 import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
@@ -1077,6 +1077,56 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                       </span>
                     </div>
                   )}
+
+                  {/* Temporal Metadata: Identificado & Validado/Rejeitado */}
+                  <div className="border-t border-white/5 pt-1.5 space-y-1 font-mono text-[9px]">
+                    <div className="flex items-center justify-between text-neutral-300">
+                      <span className="flex items-center gap-1 text-neutral-400">
+                        <Clock className="h-3 w-3 text-cyan-400 shrink-0" />
+                        <span className="uppercase font-bold text-[8.5px]">Identificado:</span>
+                      </span>
+                      <span className="text-white font-bold">
+                        {formatDateTime(activeSignal.createdAt)} <span className="text-neutral-400 font-normal">({formatTimeAgo(activeSignal.createdAt)})</span>
+                      </span>
+                    </div>
+
+                    {activeSignal.validationStatus === 'CONFIRMED' && (
+                      <div className="flex items-center justify-between text-emerald-400 border-t border-white/5 pt-1">
+                        <span className="flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+                          <span className="uppercase font-bold text-[8.5px]">Validado:</span>
+                        </span>
+                        <span className="text-emerald-300 font-extrabold">
+                          {formatDateTime(activeSignal.validatedAt || activeSignal.createdAt)}
+                        </span>
+                      </div>
+                    )}
+
+                    {(activeSignal.validationStatus === 'REJECTED_SPIKE' || activeSignal.validationStatus === 'REJECTED_BACKTEST') && (
+                      <div className="flex items-center justify-between text-rose-400 border-t border-white/5 pt-1">
+                        <span className="flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3 text-rose-400 shrink-0" />
+                          <span className="uppercase font-bold text-[8.5px]">Rejeitado:</span>
+                        </span>
+                        <span className="text-rose-300 font-extrabold">
+                          {formatDateTime(activeSignal.rejectedAt || activeSignal.validatedAt || activeSignal.createdAt)}
+                        </span>
+                      </div>
+                    )}
+
+                    {activeSignal.validationStatus === 'PENDING_VALIDATION' && (
+                      <div className="flex items-center justify-between text-amber-400 border-t border-white/5 pt-1 animate-pulse">
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3 text-amber-400 shrink-0" />
+                          <span className="uppercase font-bold text-[8.5px]">Validação:</span>
+                        </span>
+                        <span className="text-amber-300 font-bold">
+                          Aguardando confirmação 1m/5m...
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex flex-wrap gap-1 pt-1">
                     {(activeSignal.confluenceFactors || []).map((f, idx) => (
                       <span key={idx} className="text-[9px] font-bold bg-black text-neutral-300 px-1.5 py-0.5 rounded border border-white/10">

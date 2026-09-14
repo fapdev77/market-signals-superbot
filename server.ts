@@ -261,8 +261,10 @@ async function startServer() {
                     active.candle1mConfirmed = potentialSignal.candle1mConfirmed;
                     active.candle5mConfirmed = potentialSignal.candle5mConfirmed;
                     
-                    // If rejected, mark as EXPIRED/REJECTED_SPIKE to remove it from active list
-                    if (active.validationStatus === 'REJECTED_SPIKE') {
+                    if (active.validationStatus === 'CONFIRMED') {
+                      active.validatedAt = Date.now();
+                    } else if (active.validationStatus === 'REJECTED_SPIKE' || active.validationStatus === 'REJECTED_BACKTEST') {
+                      active.rejectedAt = Date.now();
                       active.status = 'EXPIRED';
                     }
                     await updateSignal(active);

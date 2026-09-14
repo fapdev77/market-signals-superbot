@@ -395,6 +395,8 @@ export function buildTradeSignal(ticker: TickerData, klines: KlineCandle[] = [],
     },
 
     createdAt: Date.now(),
+    validatedAt: validationStatus === 'CONFIRMED' ? Date.now() : undefined,
+    rejectedAt: validationStatus === 'REJECTED_SPIKE' ? Date.now() : undefined,
     status: 'ACTIVE'
   };
 }
