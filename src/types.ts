@@ -35,9 +35,12 @@ export interface TickerData {
   
   // Technical Indicators
   fibonacci: {
+    fib236?: number;                // 0.236 level
+    fib382?: number;                // 0.382 level
     fib50: number;                  // 0.50 level
     fib618: number;                 // 0.618 level (Golden Pocket)
     fib68: number;                  // 0.68 level
+    fib786?: number;                // 0.786 level
     swingHigh: number;
     swingLow: number;
     inGoldenPocket: boolean;        // Is price in [0.618 - 0.68]

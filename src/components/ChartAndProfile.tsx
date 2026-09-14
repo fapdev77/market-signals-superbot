@@ -4,6 +4,7 @@ import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calc
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid } from 'recharts';
 import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck } from 'lucide-react';
 import { MarketProfileMetrics } from './MarketProfileMetrics';
+import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
 import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
 import { LiquidityHeatmapReferenceAreas, LiquidityHeatmapBadge } from './LiquidityHeatmapOverlay';
@@ -40,6 +41,17 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [zoomEnd, setZoomEnd] = useState<number>(0);
   const [heatmapEnabled, setHeatmapEnabled] = useState<boolean>(true);
   const [heatmapBucketCount, setHeatmapBucketCount] = useState<number>(36);
+  const [activeFibLevels, setActiveFibLevels] = useState<{
+    fib236: number;
+    fib382: number;
+    fib50: number;
+    fib618: number;
+    fib68: number;
+    fib786: number;
+    swingHigh: number;
+    swingLow: number;
+    inGoldenPocket: boolean;
+  } | null>(null);
 
   const enabledModels = activeModels.filter(m => m.isActive);
 
@@ -320,7 +332,18 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     );
   };
 
-  const fib = ticker.fibonacci || { fib618: 0, fib68: 0, inGoldenPocket: false };
+  const defaultFib = ticker.fibonacci || {
+    fib236: 0,
+    fib382: 0,
+    fib50: 0,
+    fib618: 0,
+    fib68: 0,
+    fib786: 0,
+    swingHigh: 0,
+    swingLow: 0,
+    inGoldenPocket: false
+  };
+  const fib = activeFibLevels || defaultFib;
   const range = ticker.rangeProfile || { vah: 0, val: 0, poc: 0 };
   const price = ticker.price ?? 0;
   const changePct = ticker.priceChangePercent24h ?? 0;
@@ -959,11 +982,17 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   {/* Liquidity Heatmap Overlay Reference Areas */}
                   <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
                   {/* Fibonacci Retracement Levels */}
+                  {fib.fib50 > 0 && (
+                    <ReferenceLine y={fib.fib50} stroke="#06b6d4" strokeDasharray="3 3" label={{ value: `Fibo 0.50 (${formatPrice(fib.fib50, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
+                  )}
                   {fib.fib618 > 0 && (
                     <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
                   )}
                   {fib.fib68 > 0 && (
                     <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 (${formatPrice(fib.fib68, { currency: true })})`, fill: '#ea580c', fontSize: 9 }} />
+                  )}
+                  {fib.fib786 && fib.fib786 > 0 && (
+                    <ReferenceLine y={fib.fib786} stroke="#c084fc" strokeDasharray="3 3" label={{ value: `Fibo 0.786 (${formatPrice(fib.fib786, { currency: true })})`, fill: '#c084fc', fontSize: 9 }} />
                   )}
                   {range.poc > 0 && (
                     <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
@@ -988,11 +1017,17 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   {/* Liquidity Heatmap Overlay Reference Areas */}
                   <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
                   {/* Fibonacci Retracement Levels */}
+                  {fib.fib50 > 0 && (
+                    <ReferenceLine y={fib.fib50} stroke="#06b6d4" strokeDasharray="3 3" label={{ value: `Fibo 0.50 (${formatPrice(fib.fib50, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
+                  )}
                   {fib.fib618 > 0 && (
                     <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
                   )}
                   {fib.fib68 > 0 && (
                     <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 (${formatPrice(fib.fib68, { currency: true })})`, fill: '#ea580c', fontSize: 9 }} />
+                  )}
+                  {fib.fib786 && fib.fib786 > 0 && (
+                    <ReferenceLine y={fib.fib786} stroke="#c084fc" strokeDasharray="3 3" label={{ value: `Fibo 0.786 (${formatPrice(fib.fib786, { currency: true })})`, fill: '#c084fc', fontSize: 9 }} />
                   )}
                   {range.poc > 0 && (
                     <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
@@ -1018,16 +1053,25 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           />
         </div>
 
-        {/* Right Sidebar: Volume Profile & Order Flow Breakdown */}
-        <MarketProfileMetrics
-          ticker={ticker}
-          timeframe={timeframe}
-          isBullishStructure={isBullishStructure}
-          structureLabel={structureLabel}
-          bosStatus={bosStatus}
-          slicedData={slicedData}
-          botWeights={botWeights}
-        />
+        {/* Right Sidebar: Volume Profile, Fibonacci & Order Flow Breakdown */}
+        <div className="space-y-4">
+          <MarketProfileMetrics
+            ticker={ticker}
+            timeframe={timeframe}
+            isBullishStructure={isBullishStructure}
+            structureLabel={structureLabel}
+            bosStatus={bosStatus}
+            slicedData={slicedData}
+            botWeights={botWeights}
+          />
+          <FibonacciCard
+            ticker={ticker}
+            timeframe={timeframe}
+            slicedData={slicedData}
+            chartData={chartData}
+            onFibLevelsChange={(levels) => setActiveFibLevels(levels)}
+          />
+        </div>
       </div>
     </div>
   );
