@@ -16,8 +16,8 @@ export function processTickerState(
   const volume24h = parseFloat(rawTicker.volume || '10000');
   const quoteVolume24h = parseFloat(rawTicker.quoteVolume || (volume24h * price).toFixed(0));
 
-  // Compute Volume Profile
-  const rawProfile = calculateVolumeProfile(klines, weights.volumeProfileRange || 20);
+  // Compute Volume Profile (Passo 6: default 50 bins/linhas de preço)
+  const rawProfile = calculateVolumeProfile(klines, weights.volumeProfileRange || 50);
   const inValueArea = price >= rawProfile.val && price <= rawProfile.vah;
   const rangeProfile = {
     vah: rawProfile.vah,

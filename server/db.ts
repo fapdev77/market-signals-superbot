@@ -288,7 +288,9 @@ export async function getIndicatorWeights(): Promise<IndicatorWeights> {
       rangePocWeight: 10,
       supportResistanceWeight: 10,
       minRiskRewardRatio: 3.0,
-      volumeProfileRange: 20
+      volumeProfileRange: 50,
+      volumeProfileTimeframe: '30m',
+      volumeProfileCandles: 48
     };
   }
   const parsed = JSON.parse(res[0].values[0][0] as string);
@@ -296,7 +298,13 @@ export async function getIndicatorWeights(): Promise<IndicatorWeights> {
     parsed.minRiskRewardRatio = 3.0;
   }
   if (parsed.volumeProfileRange === undefined) {
-    parsed.volumeProfileRange = 20;
+    parsed.volumeProfileRange = 50;
+  }
+  if (!parsed.volumeProfileTimeframe) {
+    parsed.volumeProfileTimeframe = '30m';
+  }
+  if (!parsed.volumeProfileCandles) {
+    parsed.volumeProfileCandles = 48;
   }
   return parsed;
 }

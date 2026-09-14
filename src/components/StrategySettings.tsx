@@ -33,7 +33,9 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           rangePocWeight: 15,
           supportResistanceWeight: 5,
           minRiskRewardRatio: 1.5,
-          volumeProfileRange: 10
+          volumeProfileRange: 30,
+          volumeProfileTimeframe: '5m',
+          volumeProfileCandles: 36
         });
         break;
       case 'daytrade': // Mais filtrado que scalp, foco em POIs fortes
@@ -46,7 +48,9 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           rangePocWeight: 20,
           supportResistanceWeight: 10,
           minRiskRewardRatio: 2.0,
-          volumeProfileRange: 20
+          volumeProfileRange: 40,
+          volumeProfileTimeframe: '15m',
+          volumeProfileCandles: 48
         });
         break;
       case 'intraday': // Trades que podem durar o dia todo, TPO mais longo
@@ -59,7 +63,9 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           rangePocWeight: 15,
           supportResistanceWeight: 10,
           minRiskRewardRatio: 2.5,
-          volumeProfileRange: 40
+          volumeProfileRange: 50,
+          volumeProfileTimeframe: '30m',
+          volumeProfileCandles: 48
         });
         break;
       case 'swing': // Foco em FVG/OB macro, Fibonacci Retracement, POC semanal
@@ -72,7 +78,9 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           rangePocWeight: 10,
           supportResistanceWeight: 10,
           minRiskRewardRatio: 3.5,
-          volumeProfileRange: 100
+          volumeProfileRange: 70,
+          volumeProfileTimeframe: '1h',
+          volumeProfileCandles: 72
         });
         break;
       case 'position': // Position Trade / Macro, Foco extremo em SR Macro e Fib Macro
@@ -85,7 +93,9 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           rangePocWeight: 5,
           supportResistanceWeight: 15,
           minRiskRewardRatio: 5.0,
-          volumeProfileRange: 200
+          volumeProfileRange: 100,
+          volumeProfileTimeframe: '4h',
+          volumeProfileCandles: 90
         });
         break;
       case 'custom':
@@ -104,7 +114,9 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       rangePocWeight: 10,
       supportResistanceWeight: 10,
       minRiskRewardRatio: 3.0,
-      volumeProfileRange: 20
+      volumeProfileRange: 50,
+      volumeProfileTimeframe: '30m',
+      volumeProfileCandles: 48
     };
     setFormWeights(defaultWeights);
   };
@@ -328,21 +340,101 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
             <p className="text-[10px] text-neutral-400">Define o fator de Risco/Retorno mínimo aceitável (ex: 3.0 para 3:1). Sinais com RR inferior serão rejeitados.</p>
           </div>
 
-          <div className="space-y-1 pt-4 border-t border-white/5">
-            <div className="flex justify-between text-xs">
-              <span className="text-neutral-200 font-bold">Range do Volume Profile (velas)</span>
-              <span className="text-cyan-400 font-extrabold">{formWeights.volumeProfileRange}</span>
+          {/* Grouped Volume Profile Settings (Passo 4 e 5) */}
+          <div className="mt-4 pt-4 border-t border-white/10 space-y-3 bg-[#050505] p-3.5 rounded-lg border border-cyan-500/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-2 gap-1.5">
+              <div>
+                <span className="text-xs font-bold text-cyan-400 uppercase tracking-wide flex items-center gap-1.5">
+                  Volume Profile Settings (TPO & Liquidez)
+                </span>
+                <p className="text-[10px] text-neutral-400 mt-0.5">
+                  Personalização do cálculo de POC, VAH e VAL (padrão: 30m e 48 velas = 24h)
+                </p>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 font-bold border border-cyan-500/30 w-fit">
+                {formWeights.volumeProfileTimeframe || '30m'} • {formWeights.volumeProfileCandles || 48} velas
+              </span>
             </div>
-            <input
-              type="range"
-              min="10"
-              max="200"
-              step="10"
-              value={formWeights.volumeProfileRange}
-              onChange={(e) => handleSliderChange('volumeProfileRange', parseInt(e.target.value))}
-              className="w-full accent-cyan-500"
-            />
-            <p className="text-[10px] text-neutral-400">Número de velas usadas para calcular POC, VAH e VAL.</p>
+
+            {/* Timeframe do Perfil */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-neutral-200 font-bold">Timeframe Base do Perfil</span>
+                <span className="text-cyan-400 font-extrabold">{formWeights.volumeProfileTimeframe || '30m'}</span>
+              </div>
+              <div className="grid grid-cols-6 gap-1.5 pt-0.5">
+                {(['5m', '15m', '30m', '1h', '4h', '1d'] as const).map(tf => (
+                  <button
+                    key={tf}
+                    type="button"
+                    onClick={() => {
+                      setFormWeights(prev => ({ ...prev, volumeProfileTimeframe: tf }));
+                      setActivePreset('custom');
+                    }}
+                    className={`px-2 py-1 text-xs rounded border transition font-bold ${
+                      (formWeights.volumeProfileTimeframe || '30m') === tf
+                        ? 'bg-cyan-500 text-black border-cyan-400'
+                        : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-neutral-400">
+                Intervalo das velas obtidas da Binance para montar a matriz de distribuição de volume.
+              </p>
+            </div>
+
+            {/* Velas do Histórico (Range em Velas) */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-neutral-200 font-bold">Velas no Histórico (Range Temporal)</span>
+                <span className="text-cyan-400 font-extrabold">{formWeights.volumeProfileCandles || 48} velas</span>
+              </div>
+              <input
+                type="range"
+                min="12"
+                max="200"
+                step="4"
+                value={formWeights.volumeProfileCandles || 48}
+                onChange={(e) => {
+                  setFormWeights(prev => ({ ...prev, volumeProfileCandles: parseInt(e.target.value) }));
+                  setActivePreset('custom');
+                }}
+                className="w-full accent-cyan-500"
+              />
+              <div className="flex justify-between text-[10px] text-neutral-400">
+                <span>12 velas</span>
+                <span className="text-cyan-400 font-mono">
+                  {(formWeights.volumeProfileCandles || 48)} velas de {formWeights.volumeProfileTimeframe || '30m'}
+                  {formWeights.volumeProfileTimeframe === '30m' && ` = ${((formWeights.volumeProfileCandles || 48) * 0.5).toFixed(0)}h de negociação`}
+                  {formWeights.volumeProfileTimeframe === '15m' && ` = ${((formWeights.volumeProfileCandles || 48) * 0.25).toFixed(1)}h de negociação`}
+                  {formWeights.volumeProfileTimeframe === '1h' && ` = ${(formWeights.volumeProfileCandles || 48)}h de negociação`}
+                </span>
+                <span>200 velas</span>
+              </div>
+            </div>
+
+            {/* Resolução / Linhas de Preço (Price Rows / Bins) */}
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-neutral-200 font-bold">Resolução / Linhas de Preço (Price Rows / Bins)</span>
+                <span className="text-cyan-400 font-extrabold">{formWeights.volumeProfileRange} linhas</span>
+              </div>
+              <input
+                type="range"
+                min="10"
+                max="150"
+                step="5"
+                value={formWeights.volumeProfileRange}
+                onChange={(e) => handleSliderChange('volumeProfileRange', parseInt(e.target.value))}
+                className="w-full accent-cyan-500"
+              />
+              <p className="text-[10px] text-neutral-400">
+                Quantidade de faixas horizontais de preço (bins/linhas) em que a amplitude é fatiada para calcular a densidade de volume no POC, VAH e VAL (padrão 50 linhas).
+              </p>
+            </div>
           </div>
         </div>
 

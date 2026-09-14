@@ -77,6 +77,7 @@ export interface KlineCandle {
   close: number;
   volume: number;
   takerBuyVolume: number;
+  quoteVolume?: number;
 }
 
 export interface TradeSignal {
@@ -125,7 +126,9 @@ export interface IndicatorWeights {
   rangePocWeight: number;           // default 10
   supportResistanceWeight: number; // default 10
   minRiskRewardRatio: number;       // default 2.5
-  volumeProfileRange: number;       // default 20
+  volumeProfileRange: number;       // default 50 (resolução em linhas/bins de preço)
+  volumeProfileTimeframe?: string;  // default '30m'
+  volumeProfileCandles?: number;    // default 48 (48 * 30m = 24h)
 }
 
 export interface AIReviewResponse {

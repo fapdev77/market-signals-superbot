@@ -40,7 +40,9 @@ async function startServer() {
     rangePocWeight: 10,
     supportResistanceWeight: 10,
     minRiskRewardRatio: 3.0,
-    volumeProfileRange: 20
+    volumeProfileRange: 50,
+    volumeProfileTimeframe: '30m',
+    volumeProfileCandles: 48
   };
 
   // In-memory active ticker state cache
@@ -223,8 +225,10 @@ async function startServer() {
               quoteVolume: '4100000000'
             };
 
-            // Fetch Kline, Open Interest, Funding Rate
-            const klines = await fetchKlines(symbol, '15m', 40);
+            // Fetch Kline, Open Interest, Funding Rate (Passo 3: default 30m, 48 velas = 24h)
+            const vpTf = weights.volumeProfileTimeframe || '30m';
+            const vpCandles = weights.volumeProfileCandles || 48;
+            const klines = await fetchKlines(symbol, vpTf, vpCandles);
             const { openInterest } = await fetchOpenInterest(symbol);
             const { fundingRate } = await fetchFundingRate(symbol);
 

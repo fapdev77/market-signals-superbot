@@ -461,7 +461,8 @@ export class BacktestEngine {
 
     keys.forEach(k => {
       const delta = (Math.random() - 0.5) * 10 * scale;
-      mutated[k] = Math.max(5, Math.min(40, Math.round(base[k] + delta)));
+      const currentVal = Number(base[k]) || 0;
+      (mutated as Record<string, any>)[k] = Math.max(5, Math.min(40, Math.round(currentVal + delta)));
     });
 
     // Profile specific tuning adjustments

@@ -1,7 +1,9 @@
-import React from 'react';
-import { Layers, Activity, Target } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Layers, Activity, Target, Sliders, Info } from 'lucide-react';
 import { TickerData } from '../types';
 import { formatPrice, formatCompactNumber } from '../utils/formatters';
+import { ChartDataItem } from './OrderflowIndicators';
+import { Tooltip } from './Tooltip';
 
 interface MarketProfileMetricsProps {
   ticker: TickerData;
@@ -9,6 +11,12 @@ interface MarketProfileMetricsProps {
   isBullishStructure: boolean;
   structureLabel: string;
   bosStatus: string;
+  slicedData?: ChartDataItem[];
+  botWeights?: {
+    volumeProfileRange?: number;
+    volumeProfileTimeframe?: string;
+    volumeProfileCandles?: number;
+  };
 }
 
 export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
@@ -17,30 +25,281 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
   isBullishStructure,
   structureLabel,
   bosStatus,
+  slicedData = [],
+  botWeights
 }) => {
-  const range = ticker.rangeProfile || { vah: 0, val: 0, poc: 0 };
+  const [profileMode, setProfileMode] = useState<'chart' | 'bot'>('chart');
+  const baseAsset = ticker.baseAsset || (ticker.symbol ? ticker.symbol.replace(/USDT|BUSD|USDC/g, '') : 'ATIVO');
+  const currentPrice = ticker.price ?? 0;
+
+  // Cálculo dinâmico do Volume Profile baseado nas velas visíveis no gráfico (Passo 1)
+  const chartProfile = useMemo(() => {
+    if (!slicedData || slicedData.length === 0) return null;
+    const minP = Math.min(...slicedData.map(d => d.low));
+    const maxP = Math.max(...slicedData.map(d => d.high));
+    const priceDelta = maxP - minP;
+    if (priceDelta <= 0) return null;
+
+    const rowCount = botWeights?.volumeProfileRange || 50;
+    const step = priceDelta / rowCount;
+    const bins = new Array(rowCount).fill(0);
+    let totalVol = 0;
+
+    slicedData.forEach(d => {
+      const vol = (d.takerBuy ?? 0) + (d.takerSell ?? 0);
+      totalVol += vol;
+      const binIdx = Math.min(rowCount - 1, Math.max(0, Math.floor(((d.close - minP) / priceDelta) * rowCount)));
+      bins[binIdx] += vol;
+    });
+
+    let maxBinIdx = 0;
+    let maxBinVol = 0;
+    bins.forEach((v, idx) => {
+      if (v > maxBinVol) {
+        maxBinVol = v;
+        maxBinIdx = idx;
+      }
+    });
+
+    const poc = minP + (maxBinIdx + 0.5) * step;
+
+    // Value area (70% do volume ao redor do POC)
+    const targetVA = totalVol * 0.70;
+    let accumulatedVA = maxBinVol;
+    let upIdx = maxBinIdx;
+    let downIdx = maxBinIdx;
+
+    while (accumulatedVA < targetVA && (upIdx < rowCount - 1 || downIdx > 0)) {
+      const nextUpVol = upIdx < rowCount - 1 ? bins[upIdx + 1] : -1;
+      const nextDownVol = downIdx > 0 ? bins[downIdx - 1] : -1;
+
+      if (nextUpVol >= nextDownVol && nextUpVol !== -1) {
+        upIdx++;
+        accumulatedVA += bins[upIdx];
+      } else if (nextDownVol !== -1) {
+        downIdx--;
+        accumulatedVA += bins[downIdx];
+      } else if (nextUpVol !== -1) {
+        upIdx++;
+        accumulatedVA += bins[upIdx];
+      } else {
+        break;
+      }
+    }
+
+    const vah = minP + (upIdx + 1) * step;
+    const val = minP + downIdx * step;
+
+    return {
+      vah,
+      val,
+      poc,
+      minPrice: minP,
+      maxPrice: maxP,
+      totalVolume: totalVol,
+      candlesCount: slicedData.length,
+      timeframe,
+      rowCount
+    };
+  }, [slicedData, timeframe, botWeights?.volumeProfileRange]);
+
+  const botRange = ticker.rangeProfile || { vah: 0, val: 0, poc: 0 };
+  const botTf = botWeights?.volumeProfileTimeframe || '30m';
+  const botCandles = botWeights?.volumeProfileCandles || 48;
+  const botRows = botWeights?.volumeProfileRange || 50;
+
+  // Se o modo selecionado for gráfico e houver dados, usa o dinâmico; senão usa o do bot
+  const activeProfile = (profileMode === 'chart' && chartProfile) ? {
+    vah: chartProfile.vah,
+    val: chartProfile.val,
+    poc: chartProfile.poc,
+    isDynamic: true,
+    tf: chartProfile.timeframe,
+    candles: chartProfile.candlesCount,
+    rows: chartProfile.rowCount,
+    minPrice: chartProfile.minPrice,
+    maxPrice: chartProfile.maxPrice,
+    totalVol: chartProfile.totalVolume
+  } : {
+    vah: botRange.vah,
+    val: botRange.val,
+    poc: botRange.poc,
+    isDynamic: false,
+    tf: botTf,
+    candles: botCandles,
+    rows: botRows,
+    minPrice: undefined,
+    maxPrice: undefined,
+    totalVol: undefined
+  };
+
+  const inValueArea = currentPrice >= activeProfile.val && currentPrice <= activeProfile.vah;
+  const aboveVAH = currentPrice > activeProfile.vah;
+
+  const getDistancePct = (targetPrice: number) => {
+    if (!currentPrice || !targetPrice) return null;
+    const diff = ((currentPrice - targetPrice) / targetPrice) * 100;
+    return diff;
+  };
 
   return (
     <div className="space-y-4">
-      {/* Volume Profile Breakdown */}
-      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
-        <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-          <Layers className="h-4 w-4 text-orange-400" />
-          <h3 className="text-xs font-bold text-white uppercase">Volume Profile do Range</h3>
+      {/* Volume Profile Breakdown (Passo 1: Esclarecendo o Range e Fontes de Cálculo) */}
+      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3">
+        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-cyan-400" />
+            <h3 className="text-xs font-bold text-white uppercase tracking-wide">Volume Profile do Range</h3>
+          </div>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase border ${
+            inValueArea 
+              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+              : aboveVAH
+              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+          }`}>
+            {inValueArea ? 'Na Value Area' : aboveVAH ? 'Acima do VAH' : 'Abaixo do VAL'}
+          </span>
         </div>
-        <div className="space-y-1.5 text-xs">
-          <div className="flex justify-between p-2 rounded bg-[#050505] border border-white/5">
-            <span className="text-neutral-400">VAH (Value Area High):</span>
-            <span className="font-extrabold text-neutral-200">{formatPrice(range.vah, { currency: true })}</span>
+
+        {/* Toggle de Modo: Gráfico Visível vs Motor do Bot */}
+        <div className="grid grid-cols-2 gap-1 bg-[#050505] p-1 rounded border border-white/10 text-[10px]">
+          <button
+            type="button"
+            onClick={() => setProfileMode('chart')}
+            className={`py-1 px-2 rounded font-bold transition flex items-center justify-center gap-1 ${
+              profileMode === 'chart'
+                ? 'bg-cyan-500 text-black shadow'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            Gráfico ({slicedData.length}v • {timeframe})
+          </button>
+          <button
+            type="button"
+            onClick={() => setProfileMode('bot')}
+            className={`py-1 px-2 rounded font-bold transition flex items-center justify-center gap-1 ${
+              profileMode === 'bot'
+                ? 'bg-cyan-500 text-black shadow'
+                : 'text-neutral-400 hover:text-white'
+            }`}
+          >
+            Bot ({botCandles}v • {botTf})
+          </button>
+        </div>
+
+        {/* Caixa de Detalhes do Range Selecionado */}
+        <div className="bg-[#050505] p-2.5 rounded border border-white/5 space-y-1 text-[10px] font-mono text-neutral-400">
+          <div className="flex justify-between items-center text-neutral-300">
+            <span className="flex items-center gap-1">
+              <Info className="h-3 w-3 text-cyan-400" />
+              Escopo do Range:
+            </span>
+            <span className="font-bold text-white">
+              {activeProfile.candles} velas de {activeProfile.tf} 
+              {activeProfile.tf === '30m' && ` (~${(activeProfile.candles * 0.5).toFixed(0)}h)`}
+              {activeProfile.tf === '15m' && ` (~${(activeProfile.candles * 0.25).toFixed(1)}h)`}
+              {activeProfile.tf === '1h' && ` (~${activeProfile.candles}h)`}
+            </span>
           </div>
-          <div className="flex justify-between p-2 rounded bg-orange-500/10 border border-orange-500/30">
-            <span className="text-orange-400 font-bold">POC (Point of Control):</span>
-            <span className="font-extrabold text-orange-400">{formatPrice(range.poc, { currency: true })}</span>
+
+          <div className="flex justify-between items-center">
+            <span>Resolução (Bins/Linhas):</span>
+            <span className="text-cyan-400 font-bold">{activeProfile.rows} linhas de preço</span>
           </div>
-          <div className="flex justify-between p-2 rounded bg-[#050505] border border-white/5">
-            <span className="text-neutral-400">VAL (Value Area Low):</span>
-            <span className="font-extrabold text-neutral-200">{formatPrice(range.val, { currency: true })}</span>
-          </div>
+
+          {activeProfile.minPrice !== undefined && activeProfile.maxPrice !== undefined && (
+            <div className="flex justify-between items-center border-t border-white/5 pt-1">
+              <span>Faixa de Preço:</span>
+              <span className="text-neutral-200">
+                {formatPrice(activeProfile.minPrice, { currency: true })} – {formatPrice(activeProfile.maxPrice, { currency: true })}
+              </span>
+            </div>
+          )}
+
+          {activeProfile.totalVol !== undefined && (
+            <div className="flex justify-between items-center">
+              <span>Volume no Período:</span>
+              <span className="text-neutral-200">
+                {formatCompactNumber(activeProfile.totalVol)} {baseAsset}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* VAH, POC, VAL Cards */}
+        <div className="space-y-1.5 text-xs font-mono">
+          {/* VAH */}
+          <Tooltip
+            position="left"
+            title="Value Area High (VAH)"
+            badge="70% TETO"
+            content="Limite superior da Área de Valor (70% do volume negociado no período). Preços acima do VAH indicam expansão de alta ou busca por liquidez compradora."
+          >
+            <div className="flex justify-between items-center p-2 rounded bg-[#050505] border border-white/5 cursor-help">
+              <div>
+                <span className="text-neutral-400 block text-[10px]">VAH (Value Area High)</span>
+                <span className="font-extrabold text-neutral-200">{formatPrice(activeProfile.vah, { currency: true })}</span>
+              </div>
+              {(() => {
+                const dist = getDistancePct(activeProfile.vah);
+                if (dist === null) return null;
+                return (
+                  <span className={`text-[10px] font-bold ${dist >= 0 ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                    {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
+                  </span>
+                );
+              })()}
+            </div>
+          </Tooltip>
+
+          {/* POC */}
+          <Tooltip
+            position="left"
+            title="Point of Control (POC)"
+            badge="PONTO DE CONTROLE"
+            content="Nível de preço com o maior volume negociado em todo o período. Atua como um ímã institucional para retração e referência de equilíbrio de mercado."
+          >
+            <div className="flex justify-between items-center p-2 rounded bg-cyan-500/10 border border-cyan-500/30 cursor-help">
+              <div>
+                <span className="text-cyan-400 font-bold block text-[10px]">POC (Point of Control)</span>
+                <span className="font-extrabold text-cyan-300">{formatPrice(activeProfile.poc, { currency: true })}</span>
+              </div>
+              {(() => {
+                const dist = getDistancePct(activeProfile.poc);
+                if (dist === null) return null;
+                return (
+                  <span className={`text-[10px] font-extrabold ${dist >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
+                  </span>
+                );
+              })()}
+            </div>
+          </Tooltip>
+
+          {/* VAL */}
+          <Tooltip
+            position="left"
+            title="Value Area Low (VAL)"
+            badge="70% PISO"
+            content="Limite inferior da Área de Valor (piso dos 70% de volume). Preços abaixo do VAL indicam desconto ou rompimento de baixa sem suporte prévio."
+          >
+            <div className="flex justify-between items-center p-2 rounded bg-[#050505] border border-white/5 cursor-help">
+              <div>
+                <span className="text-neutral-400 block text-[10px]">VAL (Value Area Low)</span>
+                <span className="font-extrabold text-neutral-200">{formatPrice(activeProfile.val, { currency: true })}</span>
+              </div>
+              {(() => {
+                const dist = getDistancePct(activeProfile.val);
+                if (dist === null) return null;
+                return (
+                  <span className={`text-[10px] font-bold ${dist >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
+                  </span>
+                );
+              })()}
+            </div>
+          </Tooltip>
         </div>
       </div>
 

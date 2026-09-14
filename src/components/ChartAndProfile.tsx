@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig } from '../types';
+import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid } from 'recharts';
 import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck } from 'lucide-react';
@@ -16,6 +16,7 @@ interface ChartAndProfileProps {
   onSelectTickerBySymbol: (symbol: string) => void;
   signals?: TradeSignal[];
   activeModels?: AIModelConfig[];
+  botWeights?: IndicatorWeights;
 }
 
 export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
@@ -23,7 +24,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   allTickers = [],
   onSelectTickerBySymbol,
   signals = [],
-  activeModels = []
+  activeModels = [],
+  botWeights
 }) => {
   const ticker = selectedTicker || allTickers[0];
   const [klines, setKlines] = useState<KlineCandle[]>([]);
@@ -109,6 +111,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
   if (!ticker) return null;
 
+  const baseAsset = ticker?.baseAsset || (ticker?.symbol ? ticker.symbol.replace(/USDT|BUSD|USDC/g, '') : 'ATIVO');
+
   const chartData: ChartDataItem[] = useMemo(() => {
     if (!klines.length) return [];
     let currentOI = ticker.openInterest ?? 1000000;
@@ -116,7 +120,11 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     
     const data: ChartDataItem[] = klines.map(k => {
       const timeStr = new Date(k.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const delta = k.takerBuyVolume - (k.volume - k.takerBuyVolume);
+      const takerBuy = k.takerBuyVolume ?? (k.volume * 0.5);
+      const takerSell = Math.max(0, k.volume - takerBuy);
+      const delta = takerBuy - takerSell;
+      const quoteVol = k.quoteVolume || (k.volume * k.close);
+      
       return {
         time: timeStr,
         price: k.close,
@@ -124,9 +132,14 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         high: k.high,
         low: k.low,
         close: k.close,
-        takerBuy: k.takerBuyVolume,
-        takerSell: k.volume - k.takerBuyVolume,
+        volume: k.volume,
+        quoteVolume: quoteVol,
+        takerBuy: takerBuy,
+        takerSell: takerSell,
+        takerBuyUSD: takerBuy * k.close,
+        takerSellUSD: takerSell * k.close,
         delta: delta,
+        deltaUSD: delta * k.close,
         openInterest: 0,
         cvd: 0
       };
@@ -238,25 +251,69 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     const data = payload[0].payload;
     const isUp = (data.close ?? 0) >= (data.open ?? 0);
     const pct = data.open ? (((data.close - data.open) / data.open) * 100).toFixed(2) : '0.00';
+    const totalVolAsset = (data.takerBuy ?? 0) + (data.takerSell ?? 0);
+    const totalVolUSD = data.quoteVolume || (totalVolAsset * (data.close ?? 0));
+    const takerBuyPct = totalVolAsset > 0 ? ((data.takerBuy ?? 0) / totalVolAsset) * 100 : 50;
+    const takerSellPct = totalVolAsset > 0 ? ((data.takerSell ?? 0) / totalVolAsset) * 100 : 50;
 
     return (
-      <div className="bg-neutral-950/95 backdrop-blur-md border border-neutral-800 p-3 rounded-xl shadow-2xl text-xs space-y-2 min-w-[210px] z-50 pointer-events-none">
+      <div className="bg-neutral-950/95 backdrop-blur-md border border-neutral-800 p-3 rounded-xl shadow-2xl text-xs space-y-2.5 min-w-[240px] z-50 pointer-events-none">
         <div className="flex items-center justify-between border-b border-neutral-800 pb-1.5">
           <span className="font-mono text-neutral-400 font-semibold">{data.time || label}</span>
           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isUp ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`}>
             {isUp ? `+${pct}%` : `${pct}%`}
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono">
-          <div className="text-neutral-400">Abertura: <span className="text-white">${data.open?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-          <div className="text-neutral-400">Fechamento: <span className="text-white">${data.close?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-          <div className="text-neutral-400">Máxima: <span className="text-emerald-400">${data.high?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-          <div className="text-neutral-400">Mínima: <span className="text-rose-400">${data.low?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+
+        {/* Preços OHLC */}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+          <div className="text-neutral-400">Abertura: <span className="text-white font-semibold">${formatPrice(data.open)}</span></div>
+          <div className="text-neutral-400">Fechamento: <span className="text-white font-semibold">${formatPrice(data.close)}</span></div>
+          <div className="text-neutral-400">Máxima: <span className="text-emerald-400 font-semibold">${formatPrice(data.high)}</span></div>
+          <div className="text-neutral-400">Mínima: <span className="text-rose-400 font-semibold">${formatPrice(data.low)}</span></div>
         </div>
-        {data.takerBuy !== undefined && (
-          <div className="border-t border-neutral-800/80 pt-1.5 flex justify-between text-[11px] text-neutral-400 font-mono">
-            <span>Vol: {(data.takerBuy + data.takerSell).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-            <span className="text-emerald-400">Compra: {((data.takerBuy / ((data.takerBuy + data.takerSell) || 1)) * 100).toFixed(0)}%</span>
+
+        {/* Volume da Vela: Ativo e USD (Passo 2) */}
+        {totalVolAsset > 0 && (
+          <div className="border-t border-neutral-800/80 pt-2 space-y-1.5 font-mono text-[11px]">
+            <div className="flex justify-between items-center text-neutral-300">
+              <span className="text-neutral-400">Vol. Total Vela:</span>
+              <span className="font-bold text-white">
+                {formatCompactNumber(totalVolAsset)} {baseAsset} <span className="text-neutral-400 font-normal">(${formatCompactNumber(totalVolUSD)})</span>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[10px] pt-0.5">
+              <div className="bg-emerald-500/10 p-1.5 rounded border border-emerald-500/20">
+                <span className="text-emerald-400 font-bold block">Compra Taker:</span>
+                <span className="text-emerald-300 font-semibold">
+                  {formatCompactNumber(data.takerBuy ?? 0)} {baseAsset}
+                </span>
+                <span className="text-emerald-500 block text-[9px]">
+                  ${formatCompactNumber(data.takerBuyUSD ?? (data.takerBuy ?? 0) * data.close)} ({takerBuyPct.toFixed(0)}%)
+                </span>
+              </div>
+
+              <div className="bg-rose-500/10 p-1.5 rounded border border-rose-500/20">
+                <span className="text-rose-400 font-bold block">Venda Taker:</span>
+                <span className="text-rose-300 font-semibold">
+                  {formatCompactNumber(data.takerSell ?? 0)} {baseAsset}
+                </span>
+                <span className="text-rose-500 block text-[9px]">
+                  ${formatCompactNumber(data.takerSellUSD ?? (data.takerSell ?? 0) * data.close)} ({takerSellPct.toFixed(0)}%)
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center text-[10px] pt-0.5 border-t border-white/5">
+              <span className="text-neutral-400">Delta da Vela:</span>
+              <span className={`font-bold ${(data.delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {(data.delta ?? 0) >= 0 ? '+' : ''}{formatCompactNumber(data.delta ?? 0)} {baseAsset} 
+                <span className="text-neutral-400 font-normal ml-1">
+                  ({(data.delta ?? 0) >= 0 ? '+' : ''}${formatCompactNumber(data.deltaUSD ?? (data.delta ?? 0) * data.close)})
+                </span>
+              </span>
+            </div>
           </div>
         )}
       </div>
@@ -849,12 +906,19 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               </div>
 
               {/* Golden Pocket Banner */}
-              <div className={`px-2.5 py-1 rounded border text-[10px] font-bold flex items-center gap-1.5 ${
-                fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 animate-pulse' : 'bg-neutral-900 text-neutral-400 border-white/10'
-              }`}>
-                <Flame className="h-3.5 w-3.5 text-orange-400" />
-                {fib.inGoldenPocket ? 'NA ZONA GOLDEN POCKET (0.618 - 0.68)' : 'AGUARDANDO FIBO 0.618-0.68'}
-              </div>
+              <AppTooltip
+                position="bottom"
+                title="Zona Áurea (Golden Pocket)"
+                badge="FIBO 0.618 - 0.68"
+                content="Identifica se o preço atual está dentro da faixa de retração de Fibonacci 0.618 a 0.68, historicamente a região com maior probabilidade de reversão ou continuação institucional."
+              >
+                <div className={`px-2.5 py-1 rounded border text-[10px] font-bold flex items-center gap-1.5 cursor-help ${
+                  fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 animate-pulse' : 'bg-neutral-900 text-neutral-400 border-white/10'
+                }`}>
+                  <Flame className="h-3.5 w-3.5 text-orange-400" />
+                  {fib.inGoldenPocket ? 'NA ZONA GOLDEN POCKET (0.618 - 0.68)' : 'AGUARDANDO FIBO 0.618-0.68'}
+                </div>
+              </AppTooltip>
             </div>
           </div>
 
@@ -881,7 +945,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               </div>
             ) : chartType === 'line' ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <AreaChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
@@ -890,8 +954,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   </defs>
                   <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
                   <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
-                  <YAxis domain={['auto', 'auto']} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
-                  <Tooltip content={<CustomTooltip />} />
+                  <YAxis domain={['auto', 'auto']} width={65} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
+                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
                   {/* Liquidity Heatmap Overlay Reference Areas */}
                   <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
                   {/* Fibonacci Retracement Levels */}
@@ -911,16 +975,16 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                   {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
                      <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
                   )}
-                  <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" />
+                  <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" activeDot={{ r: 4, fill: '#f97316', stroke: '#ffffff', strokeWidth: 1.5 }} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <BarChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
                   <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
-                  <YAxis domain={[domainMin, domainMax]} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
-                  <Tooltip content={<CustomTooltip />} />
+                  <YAxis domain={[domainMin, domainMax]} width={65} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
+                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
                   {/* Liquidity Heatmap Overlay Reference Areas */}
                   <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
                   {/* Fibonacci Retracement Levels */}
@@ -961,6 +1025,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           isBullishStructure={isBullishStructure}
           structureLabel={structureLabel}
           bosStatus={bosStatus}
+          slicedData={slicedData}
+          botWeights={botWeights}
         />
       </div>
     </div>

@@ -89,24 +89,32 @@ export const LiquidityHeatmapBadge: React.FC<LiquidityHeatmapBadgeProps> = ({
         </Tooltip>
 
         {visible && (
-          <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5">
-            <span className="text-[10px] text-neutral-500 font-bold px-1.5 uppercase flex items-center gap-1">
-              <Layers className="h-3 w-3" /> Resolução:
-            </span>
-            {[24, 36, 48].map((cnt) => (
-              <button
-                key={cnt}
-                onClick={() => onChangeBucketCount(cnt)}
-                className={`px-1.5 py-0.5 text-[10px] font-bold rounded transition ${
-                  bucketCount === cnt
-                    ? 'bg-orange-500 text-black'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-              >
-                {cnt}
-              </button>
-            ))}
-          </div>
+          <Tooltip
+            position="bottom"
+            title="Granulometria do Heatmap"
+            badge={`${bucketCount} FAIXAS`}
+            content="Define o número de faixas horizontais de preço no gráfico. Quanto maior o valor (ex: 64), mais finas e precisas são as linhas de liquidez identificadas."
+          >
+            <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5">
+              <span className="text-[10px] text-neutral-500 font-bold px-1.5 uppercase flex items-center gap-1">
+                <Layers className="h-3 w-3" /> Resolução:
+              </span>
+              {[24, 36, 48, 64].map((cnt) => (
+                <button
+                  key={cnt}
+                  onClick={() => onChangeBucketCount(cnt)}
+                  className={`px-1.5 py-0.5 text-[10px] font-bold rounded transition ${
+                    bucketCount === cnt
+                      ? 'bg-orange-500 text-black'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                  title={`Resolução de ${cnt} faixas`}
+                >
+                  {cnt}
+                </button>
+              ))}
+            </div>
+          </Tooltip>
         )}
       </div>
 
@@ -114,39 +122,60 @@ export const LiquidityHeatmapBadge: React.FC<LiquidityHeatmapBadgeProps> = ({
         <div className="flex flex-wrap items-center gap-3 text-[11px]">
           {/* Top Demand */}
           {topDemandCluster && (
-            <div className="flex items-center gap-1.5 bg-emerald-950/30 text-emerald-400 px-2 py-1 rounded border border-emerald-500/20">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-              <span className="font-semibold text-[10px] uppercase text-neutral-400">Demanda (Suporte):</span>
-              <span className="font-bold">
-                {formatPrice(topDemandCluster.min, { currency: true })} - {formatPrice(topDemandCluster.max, { currency: true })}
-              </span>
-              <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 rounded font-mono">
-                {formatCompactNumber(topDemandCluster.volume)}
-              </span>
-            </div>
+            <Tooltip
+              position="bottom"
+              title="Zona de Demanda / Suporte"
+              badge="DEMANDA"
+              content="Faixa de preço abaixo da cotação atual com o maior acúmulo de ordens negociadas no período visível, atuando como barreira compradora."
+            >
+              <div className="flex items-center gap-1.5 bg-emerald-950/30 text-emerald-400 px-2 py-1 rounded border border-emerald-500/20 cursor-help">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                <span className="font-semibold text-[10px] uppercase text-neutral-400">Demanda (Suporte):</span>
+                <span className="font-bold">
+                  {formatPrice(topDemandCluster.min, { currency: true })} - {formatPrice(topDemandCluster.max, { currency: true })}
+                </span>
+                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 rounded font-mono">
+                  {formatCompactNumber(topDemandCluster.volume)}
+                </span>
+              </div>
+            </Tooltip>
           )}
 
           {/* Point of Control (POC) */}
           {pocBucket && (
-            <div className="flex items-center gap-1.5 bg-orange-950/30 text-orange-400 px-2 py-1 rounded border border-orange-500/30">
-              <Flame className="h-3.5 w-3.5 text-orange-400 shrink-0" />
-              <span className="font-semibold text-[10px] uppercase text-neutral-400">Ponto de Controle (POC):</span>
-              <span className="font-extrabold">{formatPrice(pocBucket.priceCenter, { currency: true })}</span>
-            </div>
+            <Tooltip
+              position="bottom"
+              title="Ponto de Controle (POC)"
+              badge="POC"
+              content="Nível exato de preço de maior intensidade e volume acumulado no gráfico visível. Representa o centro de gravidade e atração dos preços."
+            >
+              <div className="flex items-center gap-1.5 bg-orange-950/30 text-orange-400 px-2 py-1 rounded border border-orange-500/30 cursor-help">
+                <Flame className="h-3.5 w-3.5 text-orange-400 shrink-0" />
+                <span className="font-semibold text-[10px] uppercase text-neutral-400">Ponto de Controle (POC):</span>
+                <span className="font-extrabold">{formatPrice(pocBucket.priceCenter, { currency: true })}</span>
+              </div>
+            </Tooltip>
           )}
 
           {/* Top Supply */}
           {topSupplyCluster && (
-            <div className="flex items-center gap-1.5 bg-rose-950/30 text-rose-400 px-2 py-1 rounded border border-rose-500/20">
-              <AlertOctagon className="h-3.5 w-3.5 text-rose-400 shrink-0" />
-              <span className="font-semibold text-[10px] uppercase text-neutral-400">Oferta (Resistência):</span>
-              <span className="font-bold">
-                {formatPrice(topSupplyCluster.min, { currency: true })} - {formatPrice(topSupplyCluster.max, { currency: true })}
-              </span>
-              <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1 rounded font-mono">
-                {formatCompactNumber(topSupplyCluster.volume)}
-              </span>
-            </div>
+            <Tooltip
+              position="bottom"
+              title="Zona de Oferta / Resistência"
+              badge="OFERTA"
+              content="Faixa de preço acima da cotação atual com a maior concentração de ordens no período visível, atuando como teto de liquidez e barreira vendedora."
+            >
+              <div className="flex items-center gap-1.5 bg-rose-950/30 text-rose-400 px-2 py-1 rounded border border-rose-500/20 cursor-help">
+                <AlertOctagon className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                <span className="font-semibold text-[10px] uppercase text-neutral-400">Oferta (Resistência):</span>
+                <span className="font-bold">
+                  {formatPrice(topSupplyCluster.min, { currency: true })} - {formatPrice(topSupplyCluster.max, { currency: true })}
+                </span>
+                <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1 rounded font-mono">
+                  {formatCompactNumber(topSupplyCluster.volume)}
+                </span>
+              </div>
+            </Tooltip>
           )}
         </div>
       )}

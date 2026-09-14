@@ -50,7 +50,9 @@ export default function App() {
       rangePocWeight: 10,
       supportResistanceWeight: 10,
       minRiskRewardRatio: 1.5,
-      volumeProfileRange: 20
+      volumeProfileRange: 50,
+      volumeProfileTimeframe: '30m',
+      volumeProfileCandles: 48
     },
     aiModels: defaultModels,
     aiAnalysisEnabled: true
@@ -287,6 +289,7 @@ export default function App() {
             onSelectTickerBySymbol={handleSelectTickerBySymbol}
             signals={signals}
             activeModels={botState.aiModels}
+            botWeights={botState.weights}
           />
         )}
 
