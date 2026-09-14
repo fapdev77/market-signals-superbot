@@ -308,38 +308,139 @@ export function calculateVolumeProfile(klines: KlineCandle[], binsCount: number 
 }
 
 /**
- * Calculates Fibonacci Retracements (0.5, 0.618, 0.68)
+ * Calculates Fibonacci Retracements (0.0, 0.236, 0.382, 0.5, 0.618, 0.68, 0.786, 1.0)
+ * According to TradingView market structure rules:
+ * - Downtrend: Swing High / HH is point 1, Swing Low / LL is point 0. Bounce retracement moves 0 -> 1.
+ * - Uptrend: Swing Low / LL is point 1, Swing High / HH is point 0. Pullback retracement moves 0 -> 1.
  */
 export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) {
   if (!klines.length) {
-    return { fib50: 0, fib618: 0, fib68: 0, swingHigh: 0, swingLow: 0, inGoldenPocket: false };
+    return {
+      fib0: 0,
+      fib236: 0,
+      fib382: 0,
+      fib50: 0,
+      fib618: 0,
+      fib68: 0,
+      fib786: 0,
+      fib100: 0,
+      swingHigh: 0,
+      swingLow: 0,
+      inGoldenPocket: false,
+      trend: 'UP' as const,
+      point1Price: 0,
+      point0Price: 0,
+      point1Label: '1 (0.00)',
+      point0Label: '0 (0.00)',
+      point1Type: 'LL' as const,
+      point0Type: 'HH' as const
+    };
   }
 
   let swingHigh = -Infinity;
   let swingLow = Infinity;
+  let hhIndex = 0;
+  let llIndex = 0;
 
-  klines.forEach(c => {
-    if (c.high > swingHigh) swingHigh = c.high;
-    if (c.low < swingLow) swingLow = c.low;
+  klines.forEach((c, idx) => {
+    if (c.high > swingHigh) {
+      swingHigh = c.high;
+      hhIndex = idx;
+    }
+    if (c.low < swingLow) {
+      swingLow = c.low;
+      llIndex = idx;
+    }
   });
 
   const diff = swingHigh - swingLow;
-  const fib50 = swingHigh - diff * 0.5;
-  const fib618 = swingHigh - diff * 0.618;
-  const fib68 = swingHigh - diff * 0.68;
+  if (diff <= 0) {
+    return {
+      fib0: swingHigh,
+      fib236: swingHigh,
+      fib382: swingHigh,
+      fib50: swingHigh,
+      fib618: swingHigh,
+      fib68: swingHigh,
+      fib786: swingHigh,
+      fib100: swingLow,
+      swingHigh,
+      swingLow,
+      inGoldenPocket: false,
+      trend: 'UP' as const,
+      point1Price: swingLow,
+      point0Price: swingHigh,
+      point1Label: `1 (${swingLow.toFixed(2)})`,
+      point0Label: `0 (${swingHigh.toFixed(2)})`,
+      point1Type: 'LL' as const,
+      point0Type: 'HH' as const
+    };
+  }
+
+  // Determine market structure direction based on chronological sequence of HH and LL:
+  // If HH occurred before LL (hhIndex < llIndex):
+  // The impulse moved DOWN from HH (1) to LL (0).
+  // Retracement bounces from 0 (LL) upwards towards 1 (HH).
+  // If LL occurred before HH (llIndex < hhIndex):
+  // The impulse moved UP from LL (1) to HH (0).
+  // Retracement pulls back from 0 (HH) downwards towards 1 (LL).
+  const isDownTrend = hhIndex < llIndex;
+
+  let f0 = 0;
+  let f236 = 0;
+  let f382 = 0;
+  let f50 = 0;
+  let f618 = 0;
+  let f68 = 0;
+  let f786 = 0;
+  let f100 = 0;
+
+  if (isDownTrend) {
+    // Downtrend: 1 is HH (swingHigh), 0 is LL (swingLow)
+    f0 = swingLow;
+    f236 = swingLow + diff * 0.236;
+    f382 = swingLow + diff * 0.382;
+    f50 = swingLow + diff * 0.50;
+    f618 = swingLow + diff * 0.618;
+    f68 = swingLow + diff * 0.68;
+    f786 = swingLow + diff * 0.786;
+    f100 = swingHigh;
+  } else {
+    // Uptrend: 1 is LL (swingLow), 0 is HH (swingHigh)
+    f0 = swingHigh;
+    f236 = swingHigh - diff * 0.236;
+    f382 = swingHigh - diff * 0.382;
+    f50 = swingHigh - diff * 0.50;
+    f618 = swingHigh - diff * 0.618;
+    f68 = swingHigh - diff * 0.68;
+    f786 = swingHigh - diff * 0.786;
+    f100 = swingLow;
+  }
 
   // Golden Pocket zone: between 0.618 and 0.68 retracement
-  const goldenTop = Math.max(fib618, fib68);
-  const goldenBottom = Math.min(fib618, fib68);
+  const goldenTop = Math.max(f618, f68);
+  const goldenBottom = Math.min(f618, f68);
   const inGoldenPocket = currentPrice >= goldenBottom * 0.998 && currentPrice <= goldenTop * 1.002;
 
   return {
-    fib50,
-    fib618,
-    fib68,
+    fib0: f0,
+    fib236: f236,
+    fib382: f382,
+    fib50: f50,
+    fib618: f618,
+    fib68: f68,
+    fib786: f786,
+    fib100: f100,
     swingHigh,
     swingLow,
-    inGoldenPocket
+    inGoldenPocket,
+    trend: isDownTrend ? ('DOWN' as const) : ('UP' as const),
+    point1Price: isDownTrend ? swingHigh : swingLow,
+    point0Price: isDownTrend ? swingLow : swingHigh,
+    point1Label: isDownTrend ? `1 (${swingHigh.toFixed(2)})` : `1 (${swingLow.toFixed(2)})`,
+    point0Label: isDownTrend ? `0 (${swingLow.toFixed(2)})` : `0 (${swingHigh.toFixed(2)})`,
+    point1Type: isDownTrend ? ('HH' as const) : ('LL' as const),
+    point0Type: isDownTrend ? ('LL' as const) : ('HH' as const)
   };
 }
 

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics } from '../utils/formatters';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, BarChart, Bar, CartesianGrid } from 'recharts';
-import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck } from 'lucide-react';
-import { MarketProfileMetrics } from './MarketProfileMetrics';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
+import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2 } from 'lucide-react';
+import { MarketProfileMetrics, VolumeProfileCard, OrderFlowFundingCard, DivergenceStructureCard } from './MarketProfileMetrics';
 import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
 import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
@@ -39,18 +39,29 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [selectedPersona, setSelectedPersona] = useState<string>('conservative');
   const [zoomStart, setZoomStart] = useState<number>(0);
   const [zoomEnd, setZoomEnd] = useState<number>(0);
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [dragModeActive, setDragModeActive] = useState<boolean>(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState<boolean>(true);
   const [heatmapBucketCount, setHeatmapBucketCount] = useState<number>(36);
   const [activeFibLevels, setActiveFibLevels] = useState<{
+    fib0?: number;
     fib236: number;
     fib382: number;
     fib50: number;
     fib618: number;
     fib68: number;
     fib786: number;
+    fib100?: number;
     swingHigh: number;
     swingLow: number;
     inGoldenPocket: boolean;
+    trend?: 'UP' | 'DOWN';
+    point1Price?: number;
+    point0Price?: number;
+    point1Label?: string;
+    point0Label?: string;
+    point1Type?: 'HH' | 'LL';
+    point0Type?: 'HH' | 'LL';
   } | null>(null);
 
   const enabledModels = activeModels.filter(m => m.isActive);
@@ -178,10 +189,16 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
   const effectiveStart = Math.max(0, Math.min(zoomStart, chartData.length - 2));
   const effectiveEnd = Math.max(effectiveStart + 2, Math.min(zoomEnd, chartData.length));
+  const isFullRange = effectiveStart === 0 && effectiveEnd >= chartData.length;
+  const savedZoomRef = React.useRef<{ start: number; end: number } | null>(null);
   
   const slicedData = useMemo(() => {
     return chartData.slice(effectiveStart, effectiveEnd);
   }, [chartData, effectiveStart, effectiveEnd]);
+
+  // Keep a ref of the current range for zero-latency event callbacks
+  const zoomRangeRef = React.useRef({ start: effectiveStart, end: effectiveEnd, length: chartData.length });
+  zoomRangeRef.current = { start: effectiveStart, end: effectiveEnd, length: chartData.length };
 
   const handleZoomIn = () => {
     const currentLen = effectiveEnd - effectiveStart;
@@ -209,47 +226,217 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     setZoomEnd(chartData.length);
   };
 
-  const handleWheelZoom = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (e.deltaY < 0) {
-      handleZoomIn();
+  // Zoom-To-Fit Toggle: toggles between 100% full dataset range and previous/focused view
+  const handleToggleZoomToFit = () => {
+    if (chartData.length === 0) return;
+    if (!isFullRange) {
+      // Save current zoomed/custom view
+      savedZoomRef.current = { start: effectiveStart, end: effectiveEnd };
+      // Fit to full data range
+      setZoomStart(0);
+      setZoomEnd(chartData.length);
     } else {
-      handleZoomOut();
+      // If we have a previously saved range, restore it
+      if (savedZoomRef.current && (savedZoomRef.current.end - savedZoomRef.current.start < chartData.length)) {
+        setZoomStart(savedZoomRef.current.start);
+        setZoomEnd(savedZoomRef.current.end);
+      } else {
+        // Default focused trading view: recent 35 candles (or last 45%)
+        const focusLen = Math.max(8, Math.min(35, Math.floor(chartData.length * 0.45)));
+        setZoomStart(Math.max(0, chartData.length - focusLen));
+        setZoomEnd(chartData.length);
+      }
+    }
+  };
+
+  // Professional Cursor-Anchored Smooth Zoom
+  const performZoomAtPoint = React.useCallback((clientX: number, deltaY: number) => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+    const { start, end, length } = zoomRangeRef.current;
+    if (length <= 2) return;
+
+    const rect = container.getBoundingClientRect();
+    const plotLeft = rect.left + 10;
+    const plotWidth = Math.max(80, rect.width - 65);
+    const ratio = Math.max(0, Math.min(1, (clientX - plotLeft) / plotWidth));
+
+    const currentLen = end - start;
+    if (currentLen <= 5 && deltaY < 0) return; // limit max zoom in
+    if (currentLen >= length && deltaY > 0) return; // limit max zoom out
+
+    // Proportional smooth scaling: small delta gives subtle zoom, larger wheel notch gives snappy zoom
+    const zoomFactor = deltaY < 0 ? 0.85 : 1.18;
+    const newLen = Math.max(5, Math.min(length, Math.round(currentLen * zoomFactor)));
+    if (newLen === currentLen) return;
+
+    const anchorCandle = start + ratio * currentLen;
+    let newStart = Math.round(anchorCandle - ratio * newLen);
+    let newEnd = newStart + newLen;
+
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = Math.min(length, newLen);
+    } else if (newEnd > length) {
+      newEnd = length;
+      newStart = Math.max(0, length - newLen);
+    }
+
+    setZoomStart(newStart);
+    setZoomEnd(newEnd);
+  }, []);
+
+  // Pan / Drag State References
+  const isDraggingRef = React.useRef<boolean>(false);
+  const dragStartXRef = React.useRef<number>(0);
+  const dragStartZoomRef = React.useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  const chartContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Attach non-passive wheel event listener for smooth TradingView-style cursor-anchored zoom
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container) return;
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      performZoomAtPoint(e.clientX, e.deltaY);
+    };
+
+    container.addEventListener('wheel', handleNativeWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleNativeWheel);
+    };
+  }, [performZoomAtPoint]);
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only primary mouse button
+    if (e.button !== 0) return;
+    isDraggingRef.current = true;
+    dragStartXRef.current = e.clientX;
+    dragStartZoomRef.current = { start: effectiveStart, end: effectiveEnd };
+    setIsPanning(true);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current || !chartContainerRef.current) return;
+    const deltaX = e.clientX - dragStartXRef.current;
+    if (Math.abs(deltaX) < 3) return;
+
+    const rect = chartContainerRef.current.getBoundingClientRect();
+    const containerWidth = rect.width || 600;
+    const windowLen = dragStartZoomRef.current.end - dragStartZoomRef.current.start;
+    const candlesPerPixel = windowLen / containerWidth;
+
+    // In TradingView: dragging mouse right (deltaX > 0) pulls older bars into view (start/end shift down)
+    // dragging mouse left (deltaX < 0) pulls future/newer bars into view (start/end shift up)
+    const shiftBars = Math.round(-deltaX * candlesPerPixel);
+
+    let newStart = dragStartZoomRef.current.start + shiftBars;
+    let newEnd = dragStartZoomRef.current.end + shiftBars;
+
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = windowLen;
+    } else if (newEnd > chartData.length) {
+      newEnd = chartData.length;
+      newStart = Math.max(0, chartData.length - windowLen);
+    }
+
+    setZoomStart(newStart);
+    setZoomEnd(newEnd);
+  };
+
+  const handleMouseUpOrLeave = () => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      setIsPanning(false);
     }
   };
 
   const touchStartDistRef = React.useRef<number | null>(null);
+  const touchStartSingleXRef = React.useRef<number | null>(null);
+  const touchStartZoomRef = React.useRef<{ start: number; end: number }>({ start: 0, end: 0 });
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
+      // 2-finger smooth pinch zoom
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const dist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
       touchStartDistRef.current = dist;
+      touchStartSingleXRef.current = null;
+      touchStartZoomRef.current = { start: effectiveStart, end: effectiveEnd };
+      setIsPanning(true);
+    } else if (e.touches.length === 1) {
+      // 1-finger horizontal pan (drag)
+      touchStartDistRef.current = null;
+      touchStartSingleXRef.current = e.touches[0].clientX;
+      touchStartZoomRef.current = { start: effectiveStart, end: effectiveEnd };
+      setIsPanning(true);
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const diff = dist - touchStartDistRef.current;
-      if (Math.abs(diff) > 25) {
-        if (diff > 0) {
-          handleZoomIn();
-        } else {
-          handleZoomOut();
-        }
-        touchStartDistRef.current = dist;
+    if (e.touches.length === 2 && touchStartDistRef.current && touchStartDistRef.current > 0 && chartContainerRef.current) {
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const dist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      if (dist < 10) return;
+
+      const midX = (t0.clientX + t1.clientX) / 2;
+      const rect = chartContainerRef.current.getBoundingClientRect();
+      const plotLeft = rect.left + 10;
+      const plotWidth = Math.max(80, (rect.width || 600) - 65);
+      const ratio = Math.max(0, Math.min(1, (midX - plotLeft) / plotWidth));
+
+      const origLen = touchStartZoomRef.current.end - touchStartZoomRef.current.start;
+      const scale = touchStartDistRef.current / dist;
+      const newLen = Math.max(5, Math.min(chartData.length, Math.round(origLen * scale)));
+
+      const anchorCandle = touchStartZoomRef.current.start + ratio * origLen;
+      let newStart = Math.round(anchorCandle - ratio * newLen);
+      let newEnd = newStart + newLen;
+
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = Math.min(chartData.length, newLen);
+      } else if (newEnd > chartData.length) {
+        newEnd = chartData.length;
+        newStart = Math.max(0, chartData.length - newLen);
       }
+
+      setZoomStart(newStart);
+      setZoomEnd(newEnd);
+    } else if (e.touches.length === 1 && touchStartSingleXRef.current !== null && chartContainerRef.current) {
+      const currentX = e.touches[0].clientX;
+      const deltaX = currentX - touchStartSingleXRef.current;
+      const rect = chartContainerRef.current.getBoundingClientRect();
+      const containerWidth = rect.width || 600;
+      const windowLen = touchStartZoomRef.current.end - touchStartZoomRef.current.start;
+      const candlesPerPixel = windowLen / containerWidth;
+      const shiftBars = Math.round(-deltaX * candlesPerPixel);
+
+      let newStart = touchStartZoomRef.current.start + shiftBars;
+      let newEnd = touchStartZoomRef.current.end + shiftBars;
+
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = windowLen;
+      } else if (newEnd > chartData.length) {
+        newEnd = chartData.length;
+        newStart = Math.max(0, chartData.length - windowLen);
+      }
+
+      setZoomStart(newStart);
+      setZoomEnd(newEnd);
     }
   };
 
   const handleTouchEnd = () => {
     touchStartDistRef.current = null;
+    touchStartSingleXRef.current = null;
+    setIsPanning(false);
   };
 
   interface TooltipPropsType {
@@ -259,7 +446,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   }
 
   const CustomTooltip: React.FC<TooltipPropsType> = ({ active, payload, label }) => {
-    if (!active || !payload || !payload.length) return null;
+    if (isPanning || !active || !payload || !payload.length) return null;
     const data = payload[0].payload;
     const isUp = (data.close ?? 0) >= (data.open ?? 0);
     const pct = data.open ? (((data.close - data.open) / data.open) * 100).toFixed(2) : '0.00';
@@ -333,20 +520,188 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   };
 
   const defaultFib = ticker.fibonacci || {
+    fib0: 0,
     fib236: 0,
     fib382: 0,
     fib50: 0,
     fib618: 0,
     fib68: 0,
     fib786: 0,
+    fib100: 0,
     swingHigh: 0,
     swingLow: 0,
-    inGoldenPocket: false
+    inGoldenPocket: false,
+    trend: 'UP',
+    point1Price: 0,
+    point0Price: 0,
+    point1Label: '1 (0.00)',
+    point0Label: '0 (0.00)',
+    point1Type: 'LL',
+    point0Type: 'HH'
   };
   const fib = activeFibLevels || defaultFib;
   const range = ticker.rangeProfile || { vah: 0, val: 0, poc: 0 };
   const price = ticker.price ?? 0;
   const changePct = ticker.priceChangePercent24h ?? 0;
+
+  const renderFibonacciOverlay = () => {
+    const p1 = fib.point1Price || (fib.trend === 'DOWN' ? fib.swingHigh : fib.swingLow);
+    const p0 = fib.point0Price || (fib.trend === 'DOWN' ? fib.swingLow : fib.swingHigh);
+    const p1Type = fib.point1Type || (fib.trend === 'DOWN' ? 'HH' : 'LL');
+    const p0Type = fib.point0Type || (fib.trend === 'DOWN' ? 'LL' : 'HH');
+
+    const gpMin = Math.min(fib.fib618 || 0, fib.fib68 || 0);
+    const gpMax = Math.max(fib.fib618 || 0, fib.fib68 || 0);
+
+    return (
+      <React.Fragment key="fibo-overlay">
+        {/* Shaded Golden Pocket Zone */}
+        {gpMin > 0 && gpMax > 0 && (
+          <ReferenceArea
+            y1={gpMin}
+            y2={gpMax}
+            fill="#f59e0b"
+            fillOpacity={0.09}
+            stroke="#f59e0b"
+            strokeOpacity={0.3}
+            strokeDasharray="2 2"
+          />
+        )}
+
+        {/* Point 1 (Início do Swing - 1.0) */}
+        {p1 > 0 && (
+          <ReferenceLine
+            y={p1}
+            stroke="#ffffff"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            label={{
+              value: `1 (${p1Type}) • ${formatPrice(p1, { currency: true })}`,
+              fill: '#ffffff',
+              fontSize: 9,
+              fontWeight: 700,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* 0.786 Level */}
+        {fib.fib786 && fib.fib786 > 0 && (
+          <ReferenceLine
+            y={fib.fib786}
+            stroke="#c084fc"
+            strokeDasharray="3 3"
+            strokeWidth={1}
+            label={{
+              value: `0.786 (${formatPrice(fib.fib786, { currency: true })})`,
+              fill: '#c084fc',
+              fontSize: 9,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* 0.68 Level (Golden Pocket Ext) */}
+        {fib.fib68 > 0 && (
+          <ReferenceLine
+            y={fib.fib68}
+            stroke="#ffffff"
+            strokeDasharray="2 2"
+            strokeWidth={1.2}
+            label={{
+              value: `0.68 (${formatPrice(fib.fib68, { currency: true })})`,
+              fill: '#ffffff',
+              fontSize: 9,
+              fontWeight: 700,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* 0.618 Level (Golden Pocket Core - TradingView Yellow) */}
+        {fib.fib618 > 0 && (
+          <ReferenceLine
+            y={fib.fib618}
+            stroke="#facc15"
+            strokeDasharray="3 3"
+            strokeWidth={1.5}
+            label={{
+              value: `0.618 (${formatPrice(fib.fib618, { currency: true })})`,
+              fill: '#facc15',
+              fontSize: 9,
+              fontWeight: 800,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* 0.50 Level (Equilíbrio) */}
+        {fib.fib50 > 0 && (
+          <ReferenceLine
+            y={fib.fib50}
+            stroke="#06b6d4"
+            strokeDasharray="3 3"
+            strokeWidth={1}
+            label={{
+              value: `0.50 (${formatPrice(fib.fib50, { currency: true })})`,
+              fill: '#06b6d4',
+              fontSize: 9,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* 0.382 Level */}
+        {fib.fib382 && fib.fib382 > 0 && (
+          <ReferenceLine
+            y={fib.fib382}
+            stroke="#60a5fa"
+            strokeDasharray="3 3"
+            strokeWidth={1}
+            label={{
+              value: `0.382 (${formatPrice(fib.fib382, { currency: true })})`,
+              fill: '#60a5fa',
+              fontSize: 9,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* 0.236 Level */}
+        {fib.fib236 && fib.fib236 > 0 && (
+          <ReferenceLine
+            y={fib.fib236}
+            stroke="#a3a3a3"
+            strokeDasharray="2 2"
+            strokeWidth={1}
+            label={{
+              value: `0.236 (${formatPrice(fib.fib236, { currency: true })})`,
+              fill: '#a3a3a3',
+              fontSize: 9,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* Point 0 (Fim do Swing - 0.0) */}
+        {p0 > 0 && (
+          <ReferenceLine
+            y={p0}
+            stroke="#ffffff"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            label={{
+              value: `0 (${p0Type}) • ${formatPrice(p0, { currency: true })}`,
+              fill: '#ffffff',
+              fontSize: 9,
+              fontWeight: 700,
+              position: 'insideRight'
+            }}
+          />
+        )}
+      </React.Fragment>
+    );
+  };
 
   const { domainMin, domainMax, priceRange } = useMemo(() => {
     const target = slicedData.length > 0 ? slicedData : chartData;
@@ -835,241 +1190,317 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         </div>
       </div>
 
-      {/* Main Chart Grid & Order Flow Metrics */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
-        {/* Main Price Chart with Fibonacci Overlays */}
-        <div className="lg:col-span-2 2xl:col-span-3 bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div>
-              <div className="text-xl font-black text-white flex items-center gap-2">
-                {formatPrice(price, { currency: true })}
-                {loading && <RefreshCw className="h-4 w-4 text-neutral-500 animate-spin" />}
-              </div>
-              <span className={`text-xs font-bold ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {changePct >= 0 ? '▲ ' : '▼ '}{formatPercent(changePct)} (24h)
-              </span>
+      {/* Main Full-Width Chart Section & Order Flow Sub-Charts */}
+      <div className="w-full bg-[#0A0A0A] p-4.5 rounded-xl border border-white/10 shadow-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <div className="text-xl font-black text-white flex items-center gap-2">
+              {formatPrice(price, { currency: true })}
+              {loading && <RefreshCw className="h-4 w-4 text-neutral-500 animate-spin" />}
             </div>
-            
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Timeframe Selector */}
-              <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
-                {['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
-                  <button
-                    key={tf}
-                    onClick={() => setTimeframe(tf)}
-                    className={`px-2 py-1 rounded text-[10px] font-bold transition ${timeframe === tf ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
-                  >
-                    {tf.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-
-              {/* Chart Type Toggle (Linhas vs Velas/Candles) */}
-              <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
+            <span className={`text-xs font-bold ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {changePct >= 0 ? '▲ ' : '▼ '}{formatPercent(changePct)} (24h)
+            </span>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Timeframe Selector */}
+            <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
+              {['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
                 <button
-                  onClick={() => setChartType('line')}
-                  className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${chartType === 'line' ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
+                  key={tf}
+                  onClick={() => setTimeframe(tf)}
+                  className={`px-2 py-1 rounded text-[10px] font-bold transition ${timeframe === tf ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
                 >
-                  Linha
+                  {tf.toUpperCase()}
                 </button>
-                <button
-                  onClick={() => setChartType('candles')}
-                  className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${chartType === 'candles' ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
-                >
-                  Velas (Candles)
-                </button>
-              </div>
+              ))}
+            </div>
 
-              {/* Zoom Controls */}
-              <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
-                <AppTooltip
-                  position="top"
-                  title="Aumentar Zoom"
-                  badge="ZOOM IN (+)"
-                  content="Foca a visualização nas velas e no perfil de volume mais recentes."
-                >
-                  <button
-                    onClick={handleZoomIn}
-                    aria-label="Aumentar Zoom (+)"
-                    className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
-                  >
-                    +
-                  </button>
-                </AppTooltip>
-
-                <AppTooltip
-                  position="top"
-                  title="Diminuir Zoom"
-                  badge="ZOOM OUT (-)"
-                  content="Amplia a janela temporal exibida para visualizar um histórico maior de velas e níveis de suporte."
-                >
-                  <button
-                    onClick={handleZoomOut}
-                    aria-label="Diminuir Zoom (-)"
-                    className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
-                  >
-                    -
-                  </button>
-                </AppTooltip>
-
-                <AppTooltip
-                  position="top"
-                  title="Redefinir Zoom"
-                  badge="100%"
-                  content="Restaura a escala padrão do gráfico exibindo todas as velas carregadas da série."
-                >
-                  <button
-                    onClick={handleResetZoom}
-                    aria-label="Resetar Zoom para 100%"
-                    className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
-                  >
-                    100%
-                  </button>
-                </AppTooltip>
-              </div>
-
-              {/* Golden Pocket Banner */}
-              <AppTooltip
-                position="bottom"
-                title="Zona Áurea (Golden Pocket)"
-                badge="FIBO 0.618 - 0.68"
-                content="Identifica se o preço atual está dentro da faixa de retração de Fibonacci 0.618 a 0.68, historicamente a região com maior probabilidade de reversão ou continuação institucional."
+            {/* Chart Type Toggle (Linhas vs Velas/Candles) */}
+            <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
+              <button
+                onClick={() => setChartType('line')}
+                className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${chartType === 'line' ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
               >
-                <div className={`px-2.5 py-1 rounded border text-[10px] font-bold flex items-center gap-1.5 cursor-help ${
-                  fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 animate-pulse' : 'bg-neutral-900 text-neutral-400 border-white/10'
-                }`}>
-                  <Flame className="h-3.5 w-3.5 text-orange-400" />
-                  {fib.inGoldenPocket ? 'NA ZONA GOLDEN POCKET (0.618 - 0.68)' : 'AGUARDANDO FIBO 0.618-0.68'}
-                </div>
+                Linha
+              </button>
+              <button
+                onClick={() => setChartType('candles')}
+                className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${chartType === 'candles' ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
+              >
+                Velas (Candles)
+              </button>
+            </div>
+
+            {/* Zoom Controls & Pan Mode */}
+            <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner gap-0.5">
+              <AppTooltip
+                position="top"
+                title={dragModeActive ? "Modo Arrastar Ativo" : "Ativar Modo Arrastar"}
+                badge="TRADINGVIEW PAN"
+                content="Clique e arraste o gráfico para a esquerda ou direita para navegar pelo histórico, ou role a roda do mouse para dar zoom."
+              >
+                <button
+                  onClick={() => setDragModeActive(!dragModeActive)}
+                  aria-label="Alternar Modo Arrastar Gráfico"
+                  className={`px-2 py-1 rounded text-[10px] font-bold transition flex items-center gap-1 ${dragModeActive ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-400 hover:text-white'}`}
+                >
+                  <Hand className="h-3 w-3" />
+                  <span className="hidden sm:inline">Arrastar</span>
+                </button>
+              </AppTooltip>
+
+              <div className="w-[1px] h-3 bg-neutral-800 mx-0.5" />
+
+              <AppTooltip
+                position="top"
+                title="Aumentar Zoom"
+                badge="ZOOM IN (+)"
+                content="Foca a visualização nas velas e no perfil de volume mais recentes."
+              >
+                <button
+                  onClick={handleZoomIn}
+                  aria-label="Aumentar Zoom (+)"
+                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                >
+                  +
+                </button>
+              </AppTooltip>
+
+              <AppTooltip
+                position="top"
+                title="Diminuir Zoom"
+                badge="ZOOM OUT (-)"
+                content="Amplia a janela temporal exibida para visualizar um histórico maior de velas e níveis de suporte."
+              >
+                <button
+                  onClick={handleZoomOut}
+                  aria-label="Diminuir Zoom (-)"
+                  className="px-2 py-1 rounded text-[10px] font-bold text-neutral-400 hover:text-white transition"
+                >
+                  -
+                </button>
+              </AppTooltip>
+
+              <div className="w-[1px] h-3 bg-neutral-800 mx-0.5" />
+
+              {/* Zoom-To-Fit Toggle Button */}
+              <AppTooltip
+                position="top"
+                title={isFullRange ? "Restaurar Visão Foco" : "Ajustar à Tela (Zoom-to-Fit)"}
+                badge={isFullRange ? "FOCO ANTERIOR" : "100% TOTAL"}
+                content={
+                  isFullRange
+                    ? "Alterna de volta para a visão focada ou período personalizado anterior."
+                    : "Expande a visualização para enquadrar 100% do range de dados da série. Clique novamente para alternar com a visão focada."
+                }
+              >
+                <button
+                  onClick={handleToggleZoomToFit}
+                  aria-label="Zoom to Fit: Alternar entre range total e visão atual"
+                  className={`px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1.5 ${
+                    isFullRange
+                      ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40 shadow-xs'
+                      : 'text-neutral-300 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  {isFullRange ? (
+                    <>
+                      <Minimize2 className="h-3 w-3 text-orange-400" />
+                      <span>Foco</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="h-3 w-3" />
+                      <span>Ajustar (Fit)</span>
+                    </>
+                  )}
+                </button>
               </AppTooltip>
             </div>
-          </div>
 
-          {/* Liquidity Heatmap Overlay Badge & Controls */}
-          <LiquidityHeatmapBadge
-            heatmapData={heatmapData}
-            visible={heatmapEnabled}
-            onToggle={() => setHeatmapEnabled(!heatmapEnabled)}
-            bucketCount={heatmapBucketCount}
-            onChangeBucketCount={(cnt) => setHeatmapBucketCount(cnt)}
-          />
-
-          {/* Recharts Area Chart / Candlestick Chart */}
-          <div 
-            className="h-72 w-full pt-2"
-            onWheel={handleWheelZoom}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-          >
-            {loading ? (
-              <div className="h-full flex items-center justify-center text-neutral-500 text-xs">
-                <RefreshCw className="h-5 w-5 animate-spin mr-2" /> Carregando gráfico...
+            {/* Golden Pocket Banner */}
+            <AppTooltip
+              position="bottom"
+              title="Retração de Fibonacci & Golden Pocket"
+              badge={`FIBO ${fib.trend === 'DOWN' ? 'Baixa (HH 1 → LL 0)' : 'Alta (LL 1 → HH 0)'}`}
+              content="Traçado TradingView: ponto 1 (HH na baixa / LL na alta) até o ponto 0 (LL na baixa / HH na alta). Golden Pocket entre os níveis 0.618 e 0.68."
+            >
+              <div className={`px-2.5 py-1 rounded border text-[10px] font-bold flex items-center gap-1.5 cursor-help ${
+                fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 animate-pulse' : 'bg-neutral-900 text-neutral-400 border-white/10'
+              }`}>
+                <Flame className="h-3.5 w-3.5 text-orange-400" />
+                <span>
+                  {fib.inGoldenPocket
+                    ? `🔥 NA ZONA GOLDEN POCKET (${fib.trend === 'DOWN' ? 'HH 1 ➔ LL 0' : 'LL 1 ➔ HH 0'})`
+                    : `FIBO ${fib.trend === 'DOWN' ? 'BAIXA (HH 1 ➔ LL 0)' : 'ALTA (LL 1 ➔ HH 0)'}`}
+                </span>
+                {fib.fib618 > 0 && fib.fib68 > 0 && (
+                  <span className="text-[9px] text-yellow-400 font-mono bg-yellow-400/10 px-1.5 py-0.2 rounded border border-yellow-400/20">
+                    GP: {formatPrice(Math.min(fib.fib618, fib.fib68))} - {formatPrice(Math.max(fib.fib618, fib.fib68))}
+                  </span>
+                )}
               </div>
-            ) : chartType === 'line' ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#f97316" stopOpacity={0.0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
-                  <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
-                  <YAxis domain={['auto', 'auto']} width={65} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
-                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
-                  {/* Liquidity Heatmap Overlay Reference Areas */}
-                  <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
-                  {/* Fibonacci Retracement Levels */}
-                  {fib.fib50 > 0 && (
-                    <ReferenceLine y={fib.fib50} stroke="#06b6d4" strokeDasharray="3 3" label={{ value: `Fibo 0.50 (${formatPrice(fib.fib50, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
-                  )}
-                  {fib.fib618 > 0 && (
-                    <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
-                  )}
-                  {fib.fib68 > 0 && (
-                    <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 (${formatPrice(fib.fib68, { currency: true })})`, fill: '#ea580c', fontSize: 9 }} />
-                  )}
-                  {fib.fib786 && fib.fib786 > 0 && (
-                    <ReferenceLine y={fib.fib786} stroke="#c084fc" strokeDasharray="3 3" label={{ value: `Fibo 0.786 (${formatPrice(fib.fib786, { currency: true })})`, fill: '#c084fc', fontSize: 9 }} />
-                  )}
-                  {range.poc > 0 && (
-                    <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
-                  )}
-                  {/* Active Signal / AI Review targets */}
-                  {(aiReview?.takeProfit1 || activeSignal?.target1) && (
-                     <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />
-                  )}
-                  {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
-                     <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
-                  )}
-                  <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" activeDot={{ r: 4, fill: '#f97316', stroke: '#ffffff', strokeWidth: 1.5 }} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
-                  <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
-                  <YAxis domain={[domainMin, domainMax]} width={65} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
-                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
-                  {/* Liquidity Heatmap Overlay Reference Areas */}
-                  <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
-                  {/* Fibonacci Retracement Levels */}
-                  {fib.fib50 > 0 && (
-                    <ReferenceLine y={fib.fib50} stroke="#06b6d4" strokeDasharray="3 3" label={{ value: `Fibo 0.50 (${formatPrice(fib.fib50, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
-                  )}
-                  {fib.fib618 > 0 && (
-                    <ReferenceLine y={fib.fib618} stroke="#f97316" strokeDasharray="3 3" label={{ value: `Fibo 0.618 (${formatPrice(fib.fib618, { currency: true })})`, fill: '#f97316', fontSize: 9 }} />
-                  )}
-                  {fib.fib68 > 0 && (
-                    <ReferenceLine y={fib.fib68} stroke="#ea580c" strokeDasharray="3 3" label={{ value: `Fibo 0.68 (${formatPrice(fib.fib68, { currency: true })})`, fill: '#ea580c', fontSize: 9 }} />
-                  )}
-                  {fib.fib786 && fib.fib786 > 0 && (
-                    <ReferenceLine y={fib.fib786} stroke="#c084fc" strokeDasharray="3 3" label={{ value: `Fibo 0.786 (${formatPrice(fib.fib786, { currency: true })})`, fill: '#c084fc', fontSize: 9 }} />
-                  )}
-                  {range.poc > 0 && (
-                    <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
-                  )}
-                  {/* Active Signal / AI Review targets */}
-                  {(aiReview?.takeProfit1 || activeSignal?.target1) && (
-                     <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />
-                  )}
-                  {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
-                     <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
-                  )}
-                  <Bar dataKey="close" shape={<CandlestickShape />} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
+            </AppTooltip>
           </div>
-
-          {/* Sub-gráficos de Orderflow e Volume Taker */}
-          <OrderflowIndicators
-            slicedData={slicedData}
-            chartData={chartData}
-            ticker={ticker}
-          />
         </div>
 
-        {/* Right Sidebar: Volume Profile, Fibonacci & Order Flow Breakdown */}
-        <div className="space-y-4">
-          <MarketProfileMetrics
+        {/* Liquidity Heatmap Overlay Badge & Controls */}
+        <LiquidityHeatmapBadge
+          heatmapData={heatmapData}
+          visible={heatmapEnabled}
+          onToggle={() => setHeatmapEnabled(!heatmapEnabled)}
+          bucketCount={heatmapBucketCount}
+          onChangeBucketCount={(cnt) => setHeatmapBucketCount(cnt)}
+        />
+
+        {/* Recharts Area Chart / Candlestick Chart (Expanded Height for Pristine Readability) */}
+        <div 
+          ref={chartContainerRef}
+          style={{ touchAction: 'none' }}
+          className={`h-80 sm:h-96 md:h-[380px] w-full pt-2 relative select-none transition-all ${
+            dragModeActive 
+              ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') 
+              : (isPanning ? 'cursor-grabbing' : 'cursor-default')
+          }`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUpOrLeave}
+          onMouseLeave={handleMouseUpOrLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Pan Indicator Pill when dragging or dragModeActive */}
+          {dragModeActive && (
+            <div className="absolute top-3 left-4 z-20 pointer-events-none flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-neutral-900/90 border border-orange-500/40 text-[10px] font-mono text-orange-400 backdrop-blur-md shadow-lg">
+              <MoveHorizontal className="h-3 w-3 animate-pulse" />
+              <span>{isPanning ? 'Arrastando timeline...' : 'Clique e arraste para os lados'}</span>
+            </div>
+          )}
+          {loading ? (
+            <div className="h-full flex items-center justify-center text-neutral-500 text-xs">
+              <RefreshCw className="h-5 w-5 animate-spin mr-2" /> Carregando gráfico...
+            </div>
+          ) : chartType === 'line' ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#f97316" stopOpacity={0.0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
+                <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
+                <YAxis domain={['auto', 'auto']} width={65} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
+                <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
+                {/* Liquidity Heatmap Overlay Reference Areas */}
+                <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
+                {/* Fibonacci Retracement Levels & Golden Pocket Overlay */}
+                {renderFibonacciOverlay()}
+                {range.poc > 0 && (
+                  <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
+                )}
+                {/* Active Signal / AI Review targets */}
+                {(aiReview?.takeProfit1 || activeSignal?.target1) && (
+                   <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />
+                )}
+                {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
+                   <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
+                )}
+                <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" activeDot={{ r: 4, fill: '#f97316', stroke: '#ffffff', strokeWidth: 1.5 }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="2 2" stroke="#262626" />
+                <XAxis dataKey="time" stroke="#737373" tick={{ fontSize: 9 }} />
+                <YAxis domain={[domainMin, domainMax]} width={65} stroke="#737373" tick={{ fontSize: 9 }} orientation="right" />
+                <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
+                {/* Liquidity Heatmap Overlay Reference Areas */}
+                <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
+                {/* Fibonacci Retracement Levels & Golden Pocket Overlay */}
+                {renderFibonacciOverlay()}
+                {range.poc > 0 && (
+                  <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
+                )}
+                {/* Active Signal / AI Review targets */}
+                {(aiReview?.takeProfit1 || activeSignal?.target1) && (
+                   <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />
+                )}
+                {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
+                   <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
+                )}
+                <Bar dataKey="close" shape={<CandlestickShape />} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Sub-gráficos de Orderflow e Volume Taker */}
+        <OrderflowIndicators
+          slicedData={slicedData}
+          chartData={chartData}
+          ticker={ticker}
+        />
+      </div>
+
+      {/* Dedicated Section Below Charts: Volume Profile, Fibonacci, Order Flow & Market Structure */}
+      <div className="space-y-3 pt-2">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400">
+              <Activity className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                Métricas Estruturais, Order Flow & Níveis Institucionais
+              </h3>
+              <p className="text-xs text-neutral-400 mt-0.5 font-sans">
+                Volume Profile do range, Retração de Fibonacci cronológica (1 ➔ 0), Métricas de Order Flow & Funding e Divergências/BOS.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold bg-neutral-900 text-orange-400 px-2.5 py-1 rounded border border-white/10 font-mono flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" />
+              {ticker.symbol} • {timeframe}
+            </span>
+          </div>
+        </div>
+
+        {/* Harmonized Responsive Grid: 4 cards in 1 row on wide, 2x2 on desktop/laptop, 1 per row on mobile/tablet */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
+          {/* Card 1: Volume Profile do Range */}
+          <VolumeProfileCard
             ticker={ticker}
             timeframe={timeframe}
-            isBullishStructure={isBullishStructure}
-            structureLabel={structureLabel}
-            bosStatus={bosStatus}
             slicedData={slicedData}
             botWeights={botWeights}
           />
+
+          {/* Card 2: Retração de Fibonacci & Golden Pocket */}
           <FibonacciCard
             ticker={ticker}
             timeframe={timeframe}
             slicedData={slicedData}
             chartData={chartData}
             onFibLevelsChange={(levels) => setActiveFibLevels(levels)}
+          />
+
+          {/* Card 3: Métricas de Order Flow & Funding */}
+          <OrderFlowFundingCard ticker={ticker} />
+
+          {/* Card 4: Divergências & Estrutura de Mercado */}
+          <DivergenceStructureCard
+            ticker={ticker}
+            timeframe={timeframe}
+            isBullishStructure={isBullishStructure}
+            structureLabel={structureLabel}
+            bosStatus={bosStatus}
           />
         </div>
       </div>

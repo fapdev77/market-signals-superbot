@@ -35,15 +35,24 @@ export interface TickerData {
   
   // Technical Indicators
   fibonacci: {
+    fib0?: number;                  // 0.0 level (End of range / 0)
     fib236?: number;                // 0.236 level
     fib382?: number;                // 0.382 level
     fib50: number;                  // 0.50 level
     fib618: number;                 // 0.618 level (Golden Pocket)
     fib68: number;                  // 0.68 level
     fib786?: number;                // 0.786 level
+    fib100?: number;                // 1.0 (100%) level (Start of range / 1)
     swingHigh: number;
     swingLow: number;
     inGoldenPocket: boolean;        // Is price in [0.618 - 0.68]
+    trend?: 'UP' | 'DOWN';          // 'UP' (LL 1 -> HH 0) or 'DOWN' (HH 1 -> LL 0)
+    point1Price?: number;           // Price at point 1 (Swing Start)
+    point0Price?: number;           // Price at point 0 (Swing End)
+    point1Label?: string;           // e.g. '1 (739.89)' or '1 (713.10)'
+    point0Label?: string;           // e.g. '0 (713.10)' or '0 (728.50)'
+    point1Type?: 'HH' | 'LL';       // Point 1 structure type
+    point0Type?: 'HH' | 'LL';       // Point 0 structure type
   };
   
   rangeProfile: {

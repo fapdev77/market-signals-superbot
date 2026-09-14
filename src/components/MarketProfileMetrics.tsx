@@ -5,12 +5,9 @@ import { formatPrice, formatCompactNumber } from '../utils/formatters';
 import { ChartDataItem } from './OrderflowIndicators';
 import { Tooltip } from './Tooltip';
 
-interface MarketProfileMetricsProps {
+export interface VolumeProfileCardProps {
   ticker: TickerData;
   timeframe: string;
-  isBullishStructure: boolean;
-  structureLabel: string;
-  bosStatus: string;
   slicedData?: ChartDataItem[];
   botWeights?: {
     volumeProfileRange?: number;
@@ -19,12 +16,9 @@ interface MarketProfileMetricsProps {
   };
 }
 
-export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
+export const VolumeProfileCard: React.FC<VolumeProfileCardProps> = ({
   ticker,
   timeframe,
-  isBullishStructure,
-  structureLabel,
-  bosStatus,
   slicedData = [],
   botWeights
 }) => {
@@ -32,7 +26,7 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
   const baseAsset = ticker.baseAsset || (ticker.symbol ? ticker.symbol.replace(/USDT|BUSD|USDC/g, '') : 'ATIVO');
   const currentPrice = ticker.price ?? 0;
 
-  // Cálculo dinâmico do Volume Profile baseado nas velas visíveis no gráfico (Passo 1)
+  // Dynamic Volume Profile calculation based on visible candles
   const chartProfile = useMemo(() => {
     if (!slicedData || slicedData.length === 0) return null;
     const minP = Math.min(...slicedData.map(d => d.low));
@@ -63,7 +57,7 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
 
     const poc = minP + (maxBinIdx + 0.5) * step;
 
-    // Value area (70% do volume ao redor do POC)
+    // Value area (70% of total volume around POC)
     const targetVA = totalVol * 0.70;
     let accumulatedVA = maxBinVol;
     let upIdx = maxBinIdx;
@@ -108,7 +102,6 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
   const botCandles = botWeights?.volumeProfileCandles || 48;
   const botRows = botWeights?.volumeProfileRange || 50;
 
-  // Se o modo selecionado for gráfico e houver dados, usa o dinâmico; senão usa o do bot
   const activeProfile = (profileMode === 'chart' && chartProfile) ? {
     vah: chartProfile.vah,
     val: chartProfile.val,
@@ -138,14 +131,12 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
 
   const getDistancePct = (targetPrice: number) => {
     if (!currentPrice || !targetPrice) return null;
-    const diff = ((currentPrice - targetPrice) / targetPrice) * 100;
-    return diff;
+    return ((currentPrice - targetPrice) / targetPrice) * 100;
   };
 
   return (
-    <div className="space-y-4">
-      {/* Volume Profile Breakdown (Passo 1: Esclarecendo o Range e Fontes de Cálculo) */}
-      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3">
+    <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-3 font-mono flex flex-col justify-between">
+      <div>
         <div className="flex items-center justify-between border-b border-white/10 pb-2">
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-cyan-400" />
@@ -163,11 +154,11 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
         </div>
 
         {/* Toggle de Modo: Gráfico Visível vs Motor do Bot */}
-        <div className="grid grid-cols-2 gap-1 bg-[#050505] p-1 rounded border border-white/10 text-[10px]">
+        <div className="grid grid-cols-2 gap-1 bg-[#050505] p-1 rounded border border-white/10 text-[10px] mt-2.5">
           <button
             type="button"
             onClick={() => setProfileMode('chart')}
-            className={`py-1 px-2 rounded font-bold transition flex items-center justify-center gap-1 ${
+            className={`py-1 px-2 rounded font-bold transition flex items-center justify-center gap-1 truncate ${
               profileMode === 'chart'
                 ? 'bg-cyan-500 text-black shadow'
                 : 'text-neutral-400 hover:text-white'
@@ -178,7 +169,7 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
           <button
             type="button"
             onClick={() => setProfileMode('bot')}
-            className={`py-1 px-2 rounded font-bold transition flex items-center justify-center gap-1 ${
+            className={`py-1 px-2 rounded font-bold transition flex items-center justify-center gap-1 truncate ${
               profileMode === 'bot'
                 ? 'bg-cyan-500 text-black shadow'
                 : 'text-neutral-400 hover:text-white'
@@ -189,7 +180,7 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
         </div>
 
         {/* Caixa de Detalhes do Range Selecionado */}
-        <div className="bg-[#050505] p-2.5 rounded border border-white/5 space-y-1 text-[10px] font-mono text-neutral-400">
+        <div className="bg-[#050505] p-2.5 rounded border border-white/5 space-y-1 text-[10px] text-neutral-400 mt-2.5">
           <div className="flex justify-between items-center text-neutral-300">
             <span className="flex items-center gap-1">
               <Info className="h-3 w-3 text-cyan-400" />
@@ -204,8 +195,8 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
           </div>
 
           <div className="flex justify-between items-center">
-            <span>Resolução (Bins/Linhas):</span>
-            <span className="text-cyan-400 font-bold">{activeProfile.rows} linhas de preço</span>
+            <span>Resolução (Linhas):</span>
+            <span className="text-cyan-400 font-bold">{activeProfile.rows} níveis</span>
           </div>
 
           {activeProfile.minPrice !== undefined && activeProfile.maxPrice !== undefined && (
@@ -226,90 +217,100 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
             </div>
           )}
         </div>
-
-        {/* VAH, POC, VAL Cards */}
-        <div className="space-y-1.5 text-xs font-mono">
-          {/* VAH */}
-          <Tooltip
-            position="left"
-            title="Value Area High (VAH)"
-            badge="70% TETO"
-            content="Limite superior da Área de Valor (70% do volume negociado no período). Preços acima do VAH indicam expansão de alta ou busca por liquidez compradora."
-          >
-            <div className="flex justify-between items-center p-2 rounded bg-[#050505] border border-white/5 cursor-help">
-              <div>
-                <span className="text-neutral-400 block text-[10px]">VAH (Value Area High)</span>
-                <span className="font-extrabold text-neutral-200">{formatPrice(activeProfile.vah, { currency: true })}</span>
-              </div>
-              {(() => {
-                const dist = getDistancePct(activeProfile.vah);
-                if (dist === null) return null;
-                return (
-                  <span className={`text-[10px] font-bold ${dist >= 0 ? 'text-emerald-400' : 'text-neutral-400'}`}>
-                    {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
-                  </span>
-                );
-              })()}
-            </div>
-          </Tooltip>
-
-          {/* POC */}
-          <Tooltip
-            position="left"
-            title="Point of Control (POC)"
-            badge="PONTO DE CONTROLE"
-            content="Nível de preço com o maior volume negociado em todo o período. Atua como um ímã institucional para retração e referência de equilíbrio de mercado."
-          >
-            <div className="flex justify-between items-center p-2 rounded bg-cyan-500/10 border border-cyan-500/30 cursor-help">
-              <div>
-                <span className="text-cyan-400 font-bold block text-[10px]">POC (Point of Control)</span>
-                <span className="font-extrabold text-cyan-300">{formatPrice(activeProfile.poc, { currency: true })}</span>
-              </div>
-              {(() => {
-                const dist = getDistancePct(activeProfile.poc);
-                if (dist === null) return null;
-                return (
-                  <span className={`text-[10px] font-extrabold ${dist >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
-                  </span>
-                );
-              })()}
-            </div>
-          </Tooltip>
-
-          {/* VAL */}
-          <Tooltip
-            position="left"
-            title="Value Area Low (VAL)"
-            badge="70% PISO"
-            content="Limite inferior da Área de Valor (piso dos 70% de volume). Preços abaixo do VAL indicam desconto ou rompimento de baixa sem suporte prévio."
-          >
-            <div className="flex justify-between items-center p-2 rounded bg-[#050505] border border-white/5 cursor-help">
-              <div>
-                <span className="text-neutral-400 block text-[10px]">VAL (Value Area Low)</span>
-                <span className="font-extrabold text-neutral-200">{formatPrice(activeProfile.val, { currency: true })}</span>
-              </div>
-              {(() => {
-                const dist = getDistancePct(activeProfile.val);
-                if (dist === null) return null;
-                return (
-                  <span className={`text-[10px] font-bold ${dist >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
-                  </span>
-                );
-              })()}
-            </div>
-          </Tooltip>
-        </div>
       </div>
 
-      {/* Order Flow & OI Breakdown */}
-      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
+      {/* VAH, POC, VAL Cards */}
+      <div className="space-y-1.5 text-xs font-mono mt-2.5">
+        {/* VAH */}
+        <Tooltip
+          position="top"
+          title="Value Area High (VAH)"
+          badge="70% TETO"
+          content="Limite superior da Área de Valor (70% do volume negociado no período). Preços acima do VAH indicam expansão de alta ou busca por liquidez compradora."
+        >
+          <div className="flex justify-between items-center p-2 rounded bg-[#050505] border border-white/5 cursor-help">
+            <div>
+              <span className="text-neutral-400 block text-[10px]">VAH (Value Area High)</span>
+              <span className="font-extrabold text-neutral-200">{formatPrice(activeProfile.vah, { currency: true })}</span>
+            </div>
+            {(() => {
+              const dist = getDistancePct(activeProfile.vah);
+              if (dist === null) return null;
+              return (
+                <span className={`text-[10px] font-bold ${dist >= 0 ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                  {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
+                </span>
+              );
+            })()}
+          </div>
+        </Tooltip>
+
+        {/* POC */}
+        <Tooltip
+          position="top"
+          title="Point of Control (POC)"
+          badge="PONTO DE CONTROLE"
+          content="Nível de preço com o maior volume negociado em todo o período. Atua como um ímã institucional para retração e referência de equilíbrio de mercado."
+        >
+          <div className="flex justify-between items-center p-2 rounded bg-cyan-500/10 border border-cyan-500/30 cursor-help">
+            <div>
+              <span className="text-cyan-400 font-bold block text-[10px]">POC (Point of Control)</span>
+              <span className="font-extrabold text-cyan-300">{formatPrice(activeProfile.poc, { currency: true })}</span>
+            </div>
+            {(() => {
+              const dist = getDistancePct(activeProfile.poc);
+              if (dist === null) return null;
+              return (
+                <span className={`text-[10px] font-extrabold ${dist >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
+                </span>
+              );
+            })()}
+          </div>
+        </Tooltip>
+
+        {/* VAL */}
+        <Tooltip
+          position="top"
+          title="Value Area Low (VAL)"
+          badge="70% PISO"
+          content="Limite inferior da Área de Valor (piso dos 70% de volume). Preços abaixo do VAL indicam desconto ou rompimento de baixa sem suporte prévio."
+        >
+          <div className="flex justify-between items-center p-2 rounded bg-[#050505] border border-white/5 cursor-help">
+            <div>
+              <span className="text-neutral-400 block text-[10px]">VAL (Value Area Low)</span>
+              <span className="font-extrabold text-neutral-200">{formatPrice(activeProfile.val, { currency: true })}</span>
+            </div>
+            {(() => {
+              const dist = getDistancePct(activeProfile.val);
+              if (dist === null) return null;
+              return (
+                <span className={`text-[10px] font-bold ${dist >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {dist >= 0 ? `+${dist.toFixed(2)}%` : `${dist.toFixed(2)}%`}
+                </span>
+              );
+            })()}
+          </div>
+        </Tooltip>
+      </div>
+    </div>
+  );
+};
+
+export interface OrderFlowFundingCardProps {
+  ticker: TickerData;
+}
+
+export const OrderFlowFundingCard: React.FC<OrderFlowFundingCardProps> = ({ ticker }) => {
+  return (
+    <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5 font-mono flex flex-col justify-between">
+      <div>
         <div className="flex items-center gap-2 border-b border-white/10 pb-2">
           <Activity className="h-4 w-4 text-emerald-400" />
           <h3 className="text-xs font-bold text-white uppercase">Métricas de Order Flow & Funding</h3>
         </div>
-        <div className="space-y-2 text-xs">
+        
+        <div className="space-y-2 text-xs mt-2.5">
           <div>
             <div className="flex justify-between text-neutral-400 mb-1">
               <span>CVD (Delta Acumulado):</span>
@@ -339,16 +340,16 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5 pt-1">
+          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
             <div className="p-2 bg-[#050505] rounded border border-white/5">
               <span className="text-[10px] text-neutral-400 block">Funding Fee Atual</span>
-              <span className="font-extrabold text-white">
+              <span className="font-extrabold text-white text-xs">
                 {((ticker.fundingRate ?? 0) * 100).toFixed(4)}%
               </span>
             </div>
             <div className="p-2 bg-[#050505] rounded border border-white/5">
-              <span className="text-[10px] text-neutral-400 block">Funding Fee Diário</span>
-              <span className={`font-extrabold ${(ticker.fundingRate ?? 0) < 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+              <span className="text-[10px] text-neutral-400 block">Funding Diário</span>
+              <span className={`font-extrabold text-xs ${(ticker.fundingRate ?? 0) < 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
                 {((ticker.fundingRateDaily ?? (ticker.fundingRate ?? 0) * 3) * 100).toFixed(3)}%/d
               </span>
             </div>
@@ -360,33 +361,52 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
               {(ticker.fundingRateAnnualized ?? 0).toFixed(1)}% APR
             </span>
           </div>
-
-          {/* Análise do Comportamento do Funding Rate */}
-          <div className={`p-2.5 rounded border text-[11px] space-y-1 ${
-            ticker.fundingRateAnalysis?.status === 'EXTREME_NEGATIVE' || ticker.fundingRateAnalysis?.status === 'NEGATIVE'
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-              : ticker.fundingRateAnalysis?.status === 'EXTREME_POSITIVE' || ticker.fundingRateAnalysis?.status === 'POSITIVE'
-              ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-              : 'bg-neutral-900 border-white/10 text-neutral-300'
-          }`}>
-            <div className="flex items-center justify-between font-extrabold">
-              <span>ANALISADOR DE FUNDING</span>
-              <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
-                {ticker.fundingRateAnalysis?.bias ?? 'NEUTRAL'}
-              </span>
-            </div>
-            <div className="font-black text-[10px] uppercase">
-              {ticker.fundingRateAnalysis?.pressure ?? 'NEUTRO / EQUILIBRADO'}
-            </div>
-            <div className="text-[10px] opacity-90 leading-relaxed">
-              {ticker.fundingRateAnalysis?.description ?? 'Taxa de funding em equilíbrio normal.'}
-            </div>
-          </div>
         </div>
       </div>
 
-      {/* Divergence & Structure Analysis (Sniper) */}
-      <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5">
+      {/* Análise do Comportamento do Funding Rate */}
+      <div className={`p-2.5 rounded border text-[11px] space-y-1 mt-2.5 ${
+        ticker.fundingRateAnalysis?.status === 'EXTREME_NEGATIVE' || ticker.fundingRateAnalysis?.status === 'NEGATIVE'
+          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+          : ticker.fundingRateAnalysis?.status === 'EXTREME_POSITIVE' || ticker.fundingRateAnalysis?.status === 'POSITIVE'
+          ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+          : 'bg-neutral-900 border-white/10 text-neutral-300'
+      }`}>
+        <div className="flex items-center justify-between font-extrabold">
+          <span>ANALISADOR DE FUNDING</span>
+          <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
+            {ticker.fundingRateAnalysis?.bias ?? 'NEUTRAL'}
+          </span>
+        </div>
+        <div className="font-black text-[10px] uppercase">
+          {ticker.fundingRateAnalysis?.pressure ?? 'NEUTRO / EQUILIBRADO'}
+        </div>
+        <div className="text-[10px] opacity-90 leading-relaxed">
+          {ticker.fundingRateAnalysis?.description ?? 'Taxa de funding em equilíbrio normal.'}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export interface DivergenceStructureCardProps {
+  ticker: TickerData;
+  timeframe: string;
+  isBullishStructure: boolean;
+  structureLabel: string;
+  bosStatus: string;
+}
+
+export const DivergenceStructureCard: React.FC<DivergenceStructureCardProps> = ({
+  ticker,
+  timeframe,
+  isBullishStructure,
+  structureLabel,
+  bosStatus
+}) => {
+  return (
+    <div className="bg-[#0A0A0A] p-4 rounded-lg border border-white/10 shadow-xl space-y-2.5 font-mono flex flex-col justify-between">
+      <div>
         <div className="flex items-center justify-between border-b border-white/10 pb-2">
           <div className="flex items-center gap-2">
             <Target className="h-4 w-4 text-rose-400" />
@@ -394,7 +414,7 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
           </div>
         </div>
         
-        <div className="space-y-3 text-xs">
+        <div className="space-y-2.5 text-xs mt-2.5">
           {/* Divergence */}
           <div className="p-2.5 bg-[#050505] rounded border border-white/5 space-y-2 relative overflow-hidden">
             <div className={`absolute top-0 right-0 w-8 h-8 rounded-bl-full opacity-20 ${ticker.cvdDirection === 'BUY' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
@@ -434,6 +454,58 @@ export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
           </div>
         </div>
       </div>
+
+      <div className="p-2.5 bg-[#050505] rounded border border-white/5 text-[10px] text-neutral-400 space-y-1 mt-2.5">
+        <span className="font-bold text-neutral-300 block">Confluência Estrutural:</span>
+        <p className="leading-relaxed">
+          {isBullishStructure 
+            ? 'Topos e fundos ascendentes com quebra de estrutura altista. Favorece busca por retrações na Golden Pocket para posições compradas.'
+            : 'Topos e fundos descendentes com pressão vendedora contínua. Favorece operações de repique na retração para continuação de baixa.'}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export interface MarketProfileMetricsProps {
+  ticker: TickerData;
+  timeframe: string;
+  isBullishStructure: boolean;
+  structureLabel: string;
+  bosStatus: string;
+  slicedData?: ChartDataItem[];
+  botWeights?: {
+    volumeProfileRange?: number;
+    volumeProfileTimeframe?: string;
+    volumeProfileCandles?: number;
+  };
+}
+
+export const MarketProfileMetrics: React.FC<MarketProfileMetricsProps> = ({
+  ticker,
+  timeframe,
+  isBullishStructure,
+  structureLabel,
+  bosStatus,
+  slicedData = [],
+  botWeights
+}) => {
+  return (
+    <div className="space-y-4">
+      <VolumeProfileCard
+        ticker={ticker}
+        timeframe={timeframe}
+        slicedData={slicedData}
+        botWeights={botWeights}
+      />
+      <OrderFlowFundingCard ticker={ticker} />
+      <DivergenceStructureCard
+        ticker={ticker}
+        timeframe={timeframe}
+        isBullishStructure={isBullishStructure}
+        structureLabel={structureLabel}
+        bosStatus={bosStatus}
+      />
     </div>
   );
 };
