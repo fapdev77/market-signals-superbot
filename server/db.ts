@@ -2,6 +2,7 @@ import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { TradeSignal, IndicatorWeights, AIAuditReport, AIModelConfig } from '../src/types.js';
+import { getDefaultStrategyConfigs } from '../src/constants/strategyPresets.js';
 
 let db: Database | null = null;
 const dbFilePath = path.join(process.cwd(), 'data', 'superbot.sqlite');
@@ -326,11 +327,12 @@ export async function saveIndicatorWeights(weights: IndicatorWeights) {
 export async function getIndicatorWeights(): Promise<IndicatorWeights> {
   const database = await getDb();
   const res = database.exec(`SELECT weights FROM strategy_settings WHERE id = 1`);
-  const defaultWeights = {
+  const defaultWeights: IndicatorWeights = {
     activeStrategy: 'intraday' as const,
     strategyLabel: 'Intraday Equilibrado (30m)',
     multiStrategyMode: true,
     enabledStrategies: ['scalp', 'daytrade', 'intraday', 'swing', 'position'] as any[],
+    strategyConfigs: getDefaultStrategyConfigs(),
     volumeSurgeWeight: 15,
     openInterestWeight: 20,
     fundingRateWeight: 10,
@@ -352,7 +354,8 @@ export async function getIndicatorWeights(): Promise<IndicatorWeights> {
     ...defaultWeights,
     ...parsed,
     multiStrategyMode: parsed.multiStrategyMode !== undefined ? parsed.multiStrategyMode : true,
-    enabledStrategies: parsed.enabledStrategies || defaultWeights.enabledStrategies
+    enabledStrategies: parsed.enabledStrategies || defaultWeights.enabledStrategies,
+    strategyConfigs: parsed.strategyConfigs || defaultWeights.strategyConfigs
   };
 }
 

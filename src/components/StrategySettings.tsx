@@ -126,49 +126,90 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
   const [chosenScope, setChosenScope] = useState<'ALL_FUTURE' | 'RESET_AND_RESCAN' | 'RESET_ALL_AND_RESCAN'>('ALL_FUTURE');
   const [isApplying, setIsApplying] = useState(false);
 
-  // Sync state when props change
+  // Track if initial state from backend has been loaded
+  const hasInitializedRef = React.useRef(false);
+
+  // Only synchronize on initial mount or when backend weights arrive for the first time
   useEffect(() => {
-    setFormWeights(weights);
-    if (weights.activeStrategy) {
-      setActivePreset(weights.activeStrategy);
-    }
-    if (typeof weights.multiStrategyMode === 'boolean') {
-      setMultiStrategyMode(weights.multiStrategyMode);
-    }
-    if (weights.enabledStrategies && weights.enabledStrategies.length > 0) {
-      setEnabledStrategies(weights.enabledStrategies);
-    }
-    if (weights.strategyConfigs) {
-      setStrategyConfigs(weights.strategyConfigs);
+    if (!hasInitializedRef.current) {
+      if (weights.activeStrategy) {
+        setActivePreset(weights.activeStrategy);
+      }
+      if (typeof weights.multiStrategyMode === 'boolean') {
+        setMultiStrategyMode(weights.multiStrategyMode);
+      }
+      if (weights.enabledStrategies && weights.enabledStrategies.length > 0) {
+        setEnabledStrategies(weights.enabledStrategies);
+      }
+      if (weights.strategyConfigs && Object.keys(weights.strategyConfigs).length > 0) {
+        setStrategyConfigs(weights.strategyConfigs);
+      }
+      setFormWeights(weights);
+      hasInitializedRef.current = true;
     }
   }, [weights]);
 
-  // Handle toggling strategy in multi-strategy execution pool
-  const handleToggleStrategy = (key: StrategyKey) => {
+  // Handle toggling strategy in multi-strategy execution pool with immediate persistence
+  const handleToggleStrategy = async (key: StrategyKey) => {
     if (key === 'custom') return;
-    setEnabledStrategies(prev => {
-      const exists = prev.includes(key);
-      let next: StrategyKey[];
-      if (exists) {
-        if (prev.length <= 1) return prev; // Keep at least one active
-        next = prev.filter(k => k !== key);
-      } else {
-        next = [...prev, key];
-      }
-      return next;
-    });
 
-    setStrategyConfigs(prev => {
-      const current = prev[key] || STRATEGY_PRESETS[key as Exclude<StrategyKey, 'custom'>];
-      if (!current) return prev;
-      return {
-        ...prev,
-        [key]: {
-          ...current,
-          enabled: !enabledStrategies.includes(key)
-        }
-      };
-    });
+    const exists = enabledStrategies.includes(key);
+    if (exists && enabledStrategies.length <= 1) {
+      return; // Keep at least one active
+    }
+
+    const nextEnabled = exists
+      ? enabledStrategies.filter(k => k !== key)
+      : [...enabledStrategies, key];
+
+    const currentCfg = strategyConfigs[key] || STRATEGY_PRESETS[key as Exclude<StrategyKey, 'custom'>];
+    const nextConfigs: Record<string, StrategyConfigItem> = {
+      ...strategyConfigs,
+      [key]: {
+        ...currentCfg,
+        enabled: !exists
+      }
+    };
+
+    setEnabledStrategies(nextEnabled);
+    setStrategyConfigs(nextConfigs);
+
+    // Immediately persist toggle to the engine so polling doesn't revert it
+    const updatedPayload: IndicatorWeights = {
+      ...formWeights,
+      activeStrategy: activePreset,
+      strategyLabel: PRESET_METRICS[activePreset]?.label || 'Personalizado',
+      multiStrategyMode,
+      enabledStrategies: nextEnabled,
+      strategyConfigs: nextConfigs
+    };
+
+    try {
+      await onSaveWeights(updatedPayload, 'ALL_FUTURE');
+    } catch (err) {
+      console.error('Failed to auto-save strategy toggle:', err);
+    }
+  };
+
+  // Handle toggling multi-strategy mode with immediate persistence
+  const handleToggleMultiMode = async () => {
+    const nextMode = !multiStrategyMode;
+    setMultiStrategyMode(nextMode);
+
+    const updatedPayload: IndicatorWeights = {
+      ...formWeights,
+      activeStrategy: activePreset,
+      strategyLabel: PRESET_METRICS[activePreset]?.label || 'Personalizado',
+      multiStrategyMode: nextMode,
+      enabledStrategies,
+      strategyConfigs
+    };
+
+    try {
+      await onSaveWeights(updatedPayload, 'ALL_FUTURE');
+    } catch (err) {
+      console.error('Failed to auto-save multi-strategy mode:', err);
+    }
   };
 
   // Switch which strategy is actively being inspected/customized in the sliders
@@ -297,7 +338,7 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setMultiStrategyMode(!multiStrategyMode)}
+              onClick={handleToggleMultiMode}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border font-bold text-xs transition cursor-pointer ${
                 multiStrategyMode
                   ? 'bg-cyan-500/10 border-cyan-400 text-cyan-300 hover:bg-cyan-500/20'

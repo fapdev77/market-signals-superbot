@@ -10,7 +10,7 @@ import { TickerData, BotState, IndicatorWeights, StrategyCategory } from './src/
 import { createMarketRouter } from './server/routes/marketRoutes.js';
 import { createAIRouter } from './server/routes/aiRoutes.js';
 import { createBacktestRouter } from './server/routes/backtestRoutes.js';
-import { resolveActiveStrategies, configToWeights } from './src/constants/strategyPresets.js';
+import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
 
 // Prevent unhandled internal runtime assertions (e.g. Node 24 undici socket parser ERR_ASSERTION: false == true) from crashing the server
 process.on('uncaughtException', (err: any) => {
@@ -32,19 +32,7 @@ async function startServer() {
   app.use(express.json());
 
   // Default indicator weights and models for immediate startup
-  const defaultWeights: IndicatorWeights = {
-    volumeSurgeWeight: 15,
-    openInterestWeight: 20,
-    fundingRateWeight: 10,
-    cvdImbalanceWeight: 20,
-    fibonacciZoneWeight: 15,
-    rangePocWeight: 10,
-    supportResistanceWeight: 10,
-    minRiskRewardRatio: 3.0,
-    volumeProfileRange: 50,
-    volumeProfileTimeframe: '30m',
-    volumeProfileCandles: 48
-  };
+  const defaultWeights: IndicatorWeights = getDefaultIndicatorWeights();
 
   // In-memory active ticker state cache
   const tickerStateCache: Record<string, TickerData> = {};
@@ -306,14 +294,14 @@ async function startServer() {
                     if (active.direction === potentialSignal.direction) {
                       // Direction is the same in this category, so no new duplicate is needed
                       shouldInsert = false;
-                      
+
                       // Only update if validation status changed
                       if (active.validationStatus !== potentialSignal.validationStatus || active.validationStage !== potentialSignal.validationStage) {
                         active.validationStatus = potentialSignal.validationStatus;
                         active.validationStage = potentialSignal.validationStage;
                         active.candle1mConfirmed = potentialSignal.candle1mConfirmed;
                         active.candle5mConfirmed = potentialSignal.candle5mConfirmed;
-                        
+
                         if (active.validationStatus === 'CONFIRMED') {
                           active.validatedAt = Date.now();
                         } else if (active.validationStatus === 'REJECTED_SPIKE' || active.validationStatus === 'REJECTED_BACKTEST') {

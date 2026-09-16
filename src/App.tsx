@@ -107,7 +107,27 @@ export default function App() {
       const resB = await fetch('/api/bot/status');
       if (resB.ok) {
         const dataB: BotState = await resB.json();
-        setBotState(dataB);
+        setBotState(prev => {
+          const weightsSame = JSON.stringify(prev.weights) === JSON.stringify(dataB.weights);
+          const aiModelsSame = JSON.stringify(prev.aiModels) === JSON.stringify(dataB.aiModels);
+          if (
+            prev.isMonitoring === dataB.isMonitoring &&
+            prev.activeTickersCount === dataB.activeTickersCount &&
+            prev.ticksProcessed === dataB.ticksProcessed &&
+            prev.signalsGenerated24h === dataB.signalsGenerated24h &&
+            prev.aiAnalysisEnabled === dataB.aiAnalysisEnabled &&
+            prev.lastTickTime === dataB.lastTickTime &&
+            weightsSame &&
+            aiModelsSame
+          ) {
+            return prev;
+          }
+          return {
+            ...dataB,
+            weights: weightsSame ? prev.weights : dataB.weights,
+            aiModels: aiModelsSame ? prev.aiModels : dataB.aiModels
+          };
+        });
       }
     } catch (err) {
       console.error('Error fetching bot state:', err);
