@@ -64,7 +64,8 @@ export async function getDb(): Promise<Database> {
       created_at INTEGER,
       validated_at INTEGER,
       rejected_at INTEGER,
-      status TEXT
+      status TEXT,
+      strategy_category TEXT
     );
 
     CREATE TABLE IF NOT EXISTS ai_audits (
@@ -101,6 +102,11 @@ export async function getDb(): Promise<Database> {
   } catch {
     // Column may already exist
   }
+  try {
+    db.run(`ALTER TABLE trade_signals ADD COLUMN strategy_category TEXT;`);
+  } catch {
+    // Column may already exist
+  }
 
   saveDbToDisk();
   return db;
@@ -130,8 +136,8 @@ export async function saveSignal(signal: TradeSignal) {
       id, symbol, market_type, signal_type, direction, entry_min, entry_max,
       current_price, stop_loss, target1, target2, risk_reward, confluence_score,
       confluence_factors, timeframe, validation_status, validation_stage, 
-      candle_1m_confirmed, candle_5m_confirmed, ai_review, ai_confidence, created_at, validated_at, rejected_at, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      candle_1m_confirmed, candle_5m_confirmed, ai_review, ai_confidence, created_at, validated_at, rejected_at, status, strategy_category
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       signal.id,
       signal.symbol,
@@ -157,15 +163,20 @@ export async function saveSignal(signal: TradeSignal) {
       signal.createdAt,
       signal.validatedAt || (signal.validationStatus === 'CONFIRMED' ? signal.createdAt : null),
       signal.rejectedAt || (signal.validationStatus?.includes('REJECTED') ? signal.createdAt : null),
-      signal.status
+      signal.status,
+      signal.strategyCategory || 'INTRADAY'
     ]
   );
   saveDbToDisk();
 }
 
-export async function getActiveSignalsBySymbol(symbol: string): Promise<TradeSignal[]> {
+export async function getActiveSignalsBySymbol(symbol: string, category?: string): Promise<TradeSignal[]> {
   const database = await getDb();
-  const res = database.exec(`SELECT * FROM trade_signals WHERE symbol = '${symbol}' AND status = 'ACTIVE'`);
+  let query = `SELECT * FROM trade_signals WHERE symbol = '${symbol}' AND status = 'ACTIVE'`;
+  if (category) {
+    query += ` AND (strategy_category = '${category}' OR (strategy_category IS NULL AND '${category}' = 'INTRADAY'))`;
+  }
+  const res = database.exec(query);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
@@ -180,6 +191,7 @@ export async function getActiveSignalsBySymbol(symbol: string): Promise<TradeSig
       marketType: obj.market_type,
       signalType: obj.signal_type,
       direction: obj.direction,
+      strategyCategory: obj.strategy_category || 'INTRADAY',
       entryZone: [obj.entry_min, obj.entry_max],
       currentPrice: obj.current_price,
       stopLoss: obj.stop_loss,
@@ -201,6 +213,21 @@ export async function getActiveSignalsBySymbol(symbol: string): Promise<TradeSig
       status: obj.status
     };
   });
+}
+
+export async function expireActiveSignalsByCategory(category: string) {
+  const database = await getDb();
+  database.run(
+    `UPDATE trade_signals SET status = 'EXPIRED' WHERE (strategy_category = ? OR (strategy_category IS NULL AND ? = 'INTRADAY')) AND status = 'ACTIVE'`,
+    [category, category]
+  );
+  saveDbToDisk();
+}
+
+export async function expireAllActiveSignals() {
+  const database = await getDb();
+  database.run(`UPDATE trade_signals SET status = 'EXPIRED' WHERE status = 'ACTIVE'`);
+  saveDbToDisk();
 }
 
 export async function updateSignalStatus(id: string, status: string) {
@@ -231,6 +258,7 @@ export async function getRecentSignals(limit: number = 30): Promise<TradeSignal[
       marketType: obj.market_type,
       signalType: obj.signal_type,
       direction: obj.direction,
+      strategyCategory: obj.strategy_category || 'INTRADAY',
       entryZone: [obj.entry_min, obj.entry_max],
       currentPrice: obj.current_price,
       stopLoss: obj.stop_loss,
@@ -298,35 +326,34 @@ export async function saveIndicatorWeights(weights: IndicatorWeights) {
 export async function getIndicatorWeights(): Promise<IndicatorWeights> {
   const database = await getDb();
   const res = database.exec(`SELECT weights FROM strategy_settings WHERE id = 1`);
+  const defaultWeights = {
+    activeStrategy: 'intraday' as const,
+    strategyLabel: 'Intraday Equilibrado (30m)',
+    multiStrategyMode: true,
+    enabledStrategies: ['scalp', 'daytrade', 'intraday', 'swing', 'position'] as any[],
+    volumeSurgeWeight: 15,
+    openInterestWeight: 20,
+    fundingRateWeight: 10,
+    cvdImbalanceWeight: 20,
+    fibonacciZoneWeight: 15,
+    rangePocWeight: 10,
+    supportResistanceWeight: 10,
+    minRiskRewardRatio: 2.5,
+    volumeProfileRange: 50,
+    volumeProfileTimeframe: '30m',
+    volumeProfileCandles: 48
+  };
+
   if (!res.length || !res[0].values.length) {
-    return {
-      volumeSurgeWeight: 15,
-      openInterestWeight: 20,
-      fundingRateWeight: 10,
-      cvdImbalanceWeight: 20,
-      fibonacciZoneWeight: 15,
-      rangePocWeight: 10,
-      supportResistanceWeight: 10,
-      minRiskRewardRatio: 3.0,
-      volumeProfileRange: 50,
-      volumeProfileTimeframe: '30m',
-      volumeProfileCandles: 48
-    };
+    return defaultWeights;
   }
   const parsed = JSON.parse(res[0].values[0][0] as string);
-  if (parsed.minRiskRewardRatio === undefined) {
-    parsed.minRiskRewardRatio = 3.0;
-  }
-  if (parsed.volumeProfileRange === undefined) {
-    parsed.volumeProfileRange = 50;
-  }
-  if (!parsed.volumeProfileTimeframe) {
-    parsed.volumeProfileTimeframe = '30m';
-  }
-  if (!parsed.volumeProfileCandles) {
-    parsed.volumeProfileCandles = 48;
-  }
-  return parsed;
+  return {
+    ...defaultWeights,
+    ...parsed,
+    multiStrategyMode: parsed.multiStrategyMode !== undefined ? parsed.multiStrategyMode : true,
+    enabledStrategies: parsed.enabledStrategies || defaultWeights.enabledStrategies
+  };
 }
 
 export const defaultAIModels: AIModelConfig[] = [

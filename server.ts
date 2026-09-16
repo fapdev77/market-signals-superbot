@@ -6,10 +6,11 @@ import { DEFAULT_SYMBOLS, TRADFI_ASSETS, fetchBinanceFuturesTickers, fetchOpenIn
 import { initBinanceWebSocket, getWebSocketStatus } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels } from './server/db.js';
-import { TickerData, BotState, IndicatorWeights } from './src/types.js';
+import { TickerData, BotState, IndicatorWeights, StrategyCategory } from './src/types.js';
 import { createMarketRouter } from './server/routes/marketRoutes.js';
 import { createAIRouter } from './server/routes/aiRoutes.js';
 import { createBacktestRouter } from './server/routes/backtestRoutes.js';
+import { resolveActiveStrategies, configToWeights } from './src/constants/strategyPresets.js';
 
 // Prevent unhandled internal runtime assertions (e.g. Node 24 undici socket parser ERR_ASSERTION: false == true) from crashing the server
 process.on('uncaughtException', (err: any) => {
@@ -200,8 +201,8 @@ async function startServer() {
    * Continuous Tick-by-Tick Market Monitoring Loop
    */
   let isMarketTickRunning = false;
-  async function runMarketTick() {
-    if (!botState.isMonitoring || isMarketTickRunning) return;
+  async function runMarketTick(forced = false) {
+    if ((!botState.isMonitoring && !forced) || isMarketTickRunning) return;
     isMarketTickRunning = true;
 
     try {
@@ -225,59 +226,115 @@ async function startServer() {
               quoteVolume: '4100000000'
             };
 
-            // Fetch Kline, Open Interest, Funding Rate (Passo 3: default 30m, 48 velas = 24h)
-            const vpTf = weights.volumeProfileTimeframe || '30m';
-            const vpCandles = weights.volumeProfileCandles || 48;
-            const klines = await fetchKlines(symbol, vpTf, vpCandles);
+            // Fetch primary/baseline Kline, Open Interest, Funding Rate
+            const primaryTf = weights.volumeProfileTimeframe || '30m';
+            const primaryCandles = weights.volumeProfileCandles || 48;
+            const primaryKlines = await fetchKlines(symbol, primaryTf, primaryCandles);
             const { openInterest } = await fetchOpenInterest(symbol);
             const { fundingRate } = await fetchFundingRate(symbol);
+            const currentOi = openInterest || (parseFloat(raw.lastPrice || '100') * 50000);
 
-            // Process quantitative state
+            // Process quantitative state for primary ticker display
             const processed = processTickerState(
               raw,
-              klines,
-              openInterest || (parseFloat(raw.lastPrice || '100') * 50000),
+              primaryKlines,
+              currentOi,
               fundingRate,
               weights
             );
 
             tickerStateCache[symbol] = processed;
 
-            // Generate signal if high confluence with 1m & 5m validation
-            const potentialSignal = buildTradeSignal(processed, klines, weights.minRiskRewardRatio);
-            if (potentialSignal) {
-              const activeSignals = await getActiveSignalsBySymbol(symbol);
-              let shouldInsert = true;
-
-              for (const active of activeSignals) {
-                if (active.direction === potentialSignal.direction) {
-                  // Direction is the same, so no new signal is needed
-                  shouldInsert = false;
-                  
-                  // Only update if validation status changed (e.g. from PENDING to CONFIRMED or REJECTED)
-                  if (active.validationStatus !== potentialSignal.validationStatus || active.validationStage !== potentialSignal.validationStage) {
-                    active.validationStatus = potentialSignal.validationStatus;
-                    active.validationStage = potentialSignal.validationStage;
-                    active.candle1mConfirmed = potentialSignal.candle1mConfirmed;
-                    active.candle5mConfirmed = potentialSignal.candle5mConfirmed;
-                    
-                    if (active.validationStatus === 'CONFIRMED') {
-                      active.validatedAt = Date.now();
-                    } else if (active.validationStatus === 'REJECTED_SPIKE' || active.validationStatus === 'REJECTED_BACKTEST') {
-                      active.rejectedAt = Date.now();
-                      active.status = 'EXPIRED';
-                    }
-                    await updateSignal(active);
-                  }
-                } else {
-                  // Direction changed! The old signal is no longer valid
-                  await updateSignalStatus(active.id, 'EXPIRED');
+            // Target / Stop Loss tracker for existing active signals of this symbol across all categories
+            const allActiveForSymbol = await getActiveSignalsBySymbol(symbol);
+            for (const active of allActiveForSymbol) {
+              const currentPrice = processed.price;
+              active.currentPrice = currentPrice;
+              if (active.direction === 'LONG') {
+                if (currentPrice >= active.target2) {
+                  active.status = 'TARGET_REACHED';
+                  await updateSignal(active);
+                } else if (currentPrice <= active.stopLoss) {
+                  active.status = 'STOPPED_OUT';
+                  await updateSignal(active);
+                }
+              } else {
+                if (currentPrice <= active.target2) {
+                  active.status = 'TARGET_REACHED';
+                  await updateSignal(active);
+                } else if (currentPrice >= active.stopLoss) {
+                  active.status = 'STOPPED_OUT';
+                  await updateSignal(active);
                 }
               }
+            }
 
-              if (shouldInsert && potentialSignal.validationStatus !== 'REJECTED_SPIKE') {
-                await saveSignal(potentialSignal);
-                botState.signalsGenerated24h++;
+            // CONCURRENT MULTI-STRATEGY EVALUATION:
+            // Evaluate all active/enabled strategies in parallel (e.g. SCALP 5m, DAY TRADE 15m, INTRADAY 30m, SWING 1h, POSITION 4h)
+            const activeStrategies = resolveActiveStrategies(weights);
+
+            for (const strat of activeStrategies) {
+              try {
+                // Fetch strategy specific klines (5m, 15m, 30m, 1h, 4h) with 10s memory cache
+                const stratKlines = (strat.timeframe === primaryTf && strat.candles === primaryCandles)
+                  ? primaryKlines
+                  : await fetchKlines(symbol, strat.timeframe, strat.candles);
+
+                const stratWeights = configToWeights(strat);
+                const stratProcessed = processTickerState(
+                  raw,
+                  stratKlines,
+                  currentOi,
+                  fundingRate,
+                  stratWeights
+                );
+
+                const potentialSignal = buildTradeSignal(
+                  stratProcessed,
+                  stratKlines,
+                  strat.minRiskRewardRatio,
+                  strat.category,
+                  strat.timeframe
+                );
+
+                if (potentialSignal) {
+                  // Check active signals for THIS symbol AND THIS strategy category
+                  const activeCategorySignals = await getActiveSignalsBySymbol(symbol, strat.category);
+                  let shouldInsert = true;
+
+                  for (const active of activeCategorySignals) {
+                    if (active.direction === potentialSignal.direction) {
+                      // Direction is the same in this category, so no new duplicate is needed
+                      shouldInsert = false;
+                      
+                      // Only update if validation status changed
+                      if (active.validationStatus !== potentialSignal.validationStatus || active.validationStage !== potentialSignal.validationStage) {
+                        active.validationStatus = potentialSignal.validationStatus;
+                        active.validationStage = potentialSignal.validationStage;
+                        active.candle1mConfirmed = potentialSignal.candle1mConfirmed;
+                        active.candle5mConfirmed = potentialSignal.candle5mConfirmed;
+                        
+                        if (active.validationStatus === 'CONFIRMED') {
+                          active.validatedAt = Date.now();
+                        } else if (active.validationStatus === 'REJECTED_SPIKE' || active.validationStatus === 'REJECTED_BACKTEST') {
+                          active.rejectedAt = Date.now();
+                          active.status = 'EXPIRED';
+                        }
+                        await updateSignal(active);
+                      }
+                    } else {
+                      // Direction changed within this category! The old signal of this category is expired
+                      await updateSignalStatus(active.id, 'EXPIRED');
+                    }
+                  }
+
+                  if (shouldInsert && potentialSignal.validationStatus !== 'REJECTED_SPIKE') {
+                    await saveSignal(potentialSignal);
+                    botState.signalsGenerated24h++;
+                  }
+                }
+              } catch (stratErr) {
+                // Keep resilient per strategy
               }
             }
           } catch (symErr) {
@@ -380,8 +437,11 @@ async function startServer() {
   // Modular Route Handlers
   const getBotState = () => botState;
   const getTickerCache = () => tickerStateCache;
+  const triggerMarketScan = async () => {
+    await runMarketTick(true);
+  };
 
-  app.use('/api', createMarketRouter(getBotState, getTickerCache));
+  app.use('/api', createMarketRouter(getBotState, getTickerCache, triggerMarketScan));
   app.use('/api/ai', createAIRouter(getBotState, getTickerCache));
   app.use('/api/backtest', createBacktestRouter(getBotState));
 

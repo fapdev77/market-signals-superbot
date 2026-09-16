@@ -92,12 +92,15 @@ export interface KlineCandle {
   quoteVolume?: number;
 }
 
+export type StrategyCategory = 'SCALP' | 'DAY_TRADE' | 'INTRADAY' | 'SWING' | 'POSITION' | 'CUSTOM';
+
 export interface TradeSignal {
   id: string;
   symbol: string;
   marketType: MarketType;
   signalType: 'STRONG_LONG' | 'LONG' | 'NEUTRAL' | 'SHORT' | 'STRONG_SHORT';
   direction: 'LONG' | 'SHORT';
+  strategyCategory?: StrategyCategory;
   entryZone: [number, number];       // [min, max]
   currentPrice: number;
   stopLoss: number;
@@ -131,7 +134,32 @@ export interface TradeSignal {
   status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
 }
 
+export type StrategyKey = 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'custom';
+
+export interface StrategyConfigItem {
+  key: StrategyKey;
+  label: string;
+  enabled: boolean;
+  category: StrategyCategory;
+  timeframe: string;
+  candles: number;
+  minRiskRewardRatio: number;
+  volumeSurgeWeight: number;
+  openInterestWeight: number;
+  fundingRateWeight: number;
+  cvdImbalanceWeight: number;
+  fibonacciZoneWeight: number;
+  rangePocWeight: number;
+  supportResistanceWeight: number;
+  volumeProfileRange: number;
+}
+
 export interface IndicatorWeights {
+  activeStrategy?: 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'custom';
+  strategyLabel?: string;
+  multiStrategyMode?: boolean;       // Se true, roda todas as estratégias habilitadas concorrentemente
+  enabledStrategies?: StrategyKey[];  // Lista de estratégias ativas em paralelo no motor
+  strategyConfigs?: Partial<Record<StrategyKey, StrategyConfigItem>>;
   volumeSurgeWeight: number;        // default 15
   openInterestWeight: number;       // default 20
   fundingRateWeight: number;        // default 10

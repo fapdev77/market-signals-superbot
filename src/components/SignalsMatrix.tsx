@@ -33,6 +33,7 @@ export type SortOption =
   | 'oldest';
 
 export type AssetClassFilter = 'ALL' | 'crypto_futures' | 'crypto_spot' | 'tradfi';
+export type CategoryFilter = 'ALL' | 'SCALP' | 'DAY_TRADE' | 'INTRADAY' | 'SWING' | 'POSITION';
 
 export type TriggerFilter = 
   | 'ALL'
@@ -60,6 +61,9 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
   const [validationFilter, setValidationFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING' | 'REJECTED'>('ALL');
   
+  // Strategy Category filter
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('ALL');
+
   // New search, sort, asset class & indicator trigger filters
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<SortOption>('confidence_desc');
@@ -135,11 +139,31 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     }
   };
 
+  // Category counts
+  const categoryCounts = useMemo(() => {
+    const counts = {
+      ALL: (signals || []).length,
+      SCALP: 0,
+      DAY_TRADE: 0,
+      INTRADAY: 0,
+      SWING: 0,
+      POSITION: 0
+    };
+    (signals || []).forEach(s => {
+      const cat = (s.strategyCategory || 'INTRADAY') as keyof typeof counts;
+      if (counts[cat] !== undefined) {
+        counts[cat]++;
+      }
+    });
+    return counts;
+  }, [signals]);
+
   // Has any active custom filter?
   const hasActiveFilters = 
     searchQuery.trim() !== '' ||
     sortBy !== 'confidence_desc' ||
     assetClassFilter !== 'ALL' ||
+    categoryFilter !== 'ALL' ||
     triggerFilter !== 'ALL' ||
     directionFilter !== 'ALL' ||
     validationFilter !== 'ALL';
@@ -148,6 +172,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     setSearchQuery('');
     setSortBy('confidence_desc');
     setAssetClassFilter('ALL');
+    setCategoryFilter('ALL');
     setTriggerFilter('ALL');
     setDirectionFilter('ALL');
     setValidationFilter('ALL');
@@ -157,6 +182,12 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
   const processedSignals = useMemo(() => {
     const filtered = (signals || []).filter(s => {
       if (!s) return false;
+
+      // Strategy Category Filter
+      if (categoryFilter !== 'ALL') {
+        const cat = s.strategyCategory || 'INTRADAY';
+        if (cat !== categoryFilter) return false;
+      }
 
       // Direction Filter
       if (directionFilter !== 'ALL' && s.direction !== directionFilter) return false;
@@ -371,6 +402,74 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
               </button>
             </Tooltip>
           </div>
+        </div>
+
+        {/* Strategy Categories Bar */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-white/5 w-full">
+          <span className="text-[9px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+            <Layers className="h-3 w-3 text-cyan-400" />
+            Estratégia:
+          </span>
+          <button
+            onClick={() => setCategoryFilter('ALL')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+              categoryFilter === 'ALL'
+                ? 'bg-cyan-500 text-black shadow'
+                : 'bg-[#050505] text-neutral-400 hover:text-white border border-white/5'
+            }`}
+          >
+            Todas ({categoryCounts.ALL})
+          </button>
+          <button
+            onClick={() => setCategoryFilter('SCALP')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              categoryFilter === 'SCALP'
+                ? 'bg-purple-500 text-black shadow'
+                : 'bg-[#050505] text-purple-400 hover:text-purple-300 border border-purple-500/20'
+            }`}
+          >
+            ⚡ Scalp ({categoryCounts.SCALP})
+          </button>
+          <button
+            onClick={() => setCategoryFilter('DAY_TRADE')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              categoryFilter === 'DAY_TRADE'
+                ? 'bg-blue-500 text-black shadow'
+                : 'bg-[#050505] text-blue-400 hover:text-blue-300 border border-blue-500/20'
+            }`}
+          >
+            🎯 Day Trade ({categoryCounts.DAY_TRADE})
+          </button>
+          <button
+            onClick={() => setCategoryFilter('INTRADAY')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              categoryFilter === 'INTRADAY'
+                ? 'bg-emerald-500 text-black shadow'
+                : 'bg-[#050505] text-emerald-400 hover:text-emerald-300 border border-emerald-500/20'
+            }`}
+          >
+            ⏱️ Intraday ({categoryCounts.INTRADAY})
+          </button>
+          <button
+            onClick={() => setCategoryFilter('SWING')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              categoryFilter === 'SWING'
+                ? 'bg-amber-500 text-black shadow'
+                : 'bg-[#050505] text-amber-400 hover:text-amber-300 border border-amber-500/20'
+            }`}
+          >
+            📈 Swing ({categoryCounts.SWING})
+          </button>
+          <button
+            onClick={() => setCategoryFilter('POSITION')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              categoryFilter === 'POSITION'
+                ? 'bg-indigo-500 text-black shadow'
+                : 'bg-[#050505] text-indigo-400 hover:text-indigo-300 border border-indigo-500/20'
+            }`}
+          >
+            🌐 Position ({categoryCounts.POSITION})
+          </button>
         </div>
       </div>
 
@@ -650,6 +749,28 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                         }
                       >
                         {assetClassBadge}
+                      </Tooltip>
+
+                      {/* Strategy Category Badge */}
+                      <Tooltip
+                        position="top"
+                        title={`Estratégia: ${s.strategyCategory || 'INTRADAY'}`}
+                        badge={`TIMEFRAME ${s.timeframe || '30m'}`}
+                        content={`Sinal gerado pela estratégia ${s.strategyCategory || 'INTRADAY'} (${s.timeframe || '30m'}). Opera de forma independente de outros sinais deste par.`}
+                      >
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase border cursor-help ${
+                          s.strategyCategory === 'SCALP'
+                            ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
+                            : s.strategyCategory === 'DAY_TRADE'
+                            ? 'bg-blue-500/15 text-blue-300 border-blue-500/40'
+                            : s.strategyCategory === 'SWING'
+                            ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                            : s.strategyCategory === 'POSITION'
+                            ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40'
+                            : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                        }`}>
+                          ⚡ {s.strategyCategory || 'INTRADAY'} ({s.timeframe || '30m'})
+                        </span>
                       </Tooltip>
 
                       {/* Direction & Signal Type Badge */}

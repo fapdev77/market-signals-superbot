@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { getBinanceLogs } from '../binanceWebsocket.js';
 import { fetchKlines } from '../binanceService.js';
-import { getRecentSignals, saveIndicatorWeights, saveAIModels } from '../db.js';
-import { TickerData, BotState } from '../../src/types.js';
+import { getRecentSignals, saveIndicatorWeights, saveAIModels, expireActiveSignalsByCategory, expireAllActiveSignals } from '../db.js';
+import { TickerData, BotState, StrategyCategory } from '../../src/types.js';
 
 export function createMarketRouter(
   getBotState: () => BotState,
-  getTickerCache: () => Record<string, TickerData>
+  getTickerCache: () => Record<string, TickerData>,
+  triggerMarketScan?: (options?: { resetCategory?: string }) => Promise<void>
 ): Router {
   const router = Router();
 
@@ -74,10 +75,55 @@ export function createMarketRouter(
 
   router.post('/settings/weights', async (req: Request, res: Response) => {
     const botState = getBotState();
-    const newWeights = req.body;
-    botState.weights = { ...botState.weights, ...newWeights };
+    const payload = req.body || {};
+    
+    // Support either direct weights or { weights, scope, activeStrategy }
+    const newWeights = payload.weights ? payload.weights : payload;
+    const scope = payload.scope || 'ALL_FUTURE'; // 'ALL_FUTURE' | 'RESET_AND_RESCAN'
+    const activeStrategy = payload.activeStrategy || newWeights.activeStrategy || botState.weights.activeStrategy || 'intraday';
+
+    botState.weights = { 
+      ...botState.weights, 
+      ...newWeights, 
+      activeStrategy 
+    };
+    
     await saveIndicatorWeights(botState.weights);
-    res.json({ success: true, weights: botState.weights });
+
+    // Map strategy to category
+    const categoryMap: Record<string, StrategyCategory> = {
+      scalp: 'SCALP',
+      daytrade: 'DAY_TRADE',
+      intraday: 'INTRADAY',
+      swing: 'SWING',
+      position: 'POSITION',
+      custom: 'CUSTOM'
+    };
+    const targetCategory = categoryMap[activeStrategy] || 'INTRADAY';
+
+    // If scope is RESET_AND_RESCAN, expire current active signals
+    if (scope === 'RESET_AND_RESCAN') {
+      if (payload.resetCategory === 'ALL') {
+        await expireAllActiveSignals();
+      } else {
+        await expireActiveSignalsByCategory(targetCategory);
+      }
+    }
+
+    // Trigger immediate market scan if handler is provided
+    if (triggerMarketScan) {
+      triggerMarketScan({ resetCategory: scope === 'RESET_AND_RESCAN' ? (payload.resetCategory || targetCategory) : undefined }).catch(err => {
+        console.warn('Immediate market scan error:', err);
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      weights: botState.weights,
+      activeStrategy,
+      strategyCategory: targetCategory,
+      scope
+    });
   });
 
   // Settings: AI Models

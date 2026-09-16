@@ -211,6 +211,33 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </Tooltip>
 
+          <Tooltip
+            position="bottom"
+            title="Estratégia Quantitativa do Motor"
+            badge={botState.weights?.multiStrategyMode !== false ? "MULTI-CONCORRENTE" : "ESTRATÉGIA ÚNICA"}
+            content={
+              botState.weights?.multiStrategyMode !== false
+                ? `Motor Multi-Estratégia CONCORRENTE ATIVO! O robô avalia simultaneamente todas as estratégias habilitadas (${(botState.weights?.enabledStrategies || ['scalp', 'daytrade', 'intraday', 'swing', 'position']).map(s => s.toUpperCase()).join(', ')}) para cada par a cada tick, gerando oportunidades independentes em 5m, 15m, 30m, 1h e 4h.`
+                : `Modo foco único: ${botState.weights?.strategyLabel || botState.weights?.activeStrategy?.toUpperCase() || 'INTRADAY'}. Clique para gerenciar ou ativar o modo multi-estratégia concorrente.`
+            }
+          >
+            <div
+              onClick={() => handleSelectTab('settings')}
+              className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded border cursor-pointer transition shrink-0 text-cyan-400 bg-cyan-500/10 border-cyan-500/20 hover:bg-cyan-500/20"
+            >
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+              </span>
+              <span className="text-neutral-400">ESTRATÉGIAS:</span>
+              <span className="text-white uppercase font-black">
+                {botState.weights?.multiStrategyMode !== false 
+                  ? `MULTI (${(botState.weights?.enabledStrategies || ['scalp', 'daytrade', 'intraday', 'swing', 'position']).length} ATIVAS)`
+                  : (botState.weights?.activeStrategy || 'intraday')}
+              </span>
+            </div>
+          </Tooltip>
+
           <div className="flex items-center gap-4 text-neutral-300 text-[11px]">
             {topTickers.map(t => (
               <Tooltip

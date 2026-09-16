@@ -204,17 +204,26 @@ export async function fetchFundingRate(symbol: string): Promise<{ fundingRate: n
   return { fundingRate: cached?.value ?? 0.0001 };
 }
 
+// Memory cache for Klines with 10s TTL to optimize multi-strategy concurrent evaluations
+const klineCache: Record<string, { candles: KlineCandle[]; timestamp: number }> = {};
+
 /**
- * Fetches Kline / Candlestick data (e.g. 15m / 1h)
+ * Fetches Kline / Candlestick data (e.g. 5m, 15m, 30m, 1h, 4h)
  */
 export async function fetchKlines(symbol: string, interval: string = '15m', limit: number = 50): Promise<KlineCandle[]> {
+  const cacheKey = `${symbol}_${interval}_${limit}`;
+  const now = Date.now();
+  if (klineCache[cacheKey] && (now - klineCache[cacheKey].timestamp < 10000)) {
+    return klineCache[cacheKey].candles;
+  }
+
   try {
     const { data } = await fetchWithFallback(
       (ep) => `${ep.klinePath}?symbol=${symbol}&interval=${interval}&limit=${limit}`
     );
 
-    if (Array.isArray(data)) {
-      return data.map((k: any) => ({
+    if (Array.isArray(data) && data.length > 0) {
+      const candles: KlineCandle[] = data.map((k: any) => ({
         timestamp: k[0],
         open: parseFloat(k[1]),
         high: parseFloat(k[2]),
@@ -223,11 +232,15 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
         volume: parseFloat(k[5]),
         takerBuyVolume: parseFloat(k[9]) || parseFloat(k[5]) * 0.52
       }));
+      klineCache[cacheKey] = { candles, timestamp: now };
+      return candles;
     }
   } catch (err) {
     // Fallback to synthetic kline candles
   }
-  return generateFallbackKlines(symbol, limit);
+  const fallback = generateFallbackKlines(symbol, limit);
+  klineCache[cacheKey] = { candles: fallback, timestamp: now };
+  return fallback;
 }
 
 /**

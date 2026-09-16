@@ -1,4 +1,4 @@
-import { TickerData, TradeSignal, IndicatorWeights, KlineCandle } from '../src/types.js';
+import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory } from '../src/types.js';
 import { calculateVolumeProfile, calculateFibonacci, detectFVG } from './binanceService.js';
 
 export function normalizePricePrecision(value: number | null | undefined): number {
@@ -283,7 +283,13 @@ export function processTickerState(
  * Builds an actionable TradeSignal object with Risk/Reward parameters
  * and performs 1m & 5m Multi-Timeframe Validation to prevent false spike entries.
  */
-export function buildTradeSignal(ticker: TickerData, klines: KlineCandle[] = [], minRiskRewardRatio: number = 3.0): TradeSignal | null {
+export function buildTradeSignal(
+  ticker: TickerData,
+  klines: KlineCandle[] = [],
+  minRiskRewardRatio: number = 2.5,
+  strategyCategory: StrategyCategory = 'INTRADAY',
+  customTimeframe?: string
+): TradeSignal | null {
   if (ticker.signalType === 'NEUTRAL' || ticker.confluenceScore < 50) {
     return null;
   }
@@ -296,12 +302,49 @@ export function buildTradeSignal(ticker: TickerData, klines: KlineCandle[] = [],
   const entryMin = isLong ? price - entrySpread : price;
   const entryMax = isLong ? price : price + entrySpread;
 
-  // Stop loss placed beyond key structure / Golden pocket / VAL/VAH
-  const slDist = price * 0.015;
+  // Stop loss distance scaled by strategy category
+  let slPct = 0.015;
+  let tf = customTimeframe || '30m';
+  let categoryPrefix = 'INTRA';
+
+  switch (strategyCategory) {
+    case 'SCALP':
+      slPct = 0.008; // 0.8% stop mais curto para micro scalp
+      tf = customTimeframe || '5m';
+      categoryPrefix = 'SCALP';
+      break;
+    case 'DAY_TRADE':
+      slPct = 0.012; // 1.2% para Day Trade
+      tf = customTimeframe || '15m';
+      categoryPrefix = 'DAY';
+      break;
+    case 'INTRADAY':
+      slPct = 0.015; // 1.5% para Intraday
+      tf = customTimeframe || '30m';
+      categoryPrefix = 'INTRA';
+      break;
+    case 'SWING':
+      slPct = 0.025; // 2.5% para Swing Trade
+      tf = customTimeframe || '1h / 4h';
+      categoryPrefix = 'SWING';
+      break;
+    case 'POSITION':
+      slPct = 0.040; // 4.0% para Position Trade
+      tf = customTimeframe || '4h / 1d';
+      categoryPrefix = 'POS';
+      break;
+    case 'CUSTOM':
+      slPct = 0.015;
+      tf = customTimeframe || '15m';
+      categoryPrefix = 'CUST';
+      break;
+  }
+
+  const slDist = price * slPct;
   const stopLoss = isLong ? Math.min(ticker.keyLevels.support1, price - slDist) : Math.max(ticker.keyLevels.resistance1, price + slDist);
 
   // Targets based on natural R:R constraints
-  const riskAmount = Math.abs(price - stopLoss) || (price * 0.01);
+  const riskAmount = Math.abs(price - stopLoss) || (price * slPct);
   
   // Natural targets based on market structure
   let target1 = isLong ? ticker.keyLevels.resistance1 : ticker.keyLevels.support1;
@@ -392,11 +435,12 @@ export function buildTradeSignal(ticker: TickerData, klines: KlineCandle[] = [],
   }
 
   return {
-    id: `${ticker.symbol}-${ticker.signalType}-${Date.now().toString(36)}`,
+    id: `${ticker.symbol}-${categoryPrefix}-${ticker.signalType}-${Date.now().toString(36)}`,
     symbol: ticker.symbol,
     marketType: ticker.marketType,
     signalType: ticker.signalType,
     direction: isLong ? 'LONG' : 'SHORT',
+    strategyCategory,
     entryZone: [normalizePricePrecision(entryMin), normalizePricePrecision(entryMax)],
     currentPrice: normalizePricePrecision(price),
     stopLoss: normalizePricePrecision(stopLoss),
@@ -405,7 +449,7 @@ export function buildTradeSignal(ticker: TickerData, klines: KlineCandle[] = [],
     riskRewardRatio,
     confluenceScore: ticker.confluenceScore,
     confluenceFactors: ticker.confluenceFactors,
-    timeframe: '1m / 5m / 15m',
+    timeframe: tf,
     
     validationStatus,
     validationStage,

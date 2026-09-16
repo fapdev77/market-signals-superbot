@@ -149,15 +149,22 @@ export default function App() {
     }
   };
 
-  const handleSaveWeights = async (newWeights: IndicatorWeights) => {
+  const handleSaveWeights = async (newWeights: IndicatorWeights, scope?: 'ALL_FUTURE' | 'RESET_AND_RESCAN' | 'RESET_ALL_AND_RESCAN') => {
     try {
       const res = await fetch('/api/settings/weights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newWeights)
+        body: JSON.stringify({
+          weights: newWeights,
+          scope: (scope === 'RESET_ALL_AND_RESCAN' ? 'RESET_AND_RESCAN' : scope) || 'ALL_FUTURE',
+          resetCategory: scope === 'RESET_ALL_AND_RESCAN' ? 'ALL' : undefined,
+          activeStrategy: newWeights.activeStrategy
+        })
       });
       if (res.ok) {
-        setBotState(prev => ({ ...prev, weights: newWeights }));
+        const data = await res.json();
+        setBotState(prev => ({ ...prev, weights: data.weights || newWeights }));
+        await fetchData();
       }
     } catch (err) {
       console.error('Failed to save weights:', err);
