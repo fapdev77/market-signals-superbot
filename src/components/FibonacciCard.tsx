@@ -806,7 +806,7 @@ export const FibonacciCard: React.FC<FibonacciCardProps> = ({
         >
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-neutral-300 font-bold uppercase group-hover:text-white transition">
-              Níveis / Ratios & Distância
+              Nível / Ratio • Cotação & Distância
             </span>
             <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/5 text-neutral-400 font-bold border border-white/5">
               8 níveis

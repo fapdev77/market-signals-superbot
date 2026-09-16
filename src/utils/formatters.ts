@@ -1,8 +1,25 @@
 /**
  * Utility helper para formatação inteligente de preços, percentuais e valores numéricos no SuperBot AI.
- * Suporta ativos de valor ultrabaixo (ex: PEPE, SHIB, BONK) com até 10 casas decimais dinâmicas,
- * evitando exibições truncadas como "$0.0000".
+ * Suporta ativos de valor ultrabaixo (ex: PEPE, SHIB, BONK) com até 12 casas decimais dinâmicas,
+ * evitando exibições truncadas como "$0.00" ou perdas de precisão em cálculos.
  */
+
+/**
+ * Normaliza e preserva a precisão de preços de ativos sem truncar prematuramente,
+ * garantindo que moedas com valores diminutos (ex: PEPE = 0.00001234) mantenham seus dígitos
+ * significativos em vez de serem arredondadas para 0.
+ */
+export function normalizePricePrecision(value: number | null | undefined): number {
+  if (value === null || value === undefined || isNaN(value)) return 0;
+  const abs = Math.abs(value);
+  if (abs === 0) return 0;
+  if (abs >= 1000) return parseFloat(value.toFixed(2));
+  if (abs >= 50) return parseFloat(value.toFixed(3));
+  if (abs >= 1) return parseFloat(value.toFixed(4));
+  const leadingZeros = Math.floor(-Math.log10(abs));
+  const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
+  return parseFloat(value.toFixed(decimals));
+}
 
 export function formatPrice(
   value: number | null | undefined, 
@@ -31,23 +48,31 @@ export function formatPrice(
       minimumFractionDigits: options?.minDecimals ?? 2,
       maximumFractionDigits: options?.maxDecimals ?? 2
     })}`;
-  } else if (absValue >= 10) {
+  } else if (absValue >= 50) {
     decimals = 2;
   } else if (absValue >= 1) {
     decimals = 3;
   } else {
-    // Para ativos com valor < 1 (ex: PEPEUSDT = 0.00001234, SHIB = 0.00000854)
+    // Para ativos com valor < 1 (ex: PEPEUSDT = 0.00001234, SHIB = 0.00000854, BONK)
     // Calcula zeros à esquerda após o ponto decimal
     const leadingZeros = Math.floor(-Math.log10(absValue));
-    // Garante pelo menos 3 a 4 dígitos significativos visíveis após os zeros iniciais
-    decimals = Math.min(10, Math.max(4, leadingZeros + 3));
+    // Garante 4 a 5 dígitos significativos visíveis após os zeros iniciais, com teto de até 12 casas decimais
+    decimals = Math.min(12, Math.max(4, leadingZeros + 4));
   }
 
   if (options?.minDecimals !== undefined) {
     decimals = Math.max(decimals, options.minDecimals);
   }
   if (options?.maxDecimals !== undefined) {
-    decimals = Math.min(decimals, options.maxDecimals);
+    if (absValue >= 1) {
+      decimals = Math.min(decimals, options.maxDecimals);
+    } else {
+      // Para moedas < 1, respeita maxDecimals apenas se ele for maior que os zeros iniciais
+      const leadingZeros = Math.floor(-Math.log10(absValue));
+      if (options.maxDecimals > leadingZeros) {
+        decimals = Math.min(decimals, options.maxDecimals);
+      }
+    }
   }
 
   return `${prefix}${value.toFixed(decimals)}`;
@@ -61,6 +86,18 @@ export function formatPriceRange(
   max: number | null | undefined, 
   currency = true
 ): string {
+  const validMin = min !== null && min !== undefined && !isNaN(min) && min > 0;
+  const validMax = max !== null && max !== undefined && !isNaN(max) && max > 0;
+
+  if (!validMin && !validMax) {
+    return '--';
+  }
+  if (validMin && !validMax) {
+    return formatPrice(min, { currency });
+  }
+  if (!validMin && validMax) {
+    return formatPrice(max, { currency });
+  }
   return `${formatPrice(min, { currency })} - ${formatPrice(max, { currency })}`;
 }
 
@@ -150,14 +187,11 @@ export function formatTimeAgo(
 }
 
 /**
- * Formata valores em dólares com precisão padrão
+ * Formata valores em dólares com suporte dinâmico a micro-ativos (ex: PEPE = $0.00001234)
  */
 export function formatUsd(value: number | null | undefined, minDecimals = 2): string {
   if (value === null || value === undefined || isNaN(value)) return '$0.00';
-  return `$${value.toLocaleString(undefined, {
-    minimumFractionDigits: minDecimals,
-    maximumFractionDigits: minDecimals,
-  })}`;
+  return formatPrice(value, { currency: true, minDecimals });
 }
 
 /**
@@ -210,9 +244,18 @@ export function calculateTradeMetrics(params: {
     entryPrice = entry;
   }
 
-  if (!entryPrice || entryPrice <= 0 || !stopLoss || !target1) {
+  // Fallback se entry for 0 ou inválido
+  if (!entryPrice || entryPrice <= 0) {
+    if (currentPrice > 0) {
+      entryPrice = currentPrice;
+    } else if (Array.isArray(entry) && (entry[0] > 0 || entry[1] > 0)) {
+      entryPrice = Math.max(entry[0] || 0, entry[1] || 0);
+    }
+  }
+
+  if (!entryPrice || entryPrice <= 0 || !stopLoss || stopLoss <= 0 || !target1 || target1 <= 0) {
     return {
-      entryPrice,
+      entryPrice: entryPrice || 0,
       riskPct: 0,
       target1GainPct: 0,
       target2GainPct: 0,
@@ -235,9 +278,9 @@ export function calculateTradeMetrics(params: {
     ? (isLong ? ((target2 - entryPrice) / entryPrice) * 100 : ((entryPrice - target2) / entryPrice) * 100)
     : 0;
 
-  const validRiskPct = Math.max(0.0001, Math.abs(riskPct));
-  const rrRatio1 = Math.max(0, target1GainPct / validRiskPct);
-  const rrRatio2 = target2GainPct > 0 ? Math.max(0, target2GainPct / validRiskPct) : 0;
+  const validRiskPct = Math.max(0.000001, Math.abs(riskPct));
+  const rrRatio1 = Math.max(0, Math.abs(target1GainPct) / validRiskPct);
+  const rrRatio2 = target2GainPct !== 0 ? Math.max(0, Math.abs(target2GainPct) / validRiskPct) : 0;
 
   return {
     entryPrice,

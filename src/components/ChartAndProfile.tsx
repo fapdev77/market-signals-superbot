@@ -1523,7 +1523,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         </div>
 
         {/* Harmonized Responsive Grid: 4 cards in 1 row on wide, 2x2 on desktop/laptop, 1 per row on mobile/tablet */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
           {/* Card 1: Volume Profile do Range */}
           <VolumeProfileCard
             ticker={ticker}

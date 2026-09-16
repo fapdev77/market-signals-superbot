@@ -1,6 +1,30 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle } from '../src/types.js';
 import { calculateVolumeProfile, calculateFibonacci, detectFVG } from './binanceService.js';
 
+export function normalizePricePrecision(value: number | null | undefined): number {
+  if (value === null || value === undefined || isNaN(value)) return 0;
+  const abs = Math.abs(value);
+  if (abs === 0) return 0;
+  if (abs >= 1000) return parseFloat(value.toFixed(2));
+  if (abs >= 50) return parseFloat(value.toFixed(3));
+  if (abs >= 1) return parseFloat(value.toFixed(4));
+  const leadingZeros = Math.floor(-Math.log10(abs));
+  const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
+  return parseFloat(value.toFixed(decimals));
+}
+
+export function formatPriceString(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(value)) return '0.00';
+  const abs = Math.abs(value);
+  if (abs === 0) return '0.00';
+  if (abs >= 1000) return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (abs >= 50) return value.toFixed(2);
+  if (abs >= 1) return value.toFixed(3);
+  const leadingZeros = Math.floor(-Math.log10(abs));
+  const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
+  return value.toFixed(decimals);
+}
+
 export function processTickerState(
   rawTicker: any,
   klines: KlineCandle[],
@@ -11,8 +35,8 @@ export function processTickerState(
   const symbol = rawTicker.symbol || 'BTCUSDT';
   const price = parseFloat(rawTicker.lastPrice || rawTicker.price || '90000');
   const priceChangePercent24h = parseFloat(rawTicker.priceChangePercent || '0');
-  const high24h = parseFloat(rawTicker.highPrice || (price * 1.02).toFixed(2));
-  const low24h = parseFloat(rawTicker.lowPrice || (price * 0.98).toFixed(2));
+  const high24h = parseFloat(rawTicker.highPrice || normalizePricePrecision(price * 1.02));
+  const low24h = parseFloat(rawTicker.lowPrice || normalizePricePrecision(price * 0.98));
   const volume24h = parseFloat(rawTicker.volume || '10000');
   const quoteVolume24h = parseFloat(rawTicker.quoteVolume || (volume24h * price).toFixed(0));
 
@@ -187,10 +211,10 @@ export function processTickerState(
   if (fvg.hasSinglePrintFVG && fvg.fvgZone) {
     if (fvg.fvgZone.type === 'BULLISH') {
       bullishPoints += 10;
-      confluenceFactors.push(`Bullish Fair Value Gap (FVG) at ${fvg.fvgZone.bottom.toFixed(2)} - ${fvg.fvgZone.top.toFixed(2)}`);
+      confluenceFactors.push(`Bullish Fair Value Gap (FVG) at ${formatPriceString(fvg.fvgZone.bottom)} - ${formatPriceString(fvg.fvgZone.top)}`);
     } else {
       bearishPoints += 10;
-      confluenceFactors.push(`Bearish Fair Value Gap (FVG) at ${fvg.fvgZone.bottom.toFixed(2)} - ${fvg.fvgZone.top.toFixed(2)}`);
+      confluenceFactors.push(`Bearish Fair Value Gap (FVG) at ${formatPriceString(fvg.fvgZone.bottom)} - ${formatPriceString(fvg.fvgZone.top)}`);
     }
   }
 
@@ -373,11 +397,11 @@ export function buildTradeSignal(ticker: TickerData, klines: KlineCandle[] = [],
     marketType: ticker.marketType,
     signalType: ticker.signalType,
     direction: isLong ? 'LONG' : 'SHORT',
-    entryZone: [parseFloat(entryMin.toFixed(4)), parseFloat(entryMax.toFixed(4))],
-    currentPrice: price,
-    stopLoss: parseFloat(stopLoss.toFixed(4)),
-    target1: parseFloat(target1.toFixed(4)),
-    target2: parseFloat(target2.toFixed(4)),
+    entryZone: [normalizePricePrecision(entryMin), normalizePricePrecision(entryMax)],
+    currentPrice: normalizePricePrecision(price),
+    stopLoss: normalizePricePrecision(stopLoss),
+    target1: normalizePricePrecision(target1),
+    target2: normalizePricePrecision(target2),
     riskRewardRatio,
     confluenceScore: ticker.confluenceScore,
     confluenceFactors: ticker.confluenceFactors,

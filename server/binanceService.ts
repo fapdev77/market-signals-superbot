@@ -2,6 +2,18 @@ import { TickerData, KlineCandle } from '../src/types.js';
 import { addBinanceLog, getLiveWSTickers } from './binanceWebsocket.js';
 import { requestJson } from './utils/httpClient.js';
 
+function formatPriceString(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(value)) return '0.00';
+  const abs = Math.abs(value);
+  if (abs === 0) return '0.00';
+  if (abs >= 1000) return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (abs >= 50) return value.toFixed(2);
+  if (abs >= 1) return value.toFixed(3);
+  const leadingZeros = Math.floor(-Math.log10(abs));
+  const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
+  return value.toFixed(decimals);
+}
+
 // Order of preference for Binance REST endpoints (vision public archive data first to bypass Cloud Run 451 geo-restrictions)
 const REST_ENDPOINTS = [
   { base: 'https://data-api.binance.vision', type: 'spot_public', tickerPath: '/api/v3/ticker/24hr', klinePath: '/api/v3/klines' },
@@ -223,7 +235,21 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
  */
 export function generateFallbackKlines(symbol: string, limit: number = 50): KlineCandle[] {
   const candles: KlineCandle[] = [];
-  let basePrice = symbol.includes('BTC') ? 92000 : symbol.includes('ETH') ? 3400 : symbol.includes('SOL') ? 185 : 15;
+  let basePrice = 15;
+  if (symbol.includes('BTC')) basePrice = 92000;
+  else if (symbol.includes('ETH')) basePrice = 3400;
+  else if (symbol.includes('SOL')) basePrice = 185;
+  else if (symbol.includes('BNB')) basePrice = 640;
+  else if (symbol.includes('XRP')) basePrice = 2.45;
+  else if (symbol.includes('DOGE')) basePrice = 0.22;
+  else if (symbol.includes('SUI')) basePrice = 3.25;
+  else if (symbol.includes('PEPE')) basePrice = 0.00001025;
+  else if (symbol.includes('SHIB')) basePrice = 0.00001450;
+  else if (symbol.includes('BONK')) basePrice = 0.00001850;
+  else if (symbol.includes('NEAR')) basePrice = 4.80;
+  else if (symbol.includes('AVAX')) basePrice = 28.5;
+  else if (symbol.includes('AAVE')) basePrice = 220;
+  else if (symbol.includes('LINK')) basePrice = 17.5;
   const now = Date.now();
   const intervalMs = 15 * 60 * 1000;
 
@@ -370,8 +396,8 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
       trend: 'UP' as const,
       point1Price: swingLow,
       point0Price: swingHigh,
-      point1Label: `1 (${swingLow.toFixed(2)})`,
-      point0Label: `0 (${swingHigh.toFixed(2)})`,
+      point1Label: `1 (${formatPriceString(swingLow)})`,
+      point0Label: `0 (${formatPriceString(swingHigh)})`,
       point1Type: 'LL' as const,
       point0Type: 'HH' as const
     };
@@ -437,8 +463,8 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
     trend: isDownTrend ? ('DOWN' as const) : ('UP' as const),
     point1Price: isDownTrend ? swingHigh : swingLow,
     point0Price: isDownTrend ? swingLow : swingHigh,
-    point1Label: isDownTrend ? `1 (${swingHigh.toFixed(2)})` : `1 (${swingLow.toFixed(2)})`,
-    point0Label: isDownTrend ? `0 (${swingLow.toFixed(2)})` : `0 (${swingHigh.toFixed(2)})`,
+    point1Label: isDownTrend ? `1 (${formatPriceString(swingHigh)})` : `1 (${formatPriceString(swingLow)})`,
+    point0Label: isDownTrend ? `0 (${formatPriceString(swingLow)})` : `0 (${formatPriceString(swingHigh)})`,
     point1Type: isDownTrend ? ('HH' as const) : ('LL' as const),
     point0Type: isDownTrend ? ('LL' as const) : ('HH' as const)
   };

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader } from '../aiMotor.js';
 import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
 import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights } from '../db.js';
-import { buildTradeSignal } from '../signalEngine.js';
+import { buildTradeSignal, normalizePricePrecision } from '../signalEngine.js';
 import { TickerData, TradeSignal, BotState } from '../../src/types.js';
 import { safeFetch } from '../utils/safeFetch.js';
 
@@ -34,17 +34,21 @@ export function createAIRouter(
     }
 
     const weights = await getIndicatorWeights();
+    const isShort = ticker.signalType.includes('SHORT');
     const potentialSignal: TradeSignal = buildTradeSignal(ticker, [], weights.minRiskRewardRatio) || {
       id: `${symbol}-CUSTOM-${Date.now()}`,
       symbol,
       marketType: ticker.marketType,
       signalType: ticker.signalType,
-      direction: ticker.signalType.includes('SHORT') ? 'SHORT' : 'LONG',
-      entryZone: [ticker.price * 0.998, ticker.price],
-      currentPrice: ticker.price,
-      stopLoss: ticker.price * 0.985,
-      target1: ticker.price * 1.02,
-      target2: ticker.price * 1.04,
+      direction: isShort ? 'SHORT' : 'LONG',
+      entryZone: [
+        normalizePricePrecision(isShort ? ticker.price : ticker.price * 0.998),
+        normalizePricePrecision(isShort ? ticker.price * 1.002 : ticker.price)
+      ],
+      currentPrice: normalizePricePrecision(ticker.price),
+      stopLoss: normalizePricePrecision(isShort ? ticker.price * 1.015 : ticker.price * 0.985),
+      target1: normalizePricePrecision(isShort ? ticker.price * 0.98 : ticker.price * 1.02),
+      target2: normalizePricePrecision(isShort ? ticker.price * 0.96 : ticker.price * 1.04),
       riskRewardRatio: 2.2,
       confluenceScore: ticker.confluenceScore,
       confluenceFactors: ticker.confluenceFactors,
