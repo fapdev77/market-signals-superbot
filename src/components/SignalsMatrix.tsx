@@ -20,7 +20,8 @@ import {
   Filter,
   Sliders,
   Sparkles,
-  RotateCcw
+  RotateCcw,
+  LineChart
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
@@ -49,13 +50,15 @@ export type TriggerFilter =
 interface SignalsMatrixProps {
   signals: TradeSignal[];
   tickers: TickerData[];
-  onRequestAIReview: (ticker: TickerData) => void;
+  onRequestAIReview?: (ticker: TickerData, signal?: TradeSignal) => void;
+  onSelectSignal?: (signal: TradeSignal, autoRunAI?: boolean) => void;
 }
 
 export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
   signals = [],
   tickers = [],
-  onRequestAIReview
+  onRequestAIReview,
+  onSelectSignal
 }) => {
   // Existing validation & direction filters
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
@@ -251,7 +254,28 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     });
   }, [signals, tickers, directionFilter, validationFilter, assetClassFilter, triggerFilter, searchQuery, sortBy]);
 
+  const handleOpenSignalChart = async (signal: TradeSignal, autoRunAI: boolean = false) => {
+    if (onSelectSignal) {
+      onSelectSignal(signal, autoRunAI);
+      return;
+    }
+    const ticker = tickers.find(t => t.symbol === signal.symbol);
+    if (ticker && onRequestAIReview) {
+      setLoadingSymbol(signal.symbol);
+      try {
+        await onRequestAIReview(ticker, signal);
+      } finally {
+        setLoadingSymbol(null);
+      }
+    }
+  };
+
   const handleRunAIReview = async (symbol: string) => {
+    const targetSignal = signals.find(s => s.symbol === symbol);
+    if (targetSignal) {
+      await handleOpenSignalChart(targetSignal, true);
+      return;
+    }
     const ticker = tickers.find(t => t.symbol === symbol);
     if (ticker && onRequestAIReview) {
       setLoadingSymbol(symbol);
@@ -1051,18 +1075,33 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                     );
                   })()}
 
-                  {/* Right Action Button */}
-                  <div className="w-full lg:w-auto flex items-center justify-end">
+                  {/* Right Action Buttons */}
+                  <div className="w-full lg:w-auto flex flex-wrap items-center justify-end gap-2">
+                    <Tooltip
+                      position="left"
+                      title="Ver Gráfico Interativo"
+                      badge={s.strategyCategory || 'ESTRATÉGIA'}
+                      content={`Abre o gráfico interativo de 5m/15m/30m configurado com os alvos e stop deste sinal de ${s.strategyCategory || 'INTRADAY'} (${s.direction}).`}
+                    >
+                      <button
+                        onClick={() => handleOpenSignalChart(s, false)}
+                        className="px-2.5 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <LineChart className="h-3.5 w-3.5" />
+                        Ver Gráfico
+                      </button>
+                    </Tooltip>
+
                     <Tooltip
                       position="left"
                       title="Auditoria com Inteligência Artificial"
                       badge="GEMINI / LLM"
-                      content="Envia métricas de Order Flow, liquidez e estrutura gráfica para diagnóstico e verificação de risco pela IA."
+                      content={`Envia este setup de ${s.strategyCategory || 'INTRADAY'} (${s.direction}) para verificação de risco e diagnóstico em tempo real pela IA.`}
                     >
                       <button
-                        onClick={() => handleRunAIReview(s.symbol)}
+                        onClick={() => handleOpenSignalChart(s, true)}
                         disabled={loadingSymbol === s.symbol}
-                        className="w-full lg:w-auto px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded text-xs font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                        className="px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded text-xs font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
                       >
                         {loadingSymbol === s.symbol ? (
                           <>

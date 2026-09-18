@@ -16,6 +16,10 @@ interface ChartAndProfileProps {
   allTickers: TickerData[];
   onSelectTickerBySymbol: (symbol: string) => void;
   signals?: TradeSignal[];
+  selectedSignal?: TradeSignal | null;
+  onSelectSignal?: (signal: TradeSignal) => void;
+  autoTriggerAI?: boolean;
+  onClearAutoTrigger?: () => void;
   activeModels?: AIModelConfig[];
   botWeights?: IndicatorWeights;
 }
@@ -25,6 +29,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   allTickers = [],
   onSelectTickerBySymbol,
   signals = [],
+  selectedSignal,
+  onSelectSignal,
+  autoTriggerAI,
+  onClearAutoTrigger,
   activeModels = [],
   botWeights
 }) => {
@@ -75,7 +83,35 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     }
   }, [activeModels]);
   
-  const activeSignal = signals.find(s => s.symbol === ticker?.symbol);
+  // Filter all active signals for this ticker
+  const tickerSignals = useMemo(() => {
+    if (!ticker?.symbol) return [];
+    return (signals || []).filter(s => s.symbol === ticker.symbol);
+  }, [signals, ticker?.symbol]);
+
+  // Determine activeSignal prioritizing the explicitly selected signal
+  const activeSignal = useMemo(() => {
+    if (selectedSignal && selectedSignal.symbol === ticker?.symbol) {
+      const foundInList = tickerSignals.find(s => s.id === selectedSignal.id);
+      return foundInList || selectedSignal;
+    }
+    if (tickerSignals.length > 0) {
+      return [...tickerSignals].sort((a, b) => (b.confluenceScore || 0) - (a.confluenceScore || 0))[0];
+    }
+    return null;
+  }, [selectedSignal, tickerSignals, ticker?.symbol]);
+
+  // Auto-sync chart timeframe with the active signal's timeframe
+  useEffect(() => {
+    if (activeSignal?.timeframe) {
+      const tfClean = activeSignal.timeframe.trim().toLowerCase();
+      const validTfs = ['1m', '5m', '15m', '30m', '1h', '4h', '1d'];
+      const matched = validTfs.find(tf => tfClean === tf || tfClean.startsWith(tf) || tfClean.includes(tf));
+      if (matched && matched !== timeframe) {
+        setTimeframe(matched);
+      }
+    }
+  }, [activeSignal?.id, activeSignal?.timeframe]);
 
   const botMetrics = activeSignal ? calculateTradeMetrics({
     entry: activeSignal.entryZone,
@@ -103,7 +139,13 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
       const res = await fetch('/api/ai/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: ticker.symbol, model, personaId: selectedPersona })
+        body: JSON.stringify({
+          symbol: ticker.symbol,
+          signalId: activeSignal?.id,
+          signal: activeSignal || undefined,
+          model,
+          personaId: selectedPersona
+        })
       });
       const data: AIReviewResponse = await res.json();
       setAiReview(data);
@@ -114,9 +156,19 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     }
   };
   
+  // Auto-trigger AI review if requested from navigation
+  useEffect(() => {
+    if (autoTriggerAI && ticker?.symbol && !loadingReview) {
+      handleRunAIReview();
+      if (onClearAutoTrigger) {
+        onClearAutoTrigger();
+      }
+    }
+  }, [autoTriggerAI, ticker?.symbol, activeSignal?.id]);
+
   useEffect(() => {
     setAiReview(null);
-  }, [ticker?.symbol]);
+  }, [ticker?.symbol, activeSignal?.id]);
 
   useEffect(() => {
     if (!ticker?.symbol) return;
@@ -560,11 +612,13 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           <ReferenceArea
             y1={gpMin}
             y2={gpMax}
-            fill="#f59e0b"
-            fillOpacity={0.09}
-            stroke="#f59e0b"
-            strokeOpacity={0.3}
-            strokeDasharray="2 2"
+            {...({
+              fill: "#f59e0b",
+              fillOpacity: 0.09,
+              stroke: "#f59e0b",
+              strokeOpacity: 0.3,
+              strokeDasharray: "2 2"
+            } as any)}
           />
         )}
 
@@ -1000,18 +1054,67 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
               <div className="flex items-center gap-2">
                 <Zap className="h-4 w-4 text-emerald-400" />
-                <span className="text-xs font-black text-white uppercase tracking-wider">Sinal Algorítmico (Quant Bot)</span>
+                <span className="text-xs font-black text-white uppercase tracking-wider">
+                  Sinal Algorítmico {activeSignal?.strategyCategory ? `(${activeSignal.strategyCategory})` : '(Quant Bot)'}
+                </span>
               </div>
               {activeSignal ? (
-                <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded uppercase">
-                  {activeSignal.direction} ({activeSignal.signalType})
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-bold text-neutral-400 uppercase bg-neutral-900 px-1.5 py-0.5 rounded border border-white/5">
+                    TF {activeSignal.timeframe || '30m'}
+                  </span>
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase border ${
+                    activeSignal.direction === 'LONG'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                  }`}>
+                    {activeSignal.direction} ({activeSignal.signalType})
+                  </span>
+                </div>
               ) : (
                 <span className="text-[10px] font-bold text-neutral-500 bg-neutral-900 px-2 py-0.5 rounded border border-white/5">
                   Sem sinal ativo
                 </span>
               )}
             </div>
+
+            {/* Concurrent Multi-Strategy Selector Bar */}
+            {tickerSignals.length > 1 && (
+              <div className="bg-[#0A0A0A] p-2 rounded-lg border border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between text-[9px] text-neutral-400 font-bold uppercase tracking-wider">
+                  <span>Estratégias Concorrentes Ativas ({tickerSignals.length})</span>
+                  <span className="text-cyan-400 font-normal">Clique para alternar o setup no gráfico</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {tickerSignals.map(sig => {
+                    const isSelected = activeSignal?.id === sig.id;
+                    const isSigLong = sig.direction === 'LONG';
+                    return (
+                      <button
+                        key={sig.id}
+                        onClick={() => {
+                          if (onSelectSignal) onSelectSignal(sig);
+                        }}
+                        className={`px-2 py-1 rounded text-[10px] font-extrabold transition flex items-center gap-1.5 border cursor-pointer ${
+                          isSelected
+                            ? isSigLong
+                              ? 'bg-emerald-500/25 text-emerald-300 border-emerald-500 shadow-md ring-1 ring-emerald-500/50'
+                              : 'bg-rose-500/25 text-rose-300 border-rose-500 shadow-md ring-1 ring-rose-500/50'
+                            : 'bg-neutral-900/90 text-neutral-400 border-white/10 hover:border-white/20 hover:text-white'
+                        }`}
+                      >
+                        <span>{isSigLong ? '🟢' : '🔴'}</span>
+                        <span>{sig.strategyCategory || 'INTRADAY'} ({sig.timeframe || '30m'})</span>
+                        <span className="opacity-90 uppercase font-black">{sig.direction}</span>
+                        <span className="text-[9px] px-1 rounded bg-black/50 text-orange-300 font-mono font-bold">
+                          {sig.confluenceScore}%
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {activeSignal && botMetrics ? (
               <div className="space-y-3">

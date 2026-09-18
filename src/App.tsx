@@ -20,6 +20,8 @@ export default function App() {
   const [tickers, setTickers] = useState<TickerData[]>([]);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<TickerData | null>(null);
+  const [selectedSignal, setSelectedSignal] = useState<TradeSignal | null>(null);
+  const [autoTriggerAIReview, setAutoTriggerAIReview] = useState<boolean>(false);
   const knownSignalIdsRef = useRef<Set<string>>(new Set());
   const isInitialSignalsLoadRef = useRef(true);
 
@@ -210,16 +212,35 @@ export default function App() {
     }
   };
 
+  const handleSelectSignal = (signal: TradeSignal, autoRunAI: boolean = false) => {
+    const found = tickers.find(t => t.symbol === signal.symbol);
+    if (found) {
+      setSelectedTicker(found);
+    }
+    setSelectedSignal(signal);
+    setAutoTriggerAIReview(autoRunAI);
+    setActiveTab('chart');
+  };
+
   const handleSelectTickerBySymbol = (symbol: string) => {
     const found = tickers.find(t => t.symbol === symbol);
     if (found) {
       setSelectedTicker(found);
+      setSelectedSignal(prev => (prev && prev.symbol === symbol ? prev : null));
+      setAutoTriggerAIReview(false);
       setActiveTab('chart');
     }
   };
 
-  const handleRequestAIReviewFromGrid = (ticker: TickerData) => {
+  const handleRequestAIReviewFromGrid = (ticker: TickerData, signal?: TradeSignal) => {
     setSelectedTicker(ticker);
+    if (signal) {
+      setSelectedSignal(signal);
+      setAutoTriggerAIReview(true);
+    } else {
+      setSelectedSignal(null);
+      setAutoTriggerAIReview(true);
+    }
     setActiveTab('chart');
   };
 
@@ -284,6 +305,8 @@ export default function App() {
             tickers={tickers}
             onSelectTicker={(t) => {
               setSelectedTicker(t);
+              setSelectedSignal(null);
+              setAutoTriggerAIReview(false);
               setActiveTab('chart');
             }}
             onRequestAIReview={handleRequestAIReviewFromGrid}
@@ -295,6 +318,7 @@ export default function App() {
             signals={signals}
             tickers={tickers}
             onRequestAIReview={handleRequestAIReviewFromGrid}
+            onSelectSignal={handleSelectSignal}
           />
         )}
 
@@ -315,6 +339,10 @@ export default function App() {
             allTickers={tickers}
             onSelectTickerBySymbol={handleSelectTickerBySymbol}
             signals={signals}
+            selectedSignal={selectedSignal}
+            onSelectSignal={setSelectedSignal}
+            autoTriggerAI={autoTriggerAIReview}
+            onClearAutoTrigger={() => setAutoTriggerAIReview(false)}
             activeModels={botState.aiModels}
             botWeights={botState.weights}
           />

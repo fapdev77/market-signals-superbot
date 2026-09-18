@@ -216,6 +216,47 @@ export async function getActiveSignalsBySymbol(symbol: string, category?: string
   });
 }
 
+export async function getSignalById(id: string): Promise<TradeSignal | null> {
+  const database = await getDb();
+  const query = `SELECT * FROM trade_signals WHERE id = ?`;
+  const res = database.exec(query, [id]);
+  if (!res.length || !res[0].values || !res[0].values.length) return null;
+
+  const columns = res[0].columns;
+  const row = res[0].values[0];
+  const obj: any = {};
+  columns.forEach((col, idx) => {
+    obj[col] = row[idx];
+  });
+  return {
+    id: obj.id,
+    symbol: obj.symbol,
+    marketType: obj.market_type,
+    signalType: obj.signal_type,
+    direction: obj.direction,
+    strategyCategory: obj.strategy_category || 'INTRADAY',
+    entryZone: [obj.entry_min, obj.entry_max],
+    currentPrice: obj.current_price,
+    stopLoss: obj.stop_loss,
+    target1: obj.target1,
+    target2: obj.target2,
+    riskRewardRatio: obj.risk_reward,
+    confluenceScore: obj.confluence_score,
+    confluenceFactors: JSON.parse(obj.confluence_factors || '[]'),
+    timeframe: obj.timeframe,
+    validationStatus: obj.validation_status || 'CONFIRMED',
+    validationStage: obj.validation_stage || 'VALIDADO: Sustentado em 1m + Tendência de 5m',
+    candle1mConfirmed: obj.candle_1m_confirmed === 1 || true,
+    candle5mConfirmed: obj.candle_5m_confirmed === 1 || true,
+    aiReview: obj.ai_review,
+    aiConfidence: obj.ai_confidence,
+    createdAt: obj.created_at,
+    validatedAt: obj.validated_at || (obj.validation_status === 'CONFIRMED' ? obj.created_at : undefined),
+    rejectedAt: obj.rejected_at || (obj.validation_status?.includes('REJECTED') ? obj.created_at : undefined),
+    status: obj.status
+  };
+}
+
 export async function expireActiveSignalsByCategory(category: string) {
   const database = await getDb();
   database.run(
