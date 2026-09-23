@@ -111,6 +111,7 @@ export function createMarketRouter(
       intraday: 'INTRADAY',
       swing: 'SWING',
       position: 'POSITION',
+      counter: 'COUNTER_TRADE',
       custom: 'CUSTOM'
     };
     const targetCategory = categoryMap[activeStrategy] || 'INTRADAY';

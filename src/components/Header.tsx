@@ -3,7 +3,7 @@ import {
   Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, 
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
   ChevronDown, Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, 
-  Sparkles, Search, Sun, Moon, Check, Layers, BarChart3, Radio
+  Sparkles, Search, Sun, Moon, Check, Layers, BarChart3, Radio, Target
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { BotState, TickerData } from '../types';
@@ -224,6 +224,14 @@ export const Header: React.FC<HeaderProps> = ({
           badge: 'RISK',
           highlight: true,
           desc: 'Dashboard de exposição de risco da carteira: Delta Líquido, Gamma, VaR, stress test e concentração setorial.'
+        },
+        {
+          id: 'counter_radar',
+          label: 'Contra-Trade Radar (TTI)',
+          icon: Target,
+          badge: 'INSTITUCIONAL',
+          highlight: true,
+          desc: 'Radar de Traders Presos: Net Longs/Shorts, Índice TTI Wyckoff, Absorção CVD, Smart Money Divergence e sinalização de Fade & Short Squeeze.'
         }
       ]
     },

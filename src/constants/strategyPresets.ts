@@ -1,6 +1,6 @@
 import { StrategyKey, StrategyConfigItem, IndicatorWeights, StrategyCategory } from '../types';
 
-export const ALL_STRATEGY_KEYS: StrategyKey[] = ['scalp', 'daytrade', 'intraday', 'swing', 'position'];
+export const ALL_STRATEGY_KEYS: StrategyKey[] = ['scalp', 'daytrade', 'intraday', 'swing', 'position', 'counter'];
 
 export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyConfigItem> = {
   scalp: {
@@ -18,7 +18,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     fibonacciZoneWeight: 5,
     rangePocWeight: 15,
     supportResistanceWeight: 5,
-    volumeProfileRange: 30
+    volumeProfileRange: 30,
+    trappedTradersWeight: 10
   },
   daytrade: {
     key: 'daytrade',
@@ -35,7 +36,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     fibonacciZoneWeight: 10,
     rangePocWeight: 20,
     supportResistanceWeight: 10,
-    volumeProfileRange: 40
+    volumeProfileRange: 40,
+    trappedTradersWeight: 15
   },
   intraday: {
     key: 'intraday',
@@ -52,7 +54,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     fibonacciZoneWeight: 15,
     rangePocWeight: 15,
     supportResistanceWeight: 10,
-    volumeProfileRange: 50
+    volumeProfileRange: 50,
+    trappedTradersWeight: 20
   },
   swing: {
     key: 'swing',
@@ -69,7 +72,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     fibonacciZoneWeight: 20,
     rangePocWeight: 10,
     supportResistanceWeight: 10,
-    volumeProfileRange: 70
+    volumeProfileRange: 70,
+    trappedTradersWeight: 20
   },
   position: {
     key: 'position',
@@ -86,7 +90,26 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     fibonacciZoneWeight: 20,
     rangePocWeight: 5,
     supportResistanceWeight: 15,
-    volumeProfileRange: 100
+    volumeProfileRange: 100,
+    trappedTradersWeight: 15
+  },
+  counter: {
+    key: 'counter',
+    label: 'Contra-Trade (Fade & Squeeze)',
+    enabled: true,
+    category: 'COUNTER_TRADE',
+    timeframe: '15m',
+    candles: 48,
+    minRiskRewardRatio: 2.8,
+    volumeSurgeWeight: 15,
+    openInterestWeight: 20,
+    fundingRateWeight: 15,
+    cvdImbalanceWeight: 20,
+    fibonacciZoneWeight: 10,
+    rangePocWeight: 15,
+    supportResistanceWeight: 15,
+    volumeProfileRange: 50,
+    trappedTradersWeight: 35
   }
 };
 
@@ -105,7 +128,7 @@ export function getDefaultIndicatorWeights(): IndicatorWeights {
     activeStrategy: 'intraday',
     strategyLabel: 'Intraday Flex (30m)',
     multiStrategyMode: true,
-    enabledStrategies: ['scalp', 'daytrade', 'intraday', 'swing', 'position'],
+    enabledStrategies: ['scalp', 'daytrade', 'intraday', 'swing', 'position', 'counter'],
     strategyConfigs: getDefaultStrategyConfigs(),
     volumeSurgeWeight: 15,
     openInterestWeight: 20,
@@ -114,6 +137,7 @@ export function getDefaultIndicatorWeights(): IndicatorWeights {
     fibonacciZoneWeight: 15,
     rangePocWeight: 15,
     supportResistanceWeight: 10,
+    trappedTradersWeight: 25,
     minRiskRewardRatio: 2.5,
     volumeProfileRange: 50,
     volumeProfileTimeframe: '30m',
@@ -181,6 +205,7 @@ export function configToWeights(config: StrategyConfigItem): IndicatorWeights {
     fibonacciZoneWeight: config.fibonacciZoneWeight,
     rangePocWeight: config.rangePocWeight,
     supportResistanceWeight: config.supportResistanceWeight,
+    trappedTradersWeight: config.trappedTradersWeight || 25,
     minRiskRewardRatio: config.minRiskRewardRatio,
     volumeProfileRange: config.volumeProfileRange,
     volumeProfileTimeframe: config.timeframe,

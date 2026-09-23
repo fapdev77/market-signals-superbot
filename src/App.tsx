@@ -29,6 +29,7 @@ import { DashboardGridLayout } from './components/DashboardGridLayout';
 import { LiquidityDepth } from './components/LiquidityDepth';
 import { RiskExposureDashboard } from './components/RiskExposureDashboard';
 import { SystemHealthWidget } from './components/SystemHealthWidget';
+import { TrappedTradersRadar } from './components/TrappedTradersRadar';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -467,6 +468,24 @@ export default function App() {
                   </div>
                 </div>
               ),
+              trapped_radar: (
+                <TrappedTradersRadar
+                  tickers={tickers}
+                  selectedTicker={selectedTicker}
+                  onSelectTicker={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                  }}
+                  onRequestAIReview={handleRequestAIReviewFromGrid}
+                  onOpenChart={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                    setActiveTab('chart');
+                  }}
+                />
+              ),
               market_heatmap: (
                 <MarketHeatmap
                   tickers={tickers}
@@ -623,6 +642,26 @@ export default function App() {
           <BinanceConnectionPanel
             clientWsStatus={clientWsStatus}
             clientWsLogs={clientWsLogs}
+          />
+        )}
+
+        {/* Trapped Traders & Counter-Trade Radar - Análise Institucional de Net Longs/Shorts */}
+        {activeTab === 'counter_radar' && (
+          <TrappedTradersRadar
+            tickers={tickers}
+            selectedTicker={selectedTicker}
+            onSelectTicker={(t) => {
+              setSelectedTicker(t);
+              setSelectedSignal(null);
+              setAutoTriggerAIReview(false);
+            }}
+            onRequestAIReview={handleRequestAIReviewFromGrid}
+            onOpenChart={(t) => {
+              setSelectedTicker(t);
+              setSelectedSignal(null);
+              setAutoTriggerAIReview(false);
+              setActiveTab('chart');
+            }}
           />
         )}
       </main>

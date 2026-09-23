@@ -1,5 +1,5 @@
-import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory } from '../src/types.js';
-import { calculateVolumeProfile, calculateFibonacci, detectFVG } from './binanceService.js';
+import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData } from '../src/types.js';
+import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis } from './binanceService.js';
 
 export function normalizePricePrecision(value: number | null | undefined): number {
   if (value === null || value === undefined || isNaN(value)) return 0;
@@ -30,7 +30,9 @@ export function processTickerState(
   klines: KlineCandle[],
   openInterest: number,
   fundingRate: number,
-  weights: IndicatorWeights
+  weights: IndicatorWeights,
+  longShortData?: LongShortRatioData,
+  trappedTradersData?: TrappedTradersData
 ): TickerData {
   const symbol = rawTicker.symbol || 'BTCUSDT';
   const price = parseFloat(rawTicker.lastPrice || rawTicker.price || '90000');
@@ -230,6 +232,49 @@ export function processTickerState(
     }
   }
 
+  // 7. Trapped Traders & Institutional Counter-Trade Analysis (Fade & Squeeze)
+  const fallbackLsData: LongShortRatioData = longShortData || {
+    symbol,
+    globalRatio: 1.0,
+    longAccountPct: 50.0,
+    shortAccountPct: 50.0,
+    topTraderAccountRatio: 1.0,
+    topTraderPositionRatio: 1.0,
+    topTraderLongPositionPct: 50.0,
+    topTraderShortPositionPct: 50.0,
+    takerRatio: takerBuyRatio / (1 - takerBuyRatio || 1),
+    takerBuyVolUsd: quoteVolume24h * 0.5,
+    takerSellVolUsd: quoteVolume24h * 0.5,
+    timestamp: Date.now()
+  };
+
+  const trappedTraders = trappedTradersData || calculateTrappedTradersAnalysis(
+    symbol,
+    price,
+    klines,
+    openInterest,
+    fundingRate,
+    fallbackLsData,
+    rangeProfile,
+    { support1, resistance1 },
+    takerBuyRatio
+  );
+
+  const trappedWeight = weights.trappedTradersWeight || 25;
+  if (trappedTraders.status === 'TRAPPED_LONGS') {
+    const intensity = (trappedTraders.trappedIndex / 100);
+    bearishPoints += trappedWeight * intensity * 1.5;
+    confluenceFactors.push(
+      `⚡ Contra-Trade (Fade Trapped Longs): Net Longs (${fallbackLsData.longAccountPct}%) com TTI ${trappedTraders.trappedIndex}/100 e ${trappedTraders.absorptionRatio}% absorção na faixa $${formatPriceString(trappedTraders.trappedPriceZone[0])} - $${formatPriceString(trappedTraders.trappedPriceZone[1])}`
+    );
+  } else if (trappedTraders.status === 'TRAPPED_SHORTS') {
+    const intensity = (trappedTraders.trappedIndex / 100);
+    bullishPoints += trappedWeight * intensity * 1.5;
+    confluenceFactors.push(
+      `⚡ Contra-Trade (Short Squeeze): Net Shorts (${fallbackLsData.shortAccountPct}%) com TTI ${trappedTraders.trappedIndex}/100 e ${trappedTraders.absorptionRatio}% absorção na faixa $${formatPriceString(trappedTraders.trappedPriceZone[0])} - $${formatPriceString(trappedTraders.trappedPriceZone[1])}`
+    );
+  }
+
   // Determine Signal Type & Confluence Score
   const netScore = bullishPoints - bearishPoints;
   const confluenceScore = Math.min(100, Math.round(Math.abs(netScore) * 1.2 + 25));
@@ -239,10 +284,18 @@ export function processTickerState(
 
   if (netScore >= 35) {
     signalType = netScore >= 55 ? 'STRONG_LONG' : 'LONG';
-    signalReason = `High Bullish Confluence (${confluenceScore}%): Golden Pocket / CVD Buyer Surge / OI Accumulation.`;
+    if (weights.activeStrategy === 'counter' || trappedTraders.status === 'TRAPPED_SHORTS') {
+      signalReason = `Contra-Trade Institucional (${confluenceScore}%): Short Squeeze de ${fallbackLsData.shortAccountPct}% Net Shorts com ${trappedTraders.absorptionRatio}% de absorção em suporte.`;
+    } else {
+      signalReason = `High Bullish Confluence (${confluenceScore}%): Golden Pocket / CVD Buyer Surge / OI Accumulation.`;
+    }
   } else if (netScore <= -35) {
     signalType = netScore <= -55 ? 'STRONG_SHORT' : 'SHORT';
-    signalReason = `High Bearish Confluence (${confluenceScore}%): Resistance Rejection / CVD Selling / Overheated Longs.`;
+    if (weights.activeStrategy === 'counter' || trappedTraders.status === 'TRAPPED_LONGS') {
+      signalReason = `Contra-Trade Institucional (${confluenceScore}%): Fade de ${fallbackLsData.longAccountPct}% Net Longs no topo com ${trappedTraders.absorptionRatio}% de absorção em resistência.`;
+    } else {
+      signalReason = `High Bearish Confluence (${confluenceScore}%): Resistance Rejection / CVD Selling / Overheated Longs.`;
+    }
   }
 
   const baseAsset = symbol.replace(/USDT|USD|BUSD/, '');
@@ -285,6 +338,8 @@ export function processTickerState(
       hasSinglePrintFVG: fvg.hasSinglePrintFVG,
       fvgZone: fvg.fvgZone
     },
+    longShortData: fallbackLsData,
+    trappedTraders,
     confluenceScore,
     signalType,
     signalReason,
@@ -347,6 +402,11 @@ export function buildTradeSignal(
       tf = customTimeframe || '4h / 1d';
       categoryPrefix = 'POS';
       break;
+    case 'COUNTER_TRADE':
+      slPct = 0.010; // 1.0% stop técnico estreito logo além da zona de absorção
+      tf = customTimeframe || '15m';
+      categoryPrefix = 'CONTRA';
+      break;
     case 'CUSTOM':
       slPct = 0.015;
       tf = customTimeframe || '15m';
@@ -355,14 +415,31 @@ export function buildTradeSignal(
   }
 
   const slDist = price * slPct;
-  const stopLoss = isLong ? Math.min(ticker.keyLevels.support1, price - slDist) : Math.max(ticker.keyLevels.resistance1, price + slDist);
-
-  // Targets based on natural R:R constraints
-  const riskAmount = Math.abs(price - stopLoss) || (price * slPct);
+  let stopLoss = isLong ? Math.min(ticker.keyLevels.support1, price - slDist) : Math.max(ticker.keyLevels.resistance1, price + slDist);
   
   // Natural targets based on market structure
   let target1 = isLong ? ticker.keyLevels.resistance1 : ticker.keyLevels.support1;
   let target2 = isLong ? ticker.keyLevels.resistance2 : ticker.keyLevels.support2;
+
+  // Institutional Counter-Trade Precision Anchoring (Stop Loss & Take Profits anchored on Trapped Zone)
+  if (strategyCategory === 'COUNTER_TRADE' && ticker.trappedTraders && ticker.trappedTraders.status !== 'BALANCED') {
+    if (isLong) {
+      // Short Squeeze: Stop loss safely below the trapped bottom cluster
+      const trapBottom = ticker.trappedTraders.trappedPriceZone[0];
+      stopLoss = Math.min(trapBottom * 0.998, price - price * 0.010);
+      target1 = ticker.rangeProfile.poc;
+      target2 = Math.max(ticker.rangeProfile.vah, ticker.keyLevels.resistance1);
+    } else {
+      // Fade Trapped Longs: Stop loss safely above the trapped top cluster
+      const trapTop = ticker.trappedTraders.trappedPriceZone[1];
+      stopLoss = Math.max(trapTop * 1.002, price + price * 0.010);
+      target1 = ticker.rangeProfile.poc;
+      target2 = Math.min(ticker.rangeProfile.val, ticker.keyLevels.support1);
+    }
+  }
+
+  // Targets based on natural R:R constraints
+  const riskAmount = Math.abs(price - stopLoss) || (price * slPct);
 
   // Sanity check to ensure targets are in the correct direction
   if (isLong) {

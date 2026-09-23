@@ -79,6 +79,9 @@ export const useTerminalKeybinds = ({
         case '9':
           onNavigateTab('backtest');
           break;
+        case '0':
+          onNavigateTab('counter_radar');
+          break;
         default:
           break;
       }

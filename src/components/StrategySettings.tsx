@@ -90,6 +90,15 @@ const PRESET_METRICS: Record<StrategyKey, {
     description: 'Estratégia institucional de longo prazo. Foco extremo em suporte/resistência macro e grandes desbalanços de Open Interest.',
     icon: '🏛️'
   },
+  counter: {
+    label: 'Contra-Trade (Fade & Squeeze)',
+    category: 'COUNTER_TRADE',
+    timeframe: '15m',
+    targetRR: '2.8x',
+    stopLossEst: '0.8% ~ 1.5%',
+    description: 'Fade institucional de traders presos (Trapped Traders) no topo/fundo, apoiado em Net Longs/Shorts extremos, TTI e absorção de CVD divergente.',
+    icon: '🎯'
+  },
   custom: {
     label: 'Personalizado',
     category: 'CUSTOM',
@@ -418,8 +427,8 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           </div>
         </div>
 
-        {/* 5 Strategy Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        {/* 6 Strategy Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           {ALL_STRATEGY_KEYS.map((key) => {
             const meta = PRESET_METRICS[key];
             const isEnabled = enabledStrategies.includes(key);
@@ -620,6 +629,23 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
               className="w-full accent-orange-500"
             />
             <p className="text-[10px] text-neutral-400">Preço testando o Point of Control de maior aceitação de valor.</p>
+          </div>
+
+          {/* Trapped Traders / Net Longs & Shorts (TTI) */}
+          <div className="space-y-1 bg-[#050505] p-3 rounded border border-white/5">
+            <div className="flex justify-between text-xs">
+              <span className="text-neutral-200 font-bold">Trapped Traders & Net Long/Short (TTI)</span>
+              <span className="text-orange-400 font-extrabold">{formWeights.trappedTradersWeight || 0} pts</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="40"
+              value={formWeights.trappedTradersWeight || 0}
+              onChange={(e) => handleSliderChange('trappedTradersWeight', parseInt(e.target.value))}
+              className="w-full accent-orange-500"
+            />
+            <p className="text-[10px] text-neutral-400">Identifica armadilhas institucionais e contra-trade com Net Longs/Shorts e TTI.</p>
           </div>
         </div>
 

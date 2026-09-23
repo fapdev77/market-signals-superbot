@@ -22,7 +22,8 @@ import {
   TrendingDown,
   Sun,
   Moon,
-  Palette
+  Palette,
+  Target
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -69,6 +70,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     { id: 'ai_motor', label: 'Motor de IA & Auditoria', icon: BrainCircuit, tab: 'ai_motor', shortcut: '7' },
     { id: 'chart', label: 'Análise Técnica & Volume Profile', icon: LineChart, tab: 'chart', shortcut: '8' },
     { id: 'backtest', label: 'Backtest Estatístico', icon: Database, tab: 'backtest', shortcut: '9' },
+    { id: 'counter_radar', label: 'Contra-Trade Radar (TTI) — Net Longs/Shorts & Trapped Traders', icon: Target, tab: 'counter_radar', shortcut: '0' },
     { id: 'settings', label: 'Pesos de Confluência & Estratégias', icon: SlidersHorizontal, tab: 'settings' }
   ];
 

@@ -76,6 +76,10 @@ export interface TickerData {
     fvgZone?: { top: number; bottom: number; type: 'BULLISH' | 'BEARISH' };
   };
   
+  // Institutional Order Flow & Trapped Traders
+  longShortData?: LongShortRatioData;
+  trappedTraders?: TrappedTradersData;
+  
   // Confluence & Signal
   confluenceScore: number;          // 0 to 100
   signalType: 'STRONG_LONG' | 'LONG' | 'NEUTRAL' | 'SHORT' | 'STRONG_SHORT';
@@ -83,6 +87,54 @@ export interface TickerData {
   confluenceFactors: string[];
   
   updatedAt: number;                // timestamp
+}
+
+export interface LongShortRatioData {
+  symbol: string;
+  globalRatio: number;               // Long / Short ratio of all accounts (e.g. 1.85)
+  longAccountPct: number;            // % of long accounts (e.g. 64.9%)
+  shortAccountPct: number;           // % of short accounts (e.g. 35.1%)
+  topTraderAccountRatio: number;     // Top trader accounts ratio
+  topTraderPositionRatio: number;    // Top trader positions ratio (weighted by volume)
+  topTraderLongPositionPct: number;  // % of top trader positions in Long
+  topTraderShortPositionPct: number; // % of top trader positions in Short
+  takerRatio: number;                // Taker Buy / Taker Sell volume ratio
+  takerBuyVolUsd: number;            // Taker Buy volume in USD
+  takerSellVolUsd: number;           // Taker Sell volume in USD
+  timestamp: number;
+}
+
+export interface LiquidationEvent {
+  symbol: string;
+  side: 'BUY' | 'SELL';              // BUY = Short liquidated (forced buy), SELL = Long liquidated (forced sell)
+  price: number;
+  qty: number;
+  usdValue: number;
+  timestamp: number;
+}
+
+export interface LiquidationSummary {
+  totalBuyLiqUSD: number;            // Shorts forced to buy (Short Liquidations)
+  totalSellLiqUSD: number;           // Longs forced to sell (Long Liquidations)
+  netLiqUSD: number;                 // buyLiq - sellLiq
+  recentEvents: LiquidationEvent[];
+  lastSpikeAt?: number;
+}
+
+export interface TrappedTradersData {
+  status: 'TRAPPED_LONGS' | 'TRAPPED_SHORTS' | 'BALANCED';
+  trappedIndex: number;              // 0 to 100 (Trapped Traders Index - TTI)
+  trappedSide: 'LONG' | 'SHORT' | 'NONE';
+  trappedPriceZone: [number, number]; // [min, max] zone where aggressive traders are trapped
+  trappedPocPrice: number;           // VWAP / POC of the trap candle cluster
+  trappedVolumeUSD: number;          // Estimated trapped open interest / volume in USD
+  absorptionRatio: number;           // 0 to 100% (Wyckoff Effort vs Result absorption score)
+  divergenceType: 'BEARISH_ABSORPTION' | 'BULLISH_ABSORPTION' | 'NONE';
+  crowdSentiment: 'EXTREME_GREED' | 'BULLISH_CROWD' | 'NEUTRAL' | 'BEARISH_CROWD' | 'EXTREME_FEAR';
+  smartMoneyBias: 'ACCUMULATING_SHORTS' | 'ACCUMULATING_LONGS' | 'NEUTRAL';
+  confluenceVerdict: string;         // Human readable institutional diagnostic
+  liquidationsSummary: LiquidationSummary;
+  updatedAt: number;
 }
 
 export interface OrderBookLevel {
@@ -126,7 +178,7 @@ export interface KlineCandle {
   quoteVolume?: number;
 }
 
-export type StrategyCategory = 'SCALP' | 'DAY_TRADE' | 'INTRADAY' | 'SWING' | 'POSITION' | 'CUSTOM';
+export type StrategyCategory = 'SCALP' | 'DAY_TRADE' | 'INTRADAY' | 'SWING' | 'POSITION' | 'COUNTER_TRADE' | 'CUSTOM';
 
 export interface TradeSignal {
   id: string;
@@ -168,7 +220,7 @@ export interface TradeSignal {
   status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
 }
 
-export type StrategyKey = 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'custom';
+export type StrategyKey = 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'counter' | 'custom';
 
 export interface StrategyConfigItem {
   key: StrategyKey;
@@ -186,10 +238,11 @@ export interface StrategyConfigItem {
   rangePocWeight: number;
   supportResistanceWeight: number;
   volumeProfileRange: number;
+  trappedTradersWeight?: number;
 }
 
 export interface IndicatorWeights {
-  activeStrategy?: 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'custom';
+  activeStrategy?: 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'counter' | 'custom';
   strategyLabel?: string;
   multiStrategyMode?: boolean;       // Se true, roda todas as estratégias habilitadas concorrentemente
   enabledStrategies?: StrategyKey[];  // Lista de estratégias ativas em paralelo no motor
@@ -201,6 +254,7 @@ export interface IndicatorWeights {
   fibonacciZoneWeight: number;      // default 15
   rangePocWeight: number;           // default 10
   supportResistanceWeight: number; // default 10
+  trappedTradersWeight?: number;    // default 25 (para contra-trade / fade de absorção)
   minRiskRewardRatio: number;       // default 2.5
   volumeProfileRange: number;       // default 50 (resolução em linhas/bins de preço)
   volumeProfileTimeframe?: string;  // default '30m'

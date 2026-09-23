@@ -2,7 +2,7 @@ import './server/utils/bootstrap.js';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { DEFAULT_SYMBOLS, TRADFI_ASSETS, fetchBinanceFuturesTickers, fetchOpenInterest, fetchFundingRate, fetchKlines } from './server/binanceService.js';
+import { DEFAULT_SYMBOLS, TRADFI_ASSETS, fetchBinanceFuturesTickers, fetchOpenInterest, fetchFundingRate, fetchKlines, fetchLongShortRatio } from './server/binanceService.js';
 import { initBinanceWebSocket, getWebSocketStatus } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels } from './server/db.js';
@@ -219,13 +219,17 @@ async function startServer() {
               quoteVolume: '4100000000'
             };
 
-            // Fetch primary/baseline Kline, Open Interest, Funding Rate
+            // Fetch primary/baseline Kline, Open Interest, Funding Rate, Long/Short Positioning
             const primaryTf = weights.volumeProfileTimeframe || '30m';
             const primaryCandles = weights.volumeProfileCandles || 48;
+            const currentRawPrice = parseFloat(raw.lastPrice || '100');
             const primaryKlines = await fetchKlines(symbol, primaryTf, primaryCandles);
-            const { openInterest } = await fetchOpenInterest(symbol);
-            const { fundingRate } = await fetchFundingRate(symbol);
-            const currentOi = openInterest || (parseFloat(raw.lastPrice || '100') * 50000);
+            const [{ openInterest }, { fundingRate }, longShortData] = await Promise.all([
+              fetchOpenInterest(symbol),
+              fetchFundingRate(symbol),
+              fetchLongShortRatio(symbol, currentRawPrice)
+            ]);
+            const currentOi = openInterest || (currentRawPrice * 50000);
 
             // Process quantitative state for primary ticker display
             const processed = processTickerState(
@@ -233,7 +237,8 @@ async function startServer() {
               primaryKlines,
               currentOi,
               fundingRate,
-              weights
+              weights,
+              longShortData
             );
 
             tickerStateCache[symbol] = processed;
@@ -263,7 +268,7 @@ async function startServer() {
             }
 
             // CONCURRENT MULTI-STRATEGY EVALUATION:
-            // Evaluate all active/enabled strategies in parallel (e.g. SCALP 5m, DAY TRADE 15m, INTRADAY 30m, SWING 1h, POSITION 4h)
+            // Evaluate all active/enabled strategies in parallel (e.g. SCALP 5m, DAY TRADE 15m, INTRADAY 30m, SWING 1h, POSITION 4h, CONTRA-TRADE 15m)
             const activeStrategies = resolveActiveStrategies(weights);
 
             for (const strat of activeStrategies) {
@@ -279,7 +284,8 @@ async function startServer() {
                   stratKlines,
                   currentOi,
                   fundingRate,
-                  stratWeights
+                  stratWeights,
+                  longShortData
                 );
 
                 const potentialSignal = buildTradeSignal(
