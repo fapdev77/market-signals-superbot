@@ -667,3 +667,59 @@ export interface DetectedChartPattern {
   keyLevelsConfluence: string;         // Level description (e.g. "Fib 0.618 + POC + Suporte 1")
 }
 
+// ==========================================
+// TERMINAL LAYOUTS & AUTO-TUNER TYPES
+// ==========================================
+
+export type TerminalLayoutMode = 
+  | 'modular_grid'      // Default multi-panel grid
+  | 'scalper_pro'       // Chart + Depth + Volume Spikes + Fast Signals
+  | 'quant_risk'        // Greeks exposure + VaR + Correlation + Heatmap
+  | 'screener_pro';     // Smart Volume Screener + Radar Screener + Sinais
+
+export type AutoTuneTargetObjective = 
+  | 'MAX_SHARPE'        // Maximize Sharpe ratio with optimal risk-adjusted alpha
+  | 'MAX_WIN_RATE'      // Maximize % of winning trades
+  | 'MAX_PROFIT_FACTOR' // Maximize gross profit / gross loss
+  | 'MIN_DRAWDOWN';     // Minimize equity volatility & max drawdown
+
+export interface StrategyAutoTuneMetrics {
+  sharpeRatio: number;
+  sortinoRatio: number;
+  winRate: number;              // 0 to 100
+  profitFactor: number;
+  maxDrawdownPct: number;
+  expectedTrades24h: number;
+  averageRiskReward: number;
+  annualizedReturnPct: number;
+  calmarRatio: number;
+}
+
+export interface AutoTuneCandidate {
+  id: string;
+  name: string;
+  objective: AutoTuneTargetObjective;
+  description: string;
+  weights: IndicatorWeights;
+  metrics: StrategyAutoTuneMetrics;
+  improvementVsCurrent: {
+    sharpeDeltaPct: number;
+    winRateDelta: number;
+    drawdownReductionPct: number;
+    profitFactorDelta: number;
+  };
+  keyChanges: string[];
+}
+
+export interface AutoTuneRunResult {
+  currentMetrics: StrategyAutoTuneMetrics;
+  bestCandidate: AutoTuneCandidate;
+  candidates: AutoTuneCandidate[];
+  analyzedSignalsCount: number;
+  simulatedIterations: number;
+  optimizationDurationMs: number;
+  timestamp: number;
+  recommendations: string[];
+}
+
+

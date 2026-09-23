@@ -11,6 +11,9 @@ import { AIModelsConfigDashboard } from './components/AIModelsConfigDashboard';
 import { BacktestDashboard } from './components/BacktestDashboard';
 import { ScreenerDashboard } from './components/ScreenerDashboard';
 import { SmartVolumeScreener } from './components/SmartVolumeScreener';
+import { TickerTape } from './components/TickerTape';
+import { CommandPalette } from './components/CommandPalette';
+import { useTerminalKeybinds } from './hooks/useTerminalKeybinds';
 import { defaultModels } from './config/defaultModels';
 import { useBinanceWebSocket } from './hooks/useBinanceWebSocket';
 import { TickerData, TradeSignal, BotState, IndicatorWeights, AIModelConfig } from './types';
@@ -32,6 +35,16 @@ export default function App() {
   const [selectedTicker, setSelectedTicker] = useState<TickerData | null>(null);
   const [selectedSignal, setSelectedSignal] = useState<TradeSignal | null>(null);
   const [autoTriggerAIReview, setAutoTriggerAIReview] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isLiveStreamPaused, setIsLiveStreamPaused] = useState<boolean>(false);
+  
+  // Terminal keybinds (1-9, Ctrl+K, Space, Esc)
+  useTerminalKeybinds({
+    onNavigateTab: (tab) => setActiveTab(tab),
+    onOpenCommandPalette: () => setIsCommandPaletteOpen(true),
+    onToggleLiveStream: () => setIsLiveStreamPaused(prev => !prev),
+    onCloseModals: () => setIsCommandPaletteOpen(false)
+  });
   
   // Confluence threshold for Prime Opportunity banner with localStorage persistence
   const [primeConfluenceThreshold, setPrimeConfluenceThreshold] = useState<number>(() => {
@@ -363,6 +376,35 @@ export default function App() {
         setActiveTab={setActiveTab}
         onToggleBot={handleToggleBot}
         onRefresh={fetchData}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onOpenAutoTune={() => setActiveTab('settings')}
+      />
+
+      {/* Real-time Ticker Tape */}
+      <TickerTape
+        tickers={tickers}
+        onSelectTicker={(t) => {
+          setSelectedTicker(t);
+          setSelectedSignal(null);
+          setAutoTriggerAIReview(false);
+          setActiveTab('chart');
+        }}
+      />
+
+      {/* Universal Command Palette (Ctrl + K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        tickers={tickers}
+        onSelectTicker={(t) => {
+          setSelectedTicker(t);
+          setSelectedSignal(null);
+          setAutoTriggerAIReview(false);
+          setActiveTab('chart');
+        }}
+        onNavigateToTab={(tab) => setActiveTab(tab)}
+        onTriggerAutoTune={() => setActiveTab('settings')}
+        onToggleBot={handleToggleBot}
       />
 
       {/* Main Content Area */}
@@ -554,6 +596,8 @@ export default function App() {
           <StrategySettings
             weights={botState.weights}
             onSaveWeights={handleSaveWeights}
+            signals={signals}
+            tickers={tickers}
           />
         )}
 

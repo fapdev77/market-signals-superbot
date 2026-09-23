@@ -60,3 +60,43 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #f97316;
 }
+
+/* Institutional Live Ticker Tape Marquee */
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marquee 55s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Live WebSocket Tick Flash Animation */
+@keyframes tickUpFlash {
+  0% { background-color: rgba(16, 185, 129, 0.35); }
+  100% { background-color: transparent; }
+}
+
+@keyframes tickDownFlash {
+  0% { background-color: rgba(244, 63, 94, 0.35); }
+  100% { background-color: transparent; }
+}
+
+.tick-flash-up {
+  animation: tickUpFlash 0.35s ease-out;
+}
+
+.tick-flash-down {
+  animation: tickDownFlash 0.35s ease-out;
+}
+

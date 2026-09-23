@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { IndicatorWeights, StrategyCategory, StrategyKey, StrategyConfigItem } from '../types';
+import { IndicatorWeights, StrategyCategory, StrategyKey, StrategyConfigItem, TradeSignal, TickerData } from '../types';
+import { StrategyAutoTuner } from './StrategyAutoTuner';
 import { 
   ALL_STRATEGY_KEYS, 
   STRATEGY_PRESETS, 
@@ -31,6 +32,8 @@ import { Tooltip } from './Tooltip';
 interface StrategySettingsProps {
   weights: IndicatorWeights;
   onSaveWeights: (newWeights: IndicatorWeights, scope?: 'ALL_FUTURE' | 'RESET_AND_RESCAN' | 'RESET_ALL_AND_RESCAN') => void;
+  signals?: TradeSignal[];
+  tickers?: TickerData[];
 }
 
 const PRESET_METRICS: Record<StrategyKey, {
@@ -100,10 +103,13 @@ const PRESET_METRICS: Record<StrategyKey, {
 
 export const StrategySettings: React.FC<StrategySettingsProps> = ({
   weights,
-  onSaveWeights
+  onSaveWeights,
+  signals = [],
+  tickers = []
 }) => {
   const [formWeights, setFormWeights] = useState<IndicatorWeights>(weights);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [showAutoTuner, setShowAutoTuner] = useState(true);
   const [activePreset, setActivePreset] = useState<StrategyKey>(
     weights.activeStrategy || 'intraday'
   );
@@ -301,6 +307,28 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
 
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto font-mono">
+      {/* Strategy Auto-Tuning Utility (Sharpe Ratio Optimizer) */}
+      <StrategyAutoTuner
+        currentWeights={formWeights}
+        historicalSignals={signals}
+        tickers={tickers}
+        onApplyWeights={(newWeights) => {
+          setFormWeights(prev => ({
+            ...prev,
+            ...newWeights,
+            activeStrategy: 'custom',
+            strategyLabel: 'Otimizado (Sharpe Pro)'
+          }));
+          setActivePreset('custom');
+          onSaveWeights({
+            ...formWeights,
+            ...newWeights,
+            activeStrategy: 'custom',
+            strategyLabel: 'Otimizado (Sharpe Pro)'
+          }, 'ALL_FUTURE');
+        }}
+      />
+
       {/* Live Engine Status Banner */}
       <div className="bg-[#0A0A0A] p-4 rounded-lg border border-cyan-500/30 shadow-xl space-y-3 relative overflow-hidden">
         <div className="absolute top-0 right-0 h-full w-48 bg-gradient-to-l from-cyan-500/5 to-transparent pointer-events-none" />
