@@ -27,6 +27,7 @@ import { MarketHeatmap } from './components/MarketHeatmap';
 import { DashboardGridLayout } from './components/DashboardGridLayout';
 import { LiquidityDepth } from './components/LiquidityDepth';
 import { RiskExposureDashboard } from './components/RiskExposureDashboard';
+import { SystemHealthWidget } from './components/SystemHealthWidget';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -367,7 +368,7 @@ export default function App() {
   }, [topGoldenPocketTicker, signals]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-white">
+    <div className="min-h-screen bg-[var(--bg-app,#050508)] text-[var(--text-primary,#f3f4f6)] flex flex-col font-sans selection:bg-cyan-500 selection:text-white transition-colors duration-200">
       {/* Header */}
       <Header
         botState={botState}
@@ -428,6 +429,13 @@ export default function App() {
             hasPrimeBanner={Boolean(topGoldenPocketTicker)}
             hasCorrelationMatrix={Boolean(topGoldenPocketTicker)}
             childrenMap={{
+              system_health: (
+                <SystemHealthWidget
+                  botState={botState}
+                  clientWsStatus={clientWsStatus}
+                  activeModels={botState.aiModels}
+                />
+              ),
               prime_banner: topGoldenPocketTicker ? (
                 <PrimeOpportunityBanner
                   ticker={topGoldenPocketTicker}

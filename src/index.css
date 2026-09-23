@@ -1,11 +1,517 @@
 @import "tailwindcss";
 
+:root,
+[data-theme="dark"],
+.theme-dark {
+  --bg-app: #050508;
+  --bg-surface: #0a0b0e;
+  --bg-surface-elevated: #111318;
+  --bg-card: #0e1015;
+  --bg-card-hover: #151821;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --accent-cyan: #06b6d4;
+  --accent-amber: #f59e0b;
+  --color-bull: #10b981;
+  --color-bear: #f43f5e;
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --scrollbar-thumb: #262626;
+  --scrollbar-track: #050505;
+}
+
+[data-theme="light"],
+.theme-light {
+  --bg-app: #f4f6f9;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --border-default: rgba(15, 23, 42, 0.14);
+  --border-strong: rgba(15, 23, 42, 0.24);
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent-cyan: #0284c7;
+  --accent-amber: #d97706;
+  --color-bull: #059669;
+  --color-bear: #e11d48;
+  --chart-grid: rgba(15, 23, 42, 0.06);
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-track: #f1f5f9;
+}
+
 @layer base {
   body {
-    background-color: #050505;
-    color: #f5f5f5;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
+}
+
+/* Pro Light High-Contrast Terminal Mode - Comprehensive Institutional Overrides */
+.theme-light,
+[data-theme="light"] {
+  --bg-app: #f4f6f9;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --border-subtle: #e2e8f0;
+  --border-default: #cbd5e1;
+  --border-strong: #94a3b8;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent-cyan: #0284c7;
+  --accent-amber: #d97706;
+  --color-bull: #059669;
+  --color-bear: #e11d48;
+  --chart-grid: rgba(15, 23, 42, 0.08);
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-track: #f1f5f9;
+}
+
+/* Base App Surfaces in Light Mode */
+.theme-light,
+.theme-light body,
+.theme-light #root,
+.theme-light main {
+  background-color: #f4f6f9 !important;
+  color: #0f172a !important;
+}
+
+/* Universal Dark Background Class Inversion (Cards, Panels, Containers) */
+.theme-light [class*="bg-slate-950"],
+.theme-light [class*="bg-slate-900"],
+.theme-light [class*="bg-slate-850"],
+.theme-light [class*="bg-slate-800"],
+.theme-light [class*="bg-neutral-950"],
+.theme-light [class*="bg-neutral-900"],
+.theme-light [class*="bg-neutral-850"],
+.theme-light [class*="bg-neutral-800"],
+.theme-light [class*="bg-zinc-950"],
+.theme-light [class*="bg-zinc-900"],
+.theme-light [class*="bg-zinc-800"],
+.theme-light [class*="bg-gray-950"],
+.theme-light [class*="bg-gray-900"],
+.theme-light [class*="bg-gray-800"],
+.theme-light [class*="bg-black"],
+.theme-light .bg-slate-950,
+.theme-light .bg-slate-900,
+.theme-light .bg-slate-800,
+.theme-light .bg-neutral-950,
+.theme-light .bg-neutral-900,
+.theme-light .bg-neutral-800,
+.theme-light .bg-black,
+.theme-light .bg-\[\#000\],
+.theme-light .bg-\[\#030303\],
+.theme-light .bg-\[\#040404\],
+.theme-light .bg-\[\#050505\],
+.theme-light .bg-\[\#050608\],
+.theme-light .bg-\[\#06120a\],
+.theme-light .bg-\[\#06120d\],
+.theme-light .bg-\[\#070707\],
+.theme-light .bg-\[\#070709\],
+.theme-light .bg-\[\#080808\],
+.theme-light .bg-\[\#08090C\],
+.theme-light .bg-\[\#090909\],
+.theme-light .bg-\[\#09090b\],
+.theme-light .bg-\[\#091a13\],
+.theme-light .bg-\[\#0a0a0a\],
+.theme-light .bg-\[\#0A0A0A\],
+.theme-light .bg-\[\#0a0a0c\],
+.theme-light .bg-\[\#0A0B0E\],
+.theme-light .bg-\[\#0B0B0B\],
+.theme-light .bg-\[\#0B0E14\],
+.theme-light .bg-\[\#0c0c0c\],
+.theme-light .bg-\[\#0c0d0e\],
+.theme-light .bg-\[\#0c0d10\],
+.theme-light .bg-\[\#0d0d0d\],
+.theme-light .bg-\[\#0D0D0D\],
+.theme-light .bg-\[\#0d0e12\],
+.theme-light .bg-\[\#0D0E12\],
+.theme-light .bg-\[\#0e0f12\],
+.theme-light .bg-\[\#0e1015\],
+.theme-light .bg-\[\#111\],
+.theme-light .bg-\[\#111111\],
+.theme-light .bg-\[\#111318\],
+.theme-light .bg-\[\#121212\],
+.theme-light .bg-\[\#140608\],
+.theme-light .bg-\[\#14151a\],
+.theme-light .bg-\[\#1a080b\],
+.theme-light .bg-\[\#1e222d\] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+}
+
+/* All Dark Borders and Dividers */
+.theme-light [class*="border-slate-"],
+.theme-light [class*="border-neutral-"],
+.theme-light [class*="border-zinc-"],
+.theme-light [class*="border-gray-"],
+.theme-light [class*="border-white/"],
+.theme-light [class*="divide-slate-"],
+.theme-light [class*="divide-neutral-"],
+.theme-light [class*="divide-zinc-"] {
+  border-color: #e2e8f0 !important;
+}
+
+/* Table Headers & Structure */
+.theme-light thead,
+.theme-light thead tr,
+.theme-light thead th {
+  background-color: #f1f5f9 !important;
+  color: #475569 !important;
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.theme-light tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Secondary Button Inversions (Pills, Filter Tabs, Modals) */
+.theme-light button[class*="bg-slate-800"]:not([class*="bg-cyan-"]):not([class*="bg-orange-"]):not([class*="bg-amber-"]):not([class*="bg-emerald-"]):not([class*="bg-rose-"]):not([class*="bg-indigo-"]),
+.theme-light button[class*="bg-neutral-800"]:not([class*="bg-cyan-"]):not([class*="bg-orange-"]):not([class*="bg-amber-"]):not([class*="bg-emerald-"]):not([class*="bg-rose-"]):not([class*="bg-indigo-"]) {
+  background-color: #f1f5f9 !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow: none !important;
+}
+
+.theme-light button[class*="bg-slate-800"]:hover:not([class*="bg-cyan-"]):not([class*="bg-orange-"]):not([class*="bg-amber-"]):not([class*="bg-emerald-"]):not([class*="bg-rose-"]):not([class*="bg-indigo-"]),
+.theme-light button[class*="bg-neutral-800"]:hover:not([class*="bg-cyan-"]):not([class*="bg-orange-"]):not([class*="bg-amber-"]):not([class*="bg-emerald-"]):not([class*="bg-rose-"]):not([class*="bg-indigo-"]) {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Gradients Overrides in Light Mode */
+.theme-light .bg-gradient-to-r,
+.theme-light .bg-gradient-to-br,
+.theme-light .bg-gradient-to-l {
+  background-image: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%) !important;
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Special High-Luminance Gradients for Hero Banners (Volume Screener, Prime Banners) */
+.theme-light [class*="from-amber-"],
+.theme-light [class*="from-orange-"] {
+  background-image: linear-gradient(135deg, #fffbeb 0%, #fef3c7 45%, #ffffff 100%) !important;
+  border-color: #fde68a !important;
+  box-shadow: 0 4px 6px -1px rgba(245, 158, 11, 0.08), 0 2px 4px -2px rgba(245, 158, 11, 0.05) !important;
+}
+
+.theme-light [class*="from-cyan-"],
+.theme-light [class*="from-blue-"],
+.theme-light [class*="from-sky-"] {
+  background-image: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 45%, #ffffff 100%) !important;
+  border-color: #bae6fd !important;
+}
+
+.theme-light [class*="from-emerald-"],
+.theme-light [class*="from-green-"] {
+  background-image: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 45%, #ffffff 100%) !important;
+  border-color: #a7f3d0 !important;
+}
+
+.theme-light [class*="from-rose-"],
+.theme-light [class*="from-red-"] {
+  background-image: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 45%, #ffffff 100%) !important;
+  border-color: #fecdd3 !important;
+}
+
+/* Inner Recessed Panels, Sub-metrics, and Metric Chips */
+.theme-light .bg-black\/40,
+.theme-light .bg-black\/50,
+.theme-light .bg-black\/60,
+.theme-light .bg-black\/80,
+.theme-light .bg-black\/90,
+.theme-light .bg-black\/95,
+.theme-light .bg-\[\#050505\]\/60,
+.theme-light .bg-\[\#050505\]\/80,
+.theme-light .bg-\[\#0A0A0A\]\/95,
+.theme-light .bg-slate-950\/80,
+.theme-light .bg-neutral-900\/60 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Secondary Filter Bars and Filter Strips (e.g. Corte R-Vol, Tipo, Urgência, Ordenar) */
+.theme-light .bg-neutral-900,
+.theme-light .bg-neutral-900\/80,
+.theme-light .bg-neutral-900\/40,
+.theme-light .bg-neutral-800 {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+  color: #334155 !important;
+}
+
+.theme-light .bg-neutral-900\/80 span,
+.theme-light .bg-neutral-900 span,
+.theme-light .bg-neutral-800 span {
+  color: #475569 !important;
+}
+
+.theme-light .bg-neutral-900\/80 select,
+.theme-light .bg-neutral-900 select,
+.theme-light .bg-neutral-800 select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 6px !important;
+  padding: 2px 8px !important;
+}
+
+.theme-light .bg-neutral-900\/80 button:not(.bg-amber-500\/30):not(.bg-amber-500),
+.theme-light .bg-neutral-900 button:not(.bg-amber-500):not(.bg-orange-500) {
+  background-color: #ffffff !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+/* Header & Bottom Navigation Specifics */
+.theme-light header,
+.theme-light nav {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+.theme-light nav.fixed.bottom-0 {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+  border-top-color: #e2e8f0 !important;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+}
+
+/* Borders in Light Mode */
+.theme-light .border-white\/5,
+.theme-light .border-white\/10,
+.theme-light .border-white\/15,
+.theme-light .border-white\/20,
+.theme-light .border-slate-900,
+.theme-light .border-slate-800,
+.theme-light .border-neutral-800,
+.theme-light .border-neutral-900 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Universal Typography & Text Contrast */
+.theme-light .text-white {
+  color: #0f172a !important;
+}
+
+/* Ensure text inside SVG Treemap blocks, colored badges and active buttons retains high contrast white */
+.theme-light foreignObject .text-white,
+.theme-light svg .text-white,
+.theme-light [data-treemap-label],
+.theme-light .bg-orange-500 .text-white,
+.theme-light .bg-orange-500 *,
+.theme-light .bg-amber-500 .text-white,
+.theme-light .bg-amber-500 *,
+.theme-light .bg-emerald-600 .text-white,
+.theme-light .bg-rose-600 .text-white {
+  color: #ffffff !important;
+}
+
+.theme-light .text-slate-100,
+.theme-light .text-slate-200,
+.theme-light .text-slate-300,
+.theme-light .text-neutral-100,
+.theme-light .text-neutral-200,
+.theme-light .text-neutral-300 {
+  color: #1e293b !important;
+}
+
+.theme-light .text-slate-400,
+.theme-light .text-neutral-400 {
+  color: #475569 !important;
+}
+
+.theme-light .text-slate-500,
+.theme-light .text-neutral-500 {
+  color: #64748b !important;
+}
+
+.theme-light .text-slate-600,
+.theme-light .text-neutral-600 {
+  color: #94a3b8 !important;
+}
+
+/* Form Inputs, Dropdowns and Selects */
+.theme-light input,
+.theme-light select,
+.theme-light textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.theme-light input::placeholder,
+.theme-light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+.theme-light select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Buttons and Interactive States in Light Mode */
+.theme-light .hover\:bg-neutral-800:hover,
+.theme-light .hover\:bg-neutral-900:hover,
+.theme-light .hover\:bg-slate-900:hover,
+.theme-light .hover\:bg-white\/5:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Active Highlight Buttons (Orange / Amber / Cyan) */
+.theme-light .bg-orange-500 {
+  background-color: #f97316 !important;
+  color: #ffffff !important;
+  border-color: #ea580c !important;
+}
+
+.theme-light .bg-amber-500 {
+  background-color: #f59e0b !important;
+  color: #ffffff !important;
+  border-color: #d97706 !important;
+}
+
+.theme-light .bg-orange-500\/10,
+.theme-light .bg-orange-500\/15,
+.theme-light .bg-orange-500\/20 {
+  background-color: #fff7ed !important;
+  border-color: #fed7aa !important;
+  color: #c2410c !important;
+}
+
+.theme-light .text-orange-400,
+.theme-light .text-orange-500 {
+  color: #ea580c !important;
+}
+
+/* Bullish / Long / Win Badges */
+.theme-light .bg-emerald-500\/10,
+.theme-light .bg-emerald-500\/15,
+.theme-light .bg-emerald-500\/20 {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+  color: #047857 !important;
+}
+
+.theme-light .text-emerald-400,
+.theme-light .text-emerald-500 {
+  color: #059669 !important;
+}
+
+/* Bearish / Short / Loss Badges */
+.theme-light .bg-rose-500\/10,
+.theme-light .bg-rose-500\/15,
+.theme-light .bg-rose-500\/20,
+.theme-light .bg-red-500\/10,
+.theme-light .bg-red-500\/20 {
+  background-color: #fff1f2 !important;
+  border-color: #fecdd3 !important;
+  color: #be123c !important;
+}
+
+.theme-light .text-rose-400,
+.theme-light .text-rose-500,
+.theme-light .text-red-400 {
+  color: #e11d48 !important;
+}
+
+/* Cyan / Info / Order Flow Badges */
+.theme-light .bg-cyan-500 {
+  background-color: #0284c7 !important;
+  color: #ffffff !important;
+  border-color: #0369a1 !important;
+}
+
+.theme-light .bg-cyan-500 *,
+.theme-light .bg-cyan-500 .text-slate-950,
+.theme-light .bg-cyan-500 .text-black {
+  color: #ffffff !important;
+}
+
+.theme-light .bg-cyan-500\/10,
+.theme-light .bg-cyan-500\/15,
+.theme-light .bg-cyan-500\/20,
+.theme-light .bg-cyan-500\/30 {
+  background-color: #f0f9ff !important;
+  border-color: #bae6fd !important;
+  color: #0369a1 !important;
+}
+
+.theme-light .text-cyan-400,
+.theme-light .text-cyan-500 {
+  color: #0284c7 !important;
+}
+
+/* Indigo / OI Expansion Badges */
+.theme-light .bg-indigo-500\/10,
+.theme-light .bg-indigo-500\/15,
+.theme-light .bg-indigo-500\/20 {
+  background-color: #eef2ff !important;
+  border-color: #c7d2fe !important;
+  color: #4f46e5 !important;
+}
+
+.theme-light .text-indigo-400,
+.theme-light .text-indigo-500 {
+  color: #4f46e5 !important;
+}
+
+/* Amber / Golden Pocket / Warning Badges */
+.theme-light .bg-amber-500\/10,
+.theme-light .bg-amber-500\/15,
+.theme-light .bg-amber-500\/20,
+.theme-light .bg-amber-500\/30 {
+  background-color: #fffbeb !important;
+  border-color: #fde68a !important;
+  color: #b45309 !important;
+}
+
+.theme-light .text-amber-400,
+.theme-light .text-amber-500,
+.theme-light .text-amber-300 {
+  color: #d97706 !important;
+}
+
+/* Ticker Tape in Light Mode */
+.theme-light .animate-marquee {
+  background-color: #ffffff !important;
+}
+
+.theme-light .ticker-tape-item {
+  border-color: #e2e8f0 !important;
+}
+
+/* Tooltip & Popover Enhancements in Light Mode */
+.theme-light [role="tooltip"],
+.theme-light .tooltip-content {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.theme-light [role="tooltip"] .text-white,
+.theme-light .tooltip-content .text-white {
+  color: #ffffff !important;
+}
+
+.theme-light [role="tooltip"] .text-neutral-400,
+.theme-light .tooltip-content .text-neutral-400 {
+  color: #cbd5e1 !important;
 }
 
 /* Custom smooth entrance and attention animations for alert banners */
@@ -49,11 +555,11 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #050505;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #262626;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
@@ -99,4 +605,5 @@
 .tick-flash-down {
   animation: tickDownFlash 0.35s ease-out;
 }
+
 

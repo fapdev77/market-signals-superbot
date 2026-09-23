@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { 
   Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, 
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
-  Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, Sparkles, Search 
+  Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, Sparkles, Search,
+  Sun, Moon
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 import { BotState, TickerData } from '../types';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { isAudioEnabled, setAudioEnabled, requestNotificationPermission, isNotificationEnabled, setNotificationEnabled, sendDesktopNotification, playSignalTone } from '../utils/soundAlerts';
@@ -37,6 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [networkPing, setNetworkPing] = useState<number>(14);
   const { showToast } = useToast();
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     // Simulate slight natural ping variation 12-24ms
@@ -541,6 +544,34 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               {notifEnabled ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+            </button>
+          </Tooltip>
+
+          {/* Theme Engine Switcher (Institutional Dark vs Pro Light) */}
+          <Tooltip
+            position="bottom-right"
+            title={`Tema do Terminal: ${theme === 'dark' ? 'INSTITUTIONAL DARK' : 'PRO LIGHT'}`}
+            badge="TEMA UI"
+            content={
+              theme === 'dark'
+                ? 'Modo Dark Institucional ativo com fundo OLED e alto contraste. Clique para alternar para o modo Pro Light diurno.'
+                : 'Modo Pro Light diurno de alto contraste ativo para ambientes iluminados. Clique para alternar para Institutional Dark.'
+            }
+          >
+            <button
+              onClick={toggleTheme}
+              className={`p-1.5 rounded border transition flex items-center justify-center ${
+                theme === 'light'
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 hover:bg-amber-500/30'
+                  : 'bg-neutral-900 border-white/10 text-neutral-300 hover:text-white hover:bg-neutral-800'
+              }`}
+              aria-label="Alternar Tema Visual"
+            >
+              {theme === 'light' ? (
+                <Sun className="h-3.5 w-3.5 text-amber-500 animate-spin-slow" />
+              ) : (
+                <Moon className="h-3.5 w-3.5 text-cyan-400" />
+              )}
             </button>
           </Tooltip>
 

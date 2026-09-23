@@ -21,11 +21,13 @@ import {
   Sparkles,
   Lock,
   Unlock,
-  Scale
+  Scale,
+  Server
 } from 'lucide-react';
 import { useToast } from './Toast';
 
 export type DashboardWidgetId = 
+  | 'system_health'
   | 'prime_banner'
   | 'market_heatmap'
   | 'liquidity_depth'
@@ -45,30 +47,33 @@ export interface WidgetConfig {
 
 const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   lg: [
-    { i: 'prime_banner', x: 0, y: 0, w: 12, h: 4, minW: 6, minH: 3 },
-    { i: 'market_heatmap', x: 0, y: 4, w: 12, h: 9, minW: 6, minH: 6 },
-    { i: 'liquidity_depth', x: 0, y: 13, w: 12, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 23, w: 12, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 30, w: 12, h: 14, minW: 6, minH: 6 }
+    { i: 'system_health', x: 0, y: 0, w: 12, h: 5, minW: 6, minH: 4 },
+    { i: 'prime_banner', x: 0, y: 5, w: 12, h: 4, minW: 6, minH: 3 },
+    { i: 'market_heatmap', x: 0, y: 9, w: 12, h: 9, minW: 6, minH: 6 },
+    { i: 'liquidity_depth', x: 0, y: 18, w: 12, h: 10, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 28, w: 12, h: 7, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 35, w: 12, h: 14, minW: 6, minH: 6 }
   ],
   md: [
-    { i: 'prime_banner', x: 0, y: 0, w: 10, h: 4, minW: 5, minH: 3 },
-    { i: 'market_heatmap', x: 0, y: 4, w: 10, h: 9, minW: 5, minH: 6 },
-    { i: 'liquidity_depth', x: 0, y: 13, w: 10, h: 10, minW: 5, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 23, w: 10, h: 7, minW: 5, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 30, w: 10, h: 14, minW: 5, minH: 6 }
+    { i: 'system_health', x: 0, y: 0, w: 10, h: 5, minW: 5, minH: 4 },
+    { i: 'prime_banner', x: 0, y: 5, w: 10, h: 4, minW: 5, minH: 3 },
+    { i: 'market_heatmap', x: 0, y: 9, w: 10, h: 9, minW: 5, minH: 6 },
+    { i: 'liquidity_depth', x: 0, y: 18, w: 10, h: 10, minW: 5, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 28, w: 10, h: 7, minW: 5, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 35, w: 10, h: 14, minW: 5, minH: 6 }
   ],
   sm: [
-    { i: 'prime_banner', x: 0, y: 0, w: 6, h: 4, minW: 6, minH: 3 },
-    { i: 'market_heatmap', x: 0, y: 4, w: 6, h: 8, minW: 6, minH: 6 },
-    { i: 'liquidity_depth', x: 0, y: 12, w: 6, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 22, w: 6, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 29, w: 6, h: 14, minW: 6, minH: 6 }
+    { i: 'system_health', x: 0, y: 0, w: 6, h: 5, minW: 6, minH: 4 },
+    { i: 'prime_banner', x: 0, y: 5, w: 6, h: 4, minW: 6, minH: 3 },
+    { i: 'market_heatmap', x: 0, y: 9, w: 6, h: 8, minW: 6, minH: 6 },
+    { i: 'liquidity_depth', x: 0, y: 17, w: 6, h: 10, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 27, w: 6, h: 7, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 34, w: 6, h: 14, minW: 6, minH: 6 }
   ]
 };
 
-const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v3';
-const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v3';
+const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v4';
+const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v4';
 
 interface DashboardGridLayoutProps {
   childrenMap: Record<DashboardWidgetId, React.ReactNode>;
@@ -88,6 +93,16 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
 
   // Widget definitions
   const [widgets, setWidgets] = useState<WidgetConfig[]>([
+    {
+      id: 'system_health',
+      title: 'Saúde do Sistema & Feeds de Dados',
+      description: 'Telemetria de latência em tempo real, status de feeds WebSocket, processamento de Order Flow e motor de IA.',
+      icon: Server,
+      visible: true,
+      minW: 6,
+      minH: 4,
+      badge: 'PRO SLA'
+    },
     {
       id: 'prime_banner',
       title: 'Oportunidade Prime (Golden Pocket)',

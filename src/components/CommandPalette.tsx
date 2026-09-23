@@ -17,10 +17,14 @@ import {
   Cpu, 
   SlidersHorizontal, 
   X, 
-  Sparkles,
-  TrendingUp,
-  TrendingDown
+  Sparkles, 
+  TrendingUp, 
+  TrendingDown,
+  Sun,
+  Moon,
+  Palette
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -44,6 +48,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { theme, setTheme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (isOpen) {
@@ -94,6 +99,27 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         if (onToggleBot) onToggleBot();
       },
       tag: 'BOT'
+    },
+    {
+      id: 'action_toggle_theme',
+      label: `Alternar Tema UI (Atualmente: ${theme === 'dark' ? 'Institutional Dark' : 'Pro Light'})`,
+      icon: Palette,
+      action: () => toggleTheme(),
+      tag: 'THEME'
+    },
+    {
+      id: 'action_theme_dark',
+      label: 'Ativar Modo Institutional Dark (OLED High-Contrast)',
+      icon: Moon,
+      action: () => setTheme('dark'),
+      tag: 'THEME'
+    },
+    {
+      id: 'action_theme_light',
+      label: 'Ativar Modo Pro Light (Day Trading Visibility)',
+      icon: Sun,
+      action: () => setTheme('light'),
+      tag: 'THEME'
     }
   ];
 
