@@ -17,6 +17,8 @@ import { Zap, Flame, ShieldCheck, RefreshCw, Activity, ArrowUpRight, Database } 
 import { playSignalTone, sendDesktopNotification } from './utils/soundAlerts';
 import { formatPrice } from './utils/formatters';
 import { GoldenPocketSparkline, GoldenPocketStats } from './components/GoldenPocketSparkline';
+import { MarketCorrelationMatrix } from './components/MarketCorrelationMatrix';
+import { PrimeOpportunityBanner } from './components/PrimeOpportunityBanner';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -25,6 +27,30 @@ export default function App() {
   const [selectedTicker, setSelectedTicker] = useState<TickerData | null>(null);
   const [selectedSignal, setSelectedSignal] = useState<TradeSignal | null>(null);
   const [autoTriggerAIReview, setAutoTriggerAIReview] = useState<boolean>(false);
+  
+  // Confluence threshold for Prime Opportunity banner with localStorage persistence
+  const [primeConfluenceThreshold, setPrimeConfluenceThreshold] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('prime_confluence_threshold');
+      if (saved) {
+        const val = Number(saved);
+        if (!isNaN(val) && val >= 50 && val <= 95) return val;
+      }
+    } catch {
+      // ignore
+    }
+    return 60;
+  });
+
+  const handleUpdateConfluenceThreshold = (val: number) => {
+    setPrimeConfluenceThreshold(val);
+    try {
+      localStorage.setItem('prime_confluence_threshold', val.toString());
+    } catch {
+      // ignore
+    }
+  };
+
   const knownSignalIdsRef = useRef<Set<string>>(new Set());
   const isInitialSignalsLoadRef = useRef(true);
 
@@ -247,8 +273,8 @@ export default function App() {
     setActiveTab('chart');
   };
 
-  // Prime Opportunity Highlighted Signal
-  const topGoldenPocketTicker = tickers.find(t => t.fibonacci.inGoldenPocket && t.confluenceScore >= 60);
+  // Prime Opportunity Highlighted Signal based on customizable confluence threshold
+  const topGoldenPocketTicker = tickers.find(t => t.fibonacci.inGoldenPocket && t.confluenceScore >= primeConfluenceThreshold);
 
   // Compute Golden Pocket recent stats & sparkline for the highlighted symbol
   const goldenPocketStats: GoldenPocketStats | null = React.useMemo(() => {
@@ -339,46 +365,52 @@ export default function App() {
         {/* Top Prime Signal Alert Banner - Fixed height container to prevent layout shift (scroll jumping) */}
         <div className="min-h-[88px]">
           {topGoldenPocketTicker ? (
-            <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/40 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl animate-fade-in h-full">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
-                  <Flame className="h-6 w-6 animate-bounce" />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-bold font-mono text-white">
-                      OPORTUNIDADE PRIME: {topGoldenPocketTicker.symbol}
-                    </h3>
-
-                    {/* Mini Sparkline & Success Count Indicator */}
-                    {goldenPocketStats && (
-                      <GoldenPocketSparkline stats={goldenPocketStats} />
-                    )}
-
-                    <span className="text-[10px] bg-amber-500/20 text-amber-300 font-extrabold px-2 py-0.5 rounded uppercase">
-                      {topGoldenPocketTicker.confluenceScore}% Confluência
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-300 mt-1">
-                    Preço em {formatPrice(topGoldenPocketTicker.price, { currency: true })} no Golden Pocket Fibo (0.618 - 0.68) com CVD {topGoldenPocketTicker.cvdDirection === 'BUY' ? 'Comprador' : 'Vendedor'}.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => handleSelectTickerBySymbol(topGoldenPocketTicker.symbol)}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 shadow-lg shadow-amber-500/20 whitespace-nowrap"
-              >
-                Analisar {topGoldenPocketTicker.symbol}
-                <ArrowUpRight className="h-4 w-4" />
-              </button>
-            </div>
+            <PrimeOpportunityBanner
+              ticker={topGoldenPocketTicker}
+              stats={goldenPocketStats}
+              onAnalyzeTicker={handleSelectTickerBySymbol}
+              confluenceThreshold={primeConfluenceThreshold}
+              onUpdateConfluenceThreshold={handleUpdateConfluenceThreshold}
+            />
           ) : (
-            <div className="h-full border border-dashed border-white/5 rounded-2xl flex items-center justify-center text-xs text-neutral-600 font-mono bg-[#050505]/50">
-               Buscando oportunidades em zona de retração...
+            <div className="h-[88px] border border-dashed border-white/10 rounded-2xl flex flex-col sm:flex-row items-center justify-between px-6 py-3 text-xs text-neutral-400 font-mono bg-[#050505]/60 gap-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-500/50 animate-pulse" />
+                <span>Nenhum ativo no Golden Pocket com confluência &ge; <strong>{primeConfluenceThreshold}%</strong></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-neutral-500">Ajustar corte:</span>
+                {[60, 70, 75].map(preset => (
+                  <button
+                    key={preset}
+                    onClick={() => handleUpdateConfluenceThreshold(preset)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                      primeConfluenceThreshold === preset
+                        ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                        : 'bg-neutral-900 text-neutral-300 border-white/10 hover:border-white/30'
+                    }`}
+                  >
+                    {preset}%
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
+
+        {/* Market Correlation Matrix: Confirming if Prime Opportunity is Sector-Wide */}
+        {topGoldenPocketTicker && (activeTab === 'dashboard' || activeTab === 'screener') && (
+          <MarketCorrelationMatrix
+            primeTicker={topGoldenPocketTicker}
+            tickers={tickers}
+            onSelectTicker={(t) => {
+              setSelectedTicker(t);
+              setSelectedSignal(null);
+              setAutoTriggerAIReview(false);
+              setActiveTab('chart');
+            }}
+          />
+        )}
 
         {/* Dynamic Tab Views */}
         {activeTab === 'dashboard' && (

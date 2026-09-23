@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircle2, TrendingUp, Award } from 'lucide-react';
 import { Tooltip } from './Tooltip';
+import { GoldenPocketOutcomesChart } from './GoldenPocketOutcomesChart';
 
 export interface GoldenPocketStats {
   symbol: string;
@@ -74,17 +75,15 @@ export const GoldenPocketSparkline: React.FC<GoldenPocketSparklineProps> = ({ st
               <span className="text-white font-bold">{winRate}%</span>
             </div>
           </div>
-          <div className="flex items-center gap-1 pt-1">
-            <span className="text-[10px] text-neutral-400">Últimos disparos:</span>
-            <div className="flex items-center gap-1 ml-auto">
-              {points.slice(-5).map((p, i) => (
-                <span 
-                  key={i} 
-                  className={`w-2 h-2 rounded-full ${p.profitable ? 'bg-emerald-400' : 'bg-rose-400'}`}
-                  title={`${p.profitable ? 'Alvo atingido' : 'Stop'} (${p.pnlPct > 0 ? '+' : ''}${p.pnlPct.toFixed(1)}%)`}
-                />
-              ))}
-            </div>
+
+          {/* D3-based Bar Chart visualizing the distribution of gains and losses */}
+          <div className="pt-2 border-t border-white/10">
+            <GoldenPocketOutcomesChart
+              symbol={stats.symbol}
+              outcomes={recentOutcomes.slice(-8)}
+              width={250}
+              height={100}
+            />
           </div>
         </div>
       }
