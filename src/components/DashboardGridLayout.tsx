@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ResponsiveGridLayout, 
   useContainerWidth, 
@@ -22,7 +22,8 @@ import {
   Lock,
   Unlock,
   Scale,
-  Server
+  Server,
+  CheckCheck
 } from 'lucide-react';
 import { useToast } from './Toast';
 
@@ -76,141 +77,251 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   ]
 };
 
-const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v5';
-const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v5';
+const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v6';
+const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v6';
+
+// Helper to sanitize and ensure all widgets are present with proper dimensions
+function sanitizeLayouts(
+  inputLayouts: ResponsiveLayouts | null | undefined
+): ResponsiveLayouts {
+  const bps: Array<'lg' | 'md' | 'sm'> = ['lg', 'md', 'sm'];
+  const sanitized: ResponsiveLayouts = { lg: [], md: [], sm: [] };
+
+  bps.forEach(bp => {
+    const existing = inputLayouts?.[bp] || [];
+    const defaultBp = DEFAULT_LAYOUTS[bp] || [];
+    const defaultBpMap = new Map<string, LayoutItem>(defaultBp.map(item => [item.i, item]));
+    const resultItems: LayoutItem[] = [];
+    const seenIds = new Set<string>();
+
+    // Process existing saved items first
+    existing.forEach(item => {
+      if (!item || !item.i) return;
+      const defaultItem = defaultBpMap.get(item.i);
+      if (defaultItem) {
+        seenIds.add(item.i);
+        const minW = defaultItem.minW || 4;
+        const minH = defaultItem.minH || 3;
+        // Fix collapsed/corrupted dimensions
+        const fixedW = item.w && item.w >= minW ? item.w : defaultItem.w;
+        const fixedH = item.h && item.h >= minH ? item.h : defaultItem.h;
+        resultItems.push({
+          ...defaultItem,
+          ...item,
+          w: fixedW,
+          h: fixedH,
+          minW: defaultItem.minW,
+          minH: defaultItem.minH
+        });
+      }
+    });
+
+    // Append any known widgets missing from saved layout
+    defaultBp.forEach(defaultItem => {
+      if (!seenIds.has(defaultItem.i)) {
+        const maxY = resultItems.reduce((acc, curr) => Math.max(acc, (curr.y || 0) + (curr.h || 0)), 0);
+        resultItems.push({
+          ...defaultItem,
+          x: 0,
+          y: maxY
+        });
+      }
+    });
+
+    sanitized[bp] = resultItems;
+  });
+
+  return sanitized;
+}
+
+const INITIAL_WIDGETS: WidgetConfig[] = [
+  {
+    id: 'system_health',
+    title: 'Saúde do Sistema & Feeds de Dados',
+    description: 'Telemetria de latência em tempo real, status de feeds WebSocket, processamento de Order Flow e motor de IA.',
+    icon: Server,
+    visible: true,
+    minW: 6,
+    minH: 4,
+    badge: 'PRO SLA'
+  },
+  {
+    id: 'prime_banner',
+    title: 'Oportunidade Prime (Golden Pocket)',
+    description: 'Destaque algorítmico do ativo com maior confluência de order flow e fibonacci.',
+    icon: Sparkles,
+    visible: true,
+    minW: 6,
+    minH: 3,
+    badge: 'ALERTA'
+  },
+  {
+    id: 'market_heatmap',
+    title: 'Mapa de Calor Global (Heatmap D3)',
+    description: 'Treemap visual com volume 24h e desvio da Média Móvel de 24h (MA24h).',
+    icon: Flame,
+    visible: true,
+    minW: 6,
+    minH: 6,
+    badge: 'D3'
+  },
+  {
+    id: 'volatility_heatmap',
+    title: 'Heatmap de Volatilidade & Ação (ATR)',
+    description: 'Mapeamento de expansão de volatilidade, ATR%, compressão de range e ranking de ativos de alta ação.',
+    icon: Activity,
+    visible: true,
+    minW: 6,
+    minH: 5,
+    badge: 'ATR PRO'
+  },
+  {
+    id: 'liquidity_depth',
+    title: 'Profundidade de Liquidez & Pressão (D3 Depth)',
+    description: 'Curvas cumulativas de Bids vs Asks, spread, desequilíbrio e muralhas institucionais.',
+    icon: Scale,
+    visible: true,
+    minW: 6,
+    minH: 7,
+    badge: 'D3'
+  },
+  {
+    id: 'correlation_matrix',
+    title: 'Matriz de Correlação Setorial',
+    description: 'Análise de correlação estatística de Pearson com o ativo de destaque.',
+    icon: Layers,
+    visible: true,
+    minW: 6,
+    minH: 5
+  },
+  {
+    id: 'ticker_grid',
+    title: 'Grid de Ativos & Métricas Quânticas',
+    description: 'Catálogo de ativos com cards técnicos, força de tendência e filtros rápidos.',
+    icon: Zap,
+    visible: true,
+    minW: 6,
+    minH: 6
+  }
+];
 
 interface DashboardGridLayoutProps {
   childrenMap: Record<DashboardWidgetId, React.ReactNode>;
-  hasPrimeBanner: boolean;
-  hasCorrelationMatrix: boolean;
+  hasPrimeBanner?: boolean;
+  hasCorrelationMatrix?: boolean;
 }
 
 export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
-  childrenMap,
-  hasPrimeBanner,
-  hasCorrelationMatrix
+  childrenMap
 }) => {
   const { showToast } = useToast();
   const { width, containerRef, mounted } = useContainerWidth();
   const [isDraggable, setIsDraggable] = useState<boolean>(true);
   const [isCustomizing, setIsCustomizing] = useState<boolean>(false);
 
-  // Widget definitions
-  const [widgets, setWidgets] = useState<WidgetConfig[]>([
-    {
-      id: 'system_health',
-      title: 'Saúde do Sistema & Feeds de Dados',
-      description: 'Telemetria de latência em tempo real, status de feeds WebSocket, processamento de Order Flow e motor de IA.',
-      icon: Server,
-      visible: true,
-      minW: 6,
-      minH: 4,
-      badge: 'PRO SLA'
-    },
-    {
-      id: 'prime_banner',
-      title: 'Oportunidade Prime (Golden Pocket)',
-      description: 'Destaque algorítmico do ativo com maior confluência de order flow e fibonacci.',
-      icon: Sparkles,
-      visible: true,
-      minW: 6,
-      minH: 3,
-      badge: 'ALERTA'
-    },
-    {
-      id: 'market_heatmap',
-      title: 'Mapa de Calor Global (Heatmap D3)',
-      description: 'Treemap visual com volume 24h e desvio da Média Móvel de 24h (MA24h).',
-      icon: Flame,
-      visible: true,
-      minW: 6,
-      minH: 6,
-      badge: 'D3'
-    },
-    {
-      id: 'volatility_heatmap',
-      title: 'Heatmap de Volatilidade & Ação (ATR)',
-      description: 'Mapeamento de expansão de volatilidade, ATR%, compressão de range e ranking de ativos de alta ação.',
-      icon: Activity,
-      visible: true,
-      minW: 6,
-      minH: 5,
-      badge: 'ATR PRO'
-    },
-    {
-      id: 'liquidity_depth',
-      title: 'Profundidade de Liquidez & Pressão (D3 Depth)',
-      description: 'Curvas cumulativas de Bids vs Asks, spread, desequilíbrio e muralhas institucionais.',
-      icon: Scale,
-      visible: true,
-      minW: 6,
-      minH: 7,
-      badge: 'D3'
-    },
-    {
-      id: 'correlation_matrix',
-      title: 'Matriz de Correlação Setorial',
-      description: 'Análise de correlação estatística de Pearson com o ativo de destaque.',
-      icon: Layers,
-      visible: true,
-      minW: 6,
-      minH: 5
-    },
-    {
-      id: 'ticker_grid',
-      title: 'Grid de Ativos & Métricas Quânticas',
-      description: 'Catálogo de ativos com cards técnicos, força de tendência e filtros rápidos.',
-      icon: Zap,
-      visible: true,
-      minW: 6,
-      minH: 6
+  // Widget definitions initialized with saved visibility if present
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(() => {
+    try {
+      const savedVis = localStorage.getItem(STORAGE_VISIBILITY_KEY);
+      if (savedVis) {
+        const parsed: Record<string, boolean> = JSON.parse(savedVis);
+        return INITIAL_WIDGETS.map(w => ({
+          ...w,
+          visible: parsed[w.id] !== undefined ? parsed[w.id] : true
+        }));
+      }
+    } catch {
+      // ignore
     }
-  ]);
+    return INITIAL_WIDGETS;
+  });
 
-  // Load saved layouts or fallback to defaults
+  // Load saved layouts or fallback to sanitized defaults
   const [layouts, setLayouts] = useState<ResponsiveLayouts>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_LAYOUT_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.lg && parsed.md) {
-          return parsed;
+        if (parsed && (parsed.lg || parsed.md || parsed.sm)) {
+          return sanitizeLayouts(parsed);
         }
       }
     } catch {
       // ignore
     }
-    return DEFAULT_LAYOUTS;
+    return sanitizeLayouts(DEFAULT_LAYOUTS);
   });
 
-  // Load visibility preferences
-  useEffect(() => {
+  const handleLayoutChange = useCallback((currentLayout: Layout, allLayouts: ResponsiveLayouts) => {
+    const cleanLayouts = sanitizeLayouts(allLayouts);
+    setLayouts(cleanLayouts);
     try {
-      const savedVis = localStorage.getItem(STORAGE_VISIBILITY_KEY);
-      if (savedVis) {
-        const parsed: Record<string, boolean> = JSON.parse(savedVis);
-        setWidgets(prev => prev.map(w => ({
-          ...w,
-          visible: parsed[w.id] !== undefined ? parsed[w.id] : w.visible
-        })));
-      }
+      localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(cleanLayouts));
     } catch {
       // ignore
     }
   }, []);
 
-  const handleLayoutChange = (currentLayout: Layout, allLayouts: ResponsiveLayouts) => {
-    setLayouts(allLayouts);
-    try {
-      localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(allLayouts));
-    } catch {
-      // ignore
-    }
-  };
-
   const toggleWidgetVisibility = (id: DashboardWidgetId) => {
     setWidgets(prev => {
-      const next = prev.map(w => w.id === id ? { ...w, visible: !w.visible } : w);
+      const target = prev.find(w => w.id === id);
+      const willBeVisible = target ? !target.visible : true;
+      const next = prev.map(w => (w.id === id ? { ...w, visible: willBeVisible } : w));
+
+      // If re-enabling, ensure layouts has valid dimensions for this item across all breakpoints
+      if (willBeVisible) {
+        setLayouts(prevLayouts => {
+          const bps: Array<'lg' | 'md' | 'sm'> = ['lg', 'md', 'sm'];
+          const updated: ResponsiveLayouts = { ...prevLayouts };
+
+          bps.forEach(bp => {
+            const currentList = [...(updated[bp] || [])];
+            const defaultItem = DEFAULT_LAYOUTS[bp]?.find(d => d.i === id) || {
+              i: id,
+              x: 0,
+              y: 0,
+              w: bp === 'sm' ? 6 : bp === 'md' ? 10 : 12,
+              h: 8,
+              minW: bp === 'sm' ? 6 : 5,
+              minH: 4
+            };
+
+            const existingIndex = currentList.findIndex(item => item.i === id);
+            const maxY = currentList.reduce((acc, curr) => Math.max(acc, (curr.y || 0) + (curr.h || 0)), 0);
+
+            if (existingIndex >= 0) {
+              const current = currentList[existingIndex];
+              const minW = defaultItem.minW || 4;
+              const minH = defaultItem.minH || 3;
+              const fixedW = current.w && current.w >= minW ? current.w : defaultItem.w;
+              const fixedH = current.h && current.h >= minH ? current.h : defaultItem.h;
+              currentList[existingIndex] = {
+                ...defaultItem,
+                ...current,
+                w: fixedW,
+                h: fixedH,
+                minW: defaultItem.minW,
+                minH: defaultItem.minH
+              };
+            } else {
+              currentList.push({
+                ...defaultItem,
+                x: 0,
+                y: maxY
+              });
+            }
+            updated[bp] = currentList;
+          });
+
+          try {
+            localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(updated));
+          } catch {
+            // ignore
+          }
+          return updated;
+        });
+      }
+
       try {
         const visMap: Record<string, boolean> = {};
         next.forEach(w => { visMap[w.id] = w.visible; });
@@ -218,29 +329,51 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
       } catch {
         // ignore
       }
+
       return next;
     });
   };
 
+  const handleEnableAllWidgets = () => {
+    setWidgets(prev => {
+      const next = prev.map(w => ({ ...w, visible: true }));
+      try {
+        const visMap: Record<string, boolean> = {};
+        next.forEach(w => { visMap[w.id] = true; });
+        localStorage.setItem(STORAGE_VISIBILITY_KEY, JSON.stringify(visMap));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setLayouts(sanitizeLayouts(DEFAULT_LAYOUTS));
+    showToast('success', 'Todos os Widgets Ativados', 'Os 7 módulos foram reabilitados na tela.');
+  };
+
   const handleResetLayout = () => {
-    setLayouts(DEFAULT_LAYOUTS);
-    setWidgets(prev => prev.map(w => ({ ...w, visible: true })));
+    const cleanDefault = sanitizeLayouts(DEFAULT_LAYOUTS);
+    setLayouts(cleanDefault);
+    setWidgets(INITIAL_WIDGETS);
     try {
       localStorage.removeItem(STORAGE_LAYOUT_KEY);
       localStorage.removeItem(STORAGE_VISIBILITY_KEY);
-      showToast('info', 'Layout Redefinido', 'Os widgets foram restaurados para a ordem padrão.');
+      showToast('info', 'Layout Redefinido', 'Os 7 widgets foram restaurados com dimensões e posições padrão.');
     } catch {
       // ignore
     }
   };
 
-  // Determine active visible widgets
+  // Determine active visible widgets that have available content
   const visibleWidgets = widgets.filter(w => {
     if (!w.visible) return false;
-    if (w.id === 'prime_banner' && !hasPrimeBanner) return false;
-    if (w.id === 'correlation_matrix' && !hasCorrelationMatrix) return false;
-    return true;
+    return Boolean(childrenMap[w.id]);
   });
+
+  const getLayoutItemConfig = (widgetId: string) => {
+    const currentBpLayout = layouts['lg'] || DEFAULT_LAYOUTS['lg'];
+    const found = currentBpLayout?.find(item => item.i === widgetId);
+    return found || DEFAULT_LAYOUTS['lg']?.find(item => item.i === widgetId) || { i: widgetId, x: 0, y: 0, w: 12, h: 8 };
+  };
 
   return (
     <div className="space-y-3" ref={containerRef}>
@@ -255,12 +388,12 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
               <span className="text-xs font-black text-white uppercase tracking-wider font-mono">
                 Dashboard Customizável
               </span>
-              <span className="text-[9px] bg-white/5 text-neutral-400 px-1.5 py-0.5 rounded font-mono border border-white/10">
-                React Grid Layout
+              <span className="text-[9px] bg-orange-500/10 text-orange-400 px-1.5 py-0.5 rounded font-mono border border-orange-500/20">
+                {visibleWidgets.length} de {widgets.length} ATIVOS
               </span>
             </div>
             <p className="text-[11px] text-neutral-400">
-              Arraste pelo cabeçalho do widget para reordenar a prioridade de informações do seu estilo de trading.
+              Arraste pelo cabeçalho para reordenar os cards ou use o botão de visibilidade para ocultar/ativar módulos.
             </p>
           </div>
         </div>
@@ -288,8 +421,8 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
             onClick={() => setIsCustomizing(prev => !prev)}
             className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
               isCustomizing
-                ? 'bg-neutral-800 text-white border-white/30'
-                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+                ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 shadow-md shadow-orange-500/10'
+                : 'bg-neutral-900 text-neutral-300 border-white/10 hover:text-white hover:border-white/20'
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
@@ -299,7 +432,7 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
           {/* Reset Layout */}
           <button
             onClick={handleResetLayout}
-            className="px-2 py-1.5 rounded-lg text-xs font-mono text-neutral-400 hover:text-white bg-neutral-900 border border-white/10 hover:border-white/20 transition flex items-center gap-1"
+            className="px-2.5 py-1.5 rounded-lg text-xs font-mono text-neutral-400 hover:text-white bg-neutral-900 border border-white/10 hover:border-white/20 transition flex items-center gap-1.5"
             title="Restaurar layout inicial padrão"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -310,52 +443,77 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
 
       {/* Widget Customization Drawer */}
       {isCustomizing && (
-        <div className="bg-[#0c0d0e] border border-orange-500/20 rounded-xl p-3.5 shadow-xl space-y-2.5 animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-white/10 pb-2">
-            <span className="text-xs font-bold text-neutral-200 font-mono flex items-center gap-1.5">
-              <Eye className="w-3.5 h-3.5 text-orange-400" />
-              Visibilidade dos Painéis do Dashboard
-            </span>
-            <span className="text-[10px] text-neutral-500 font-mono">
-              Clique para ocultar/exibir qualquer widget
-            </span>
+        <div className="bg-[#0c0d0e] border border-orange-500/30 rounded-xl p-4 shadow-2xl space-y-3 animate-fadeIn">
+          <div className="flex flex-wrap items-center justify-between border-b border-white/10 pb-3 gap-2">
+            <div className="flex items-center gap-2">
+              <Eye className="w-4 h-4 text-orange-400" />
+              <div>
+                <span className="text-xs font-bold text-neutral-100 font-mono">
+                  Gerenciador de Módulos do Dashboard
+                </span>
+                <p className="text-[10px] text-neutral-400">
+                  Selecione quais painéis devem aparecer na sua área de trabalho operacional.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleEnableAllWidgets}
+                className="px-2.5 py-1 rounded-md text-[11px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 transition flex items-center gap-1"
+              >
+                <CheckCheck className="w-3.5 h-3.5" />
+                <span>Ativar Todos ({widgets.length})</span>
+              </button>
+              <button
+                onClick={() => setIsCustomizing(false)}
+                className="px-2.5 py-1 rounded-md text-[11px] font-mono text-neutral-400 hover:text-white bg-neutral-900 border border-white/10 hover:bg-neutral-800 transition"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
             {widgets.map(w => {
               const Icon = w.icon;
               return (
                 <div
                   key={w.id}
                   onClick={() => toggleWidgetVisibility(w.id)}
-                  className={`flex items-start justify-between p-2.5 rounded-lg border cursor-pointer select-none transition ${
+                  className={`flex items-start justify-between p-3 rounded-lg border cursor-pointer select-none transition-all ${
                     w.visible
-                      ? 'bg-neutral-900/90 border-white/20 hover:border-orange-500/50'
-                      : 'bg-black/50 border-white/5 opacity-50 hover:opacity-80'
+                      ? 'bg-neutral-900/90 border-orange-500/40 shadow-sm shadow-orange-500/5 hover:border-orange-500/70'
+                      : 'bg-black/60 border-white/5 opacity-50 hover:opacity-80 hover:border-white/20'
                   }`}
                 >
-                  <div className="flex items-start gap-2">
-                    <div className={`p-1.5 rounded ${w.visible ? 'bg-orange-500/20 text-orange-400' : 'bg-neutral-800 text-neutral-500'}`}>
-                      <Icon className="w-3.5 h-3.5" />
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div className={`p-2 rounded-md shrink-0 ${w.visible ? 'bg-orange-500/20 text-orange-400' : 'bg-neutral-800 text-neutral-500'}`}>
+                      <Icon className="w-4 h-4" />
                     </div>
-                    <div>
-                      <div className="text-xs font-bold text-white font-mono flex items-center gap-1">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-white font-mono flex items-center gap-1.5 truncate">
                         <span>{w.title}</span>
                       </div>
-                      <p className="text-[10px] text-neutral-400 line-clamp-1 mt-0.5">
+                      <p className="text-[10px] text-neutral-400 line-clamp-2 mt-1 leading-snug">
                         {w.description}
                       </p>
+                      {w.badge && (
+                        <span className="inline-block mt-1.5 px-1.5 py-0.2 rounded bg-white/5 text-[9px] font-mono text-neutral-400 border border-white/10">
+                          {w.badge}
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   <div className="shrink-0 ml-2">
                     {w.visible ? (
-                      <span className="text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 p-1 rounded-md flex items-center">
-                        <Check className="w-3 h-3" />
+                      <span className="text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 p-1 rounded-md flex items-center shadow-sm">
+                        <Check className="w-3.5 h-3.5" />
                       </span>
                     ) : (
-                      <span className="text-neutral-500 bg-neutral-900 p-1 rounded-md flex items-center">
-                        <EyeOff className="w-3 h-3" />
+                      <span className="text-neutral-500 bg-neutral-900 border border-white/5 p-1 rounded-md flex items-center">
+                        <EyeOff className="w-3.5 h-3.5" />
                       </span>
                     )}
                   </div>
@@ -390,15 +548,17 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
             {visibleWidgets.map(widget => {
               const content = childrenMap[widget.id];
               if (!content) return null;
+              const layoutConfig = getLayoutItemConfig(widget.id);
 
               return (
                 <div 
                   key={widget.id} 
-                  className="group/widget flex flex-col h-full rounded-2xl transition-shadow focus-within:ring-1 focus-within:ring-orange-500/50"
+                  data-grid={layoutConfig}
+                  className="group/widget flex flex-col h-full rounded-2xl transition-shadow focus-within:ring-1 focus-within:ring-orange-500/50 bg-[#060608] border border-white/5 overflow-hidden shadow-xl"
                 >
                   {/* Visual Drag Handle Bar */}
                   <div 
-                    className={`widget-drag-handle flex items-center justify-between px-3 py-1.5 bg-[#09090b] border-t border-x border-white/10 rounded-t-xl select-none transition-colors ${
+                    className={`widget-drag-handle flex items-center justify-between px-3.5 py-2 bg-[#09090b] border-b border-white/10 select-none transition-colors ${
                       isDraggable 
                         ? 'cursor-grab active:cursor-grabbing hover:bg-neutral-900 group-hover/widget:border-orange-500/30' 
                         : 'cursor-default'
@@ -406,7 +566,7 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
                   >
                     <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-400">
                       <GripVertical className={`w-3.5 h-3.5 ${isDraggable ? 'text-orange-400 animate-pulse' : 'text-neutral-600'}`} />
-                      <span className="font-bold text-neutral-300 uppercase tracking-wider">{widget.title}</span>
+                      <span className="font-bold text-neutral-200 uppercase tracking-wider">{widget.title}</span>
                       {widget.badge && (
                         <span className="px-1.5 py-0.2 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20 text-[9px]">
                           {widget.badge}
@@ -414,12 +574,22 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1 text-[10px] font-mono text-neutral-500">
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-500">
                       {isDraggable ? (
                         <span className="text-orange-400/80 text-[9px]">Arraste para mover</span>
                       ) : (
                         <span className="text-neutral-600 text-[9px]">Fixado</span>
                       )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleWidgetVisibility(widget.id);
+                        }}
+                        className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white transition"
+                        title="Ocultar este widget"
+                      >
+                        <EyeOff className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
 
@@ -434,7 +604,7 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
         ) : (
           <div className="space-y-4">
             {visibleWidgets.map(widget => (
-              <div key={widget.id}>
+              <div key={widget.id} className="rounded-2xl border border-white/10 overflow-hidden">
                 {childrenMap[widget.id]}
               </div>
             ))}
@@ -444,3 +614,4 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
     </div>
   );
 };
+

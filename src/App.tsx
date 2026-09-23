@@ -427,8 +427,6 @@ export default function App() {
         {/* Dashboard Tab with Drag-and-Drop Widgets Reordering via react-grid-layout */}
         {activeTab === 'dashboard' && (
           <DashboardGridLayout
-            hasPrimeBanner={Boolean(topGoldenPocketTicker)}
-            hasCorrelationMatrix={Boolean(topGoldenPocketTicker)}
             childrenMap={{
               system_health: (
                 <SystemHealthWidget
@@ -496,9 +494,9 @@ export default function App() {
                   ticker={selectedTicker || topGoldenPocketTicker || tickers[0]}
                 />
               ) : null,
-              correlation_matrix: topGoldenPocketTicker ? (
+              correlation_matrix: (topGoldenPocketTicker || selectedTicker || tickers[0]) ? (
                 <MarketCorrelationMatrix
-                  primeTicker={topGoldenPocketTicker}
+                  primeTicker={topGoldenPocketTicker || selectedTicker || tickers[0]}
                   tickers={tickers}
                   onSelectTicker={(t) => {
                     setSelectedTicker(t);
