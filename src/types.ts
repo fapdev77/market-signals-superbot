@@ -565,3 +565,105 @@ export interface PortfolioRiskSummary {
   sectorBreakdown: SectorRiskExposure[];
 }
 
+// ==========================================
+// SMART VOLUME SCREENER TYPES
+// ==========================================
+
+export type VolumeSpikeTimeframe = '1h' | '4h' | '1d';
+
+export type VolumeAnomalyType = 
+  | 'WHALE_ACCUMULATION'    // Strong price support/rise with high buy CVD and high volume
+  | 'BREAKOUT_SURGE'        // Heavy volume breaking resistance with momentum
+  | 'PANIC_DUMP'            // Aggressive selling volume breaking supports
+  | 'EXHAUSTION_CLIMAX'     // Giant volume spike at extreme high/low with stalling price
+  | 'UNUSUAL_EXPANSION';    // Relative volume spike without clear directional bias
+
+export interface TimeframeVolumeMetrics {
+  timeframe: VolumeSpikeTimeframe;
+  rvol: number;                  // Relative volume vs baseline (e.g. 2.45 = 245% of average)
+  volumeUsd: number;             // Estimated volume in USD for this timeframe
+  baselineAvgUsd: number;        // Normal expected volume in USD
+  isAnomaly: boolean;            // Whether rvol exceeds threshold
+  deltaPressure: 'BUY' | 'SELL' | 'NEUTRAL';
+  takerRatio: number;            // 0 to 1
+  zScore: number;                // Statistical deviation standard deviations (e.g. +3.2σ)
+  changePct: number;             // Price change in this timeframe window
+}
+
+export interface VolumeSpikeAlert {
+  id: string;
+  symbol: string;
+  name: string;
+  marketType: MarketType;
+  currentPrice: number;
+  priceChangePercent24h: number;
+  timeframes: {
+    '1h': TimeframeVolumeMetrics;
+    '4h': TimeframeVolumeMetrics;
+    '1d': TimeframeVolumeMetrics;
+  };
+  compositeRvol: number;         // Weighted multi-timeframe R-Vol
+  maxRvol: number;               // Highest single R-Vol across 1h, 4h, 1d
+  dominantTimeframe: VolumeSpikeTimeframe;
+  anomalyType: VolumeAnomalyType;
+  anomalyTitle: string;
+  anomalyDescription: string;
+  urgency: 'HIGH' | 'MEDIUM' | 'LOW';
+  cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL';
+  cvdDeltaUsd: number;
+  openInterestChange1h?: number;
+  detectedAt: number;
+  confluenceFactors: string[];
+  investigationChecklist: string[];
+}
+
+export interface VolumeScreenerFilterOptions {
+  timeframe: 'all' | VolumeSpikeTimeframe;
+  minRvol: number;
+  anomalyType: 'all' | VolumeAnomalyType;
+  marketType: 'all' | MarketType;
+  urgency: 'all' | 'HIGH' | 'MEDIUM';
+  searchQuery: string;
+  sortBy: 'rvol_desc' | 'volume_desc' | 'price_change_desc' | 'cvd_desc' | 'urgency_desc';
+}
+
+
+export type ChartPatternType = 
+  | 'BULL_FLAG'
+  | 'BEAR_FLAG'
+  | 'FALLING_WEDGE'
+  | 'RISING_WEDGE'
+  | 'ASCENDING_TRIANGLE'
+  | 'DESCENDING_TRIANGLE'
+  | 'DOUBLE_BOTTOM'
+  | 'DOUBLE_TOP'
+  | 'CUP_AND_HANDLE'
+  | 'HEAD_AND_SHOULDERS'
+  | 'INVERSE_HEAD_AND_SHOULDERS';
+
+export type PatternBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+export type PatternCategory = 'CONTINUATION' | 'REVERSAL' | 'BREAKOUT';
+export type PatternStage = 'FORMING' | 'READY_BREAKOUT' | 'CONFIRMED' | 'NEAR_TARGET';
+
+export interface DetectedChartPattern {
+  id: string;
+  type: ChartPatternType;
+  name: string;
+  shortName: string;
+  iconName?: string;
+  bias: PatternBias;
+  category: PatternCategory;
+  stage: PatternStage;
+  confidence: number;                  // 0 to 100
+  timeframe: string;                   // e.g. "15m - 1h"
+  breakoutTriggerPrice: number;        // Price level that triggers or confirms pattern
+  measuredMoveTarget: number;          // Theoretical price target after breakout
+  targetGainPct: number;               // % distance to target
+  suggestedStopLoss: number;           // Invalidation price
+  riskRewardRatio: number;             // Reward / Risk (e.g. 2.8)
+  poleOrBaseHeightPct?: number;        // Height of the impulse or pattern base
+  summary: string;                     // Short executive summary
+  technicalRationale: string[];        // Confluence factors validating the pattern
+  keyLevelsConfluence: string;         // Level description (e.g. "Fib 0.618 + POC + Suporte 1")
+}
+

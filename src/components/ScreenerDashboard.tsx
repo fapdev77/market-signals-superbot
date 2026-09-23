@@ -286,6 +286,18 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
             Apenas em Execução
           </button>
 
+          {/* Quick Jump to Smart Volume Screener Multi-TF */}
+          {onNavigateToTab && (
+            <button
+              type="button"
+              onClick={() => onNavigateToTab('volume_screener')}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Flame className="w-3.5 h-3.5 text-amber-400" />
+              Smart Volume Screener (1h/4h/1d)
+            </button>
+          )}
+
           {/* Sort Selector */}
           <select
             value={sortBy}

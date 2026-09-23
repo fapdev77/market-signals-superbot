@@ -16,6 +16,8 @@ import { BulkAlertManager } from './BulkAlertManager';
 import { AlertSoundSettingsMenu } from './AlertSoundSettingsMenu';
 import { PositionSizerCalculator } from './PositionSizerCalculator';
 import { UserPriceAlert } from '../types';
+import { getTopDetectedPattern } from '../utils/aiPatternScanner';
+import { PatternBadge } from './PatternBadge';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -918,6 +920,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     bosStatus = 'Testado';
   }
 
+  const detectedPattern = useMemo(() => {
+    return ticker ? getTopDetectedPattern(ticker) : null;
+  }, [ticker]);
+
   return (
     <div className="space-y-4 font-mono pb-10">
       {/* Top Asset Switcher Bar */}
@@ -927,11 +933,14 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             <ChartIcon className="h-4 w-4" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center flex-wrap gap-2">
               <h2 className="text-base font-extrabold text-white">{ticker.symbol}</h2>
               <span className="text-[10px] bg-neutral-900 text-neutral-300 font-bold px-1.5 py-0.5 rounded border border-white/5">
                 Sniper Dashboard
               </span>
+              {detectedPattern && (
+                <PatternBadge pattern={detectedPattern} />
+              )}
             </div>
             <p className="text-[10px] text-neutral-400">{ticker.name} • Timeframes Analisados: 1m, 5m, 15m, 1H, 4H, 1D</p>
           </div>

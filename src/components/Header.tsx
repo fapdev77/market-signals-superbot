@@ -105,6 +105,14 @@ export const Header: React.FC<HeaderProps> = ({
       desc: 'Mapa de calor global D3 por volume 24h e desvio da média móvel 24h (MA24h).'
     },
     {
+      id: 'volume_screener',
+      label: 'Volume Screener',
+      icon: Flame,
+      badge: 'SPIKE',
+      highlight: true,
+      desc: 'Smart Volume Screener: Identifica picos anômalos de volume relativo (R-Vol) e fluxo taker institucional em múltiplos timeframes (1h, 4h, 1d).'
+    },
+    {
       id: 'screener',
       label: 'Radar Screener',
       icon: Radar,

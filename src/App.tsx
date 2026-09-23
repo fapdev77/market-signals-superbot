@@ -10,6 +10,7 @@ import { AIDashboard } from './components/AIDashboard';
 import { AIModelsConfigDashboard } from './components/AIModelsConfigDashboard';
 import { BacktestDashboard } from './components/BacktestDashboard';
 import { ScreenerDashboard } from './components/ScreenerDashboard';
+import { SmartVolumeScreener } from './components/SmartVolumeScreener';
 import { defaultModels } from './config/defaultModels';
 import { useBinanceWebSocket } from './hooks/useBinanceWebSocket';
 import { TickerData, TradeSignal, BotState, IndicatorWeights, AIModelConfig } from './types';
@@ -462,6 +463,19 @@ export default function App() {
         )}
 
         {/* Dynamic Tab Views */}
+        {activeTab === 'volume_screener' && (
+          <SmartVolumeScreener
+            tickers={tickers}
+            onSelectTicker={(t) => {
+              setSelectedTicker(t);
+              setSelectedSignal(null);
+              setAutoTriggerAIReview(false);
+              setActiveTab('chart');
+            }}
+            onNavigateToTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+
         {activeTab === 'screener' && (
           <ScreenerDashboard
             onSelectTicker={(t) => {

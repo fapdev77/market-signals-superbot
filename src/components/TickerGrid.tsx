@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { TickerData } from '../types';
+import { TickerData, DetectedChartPattern, VolumeSpikeAlert } from '../types';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -14,15 +14,24 @@ import {
   RotateCcw, 
   SlidersHorizontal, 
   Star,
-  Gauge
+  Gauge,
+  Sparkles
 } from 'lucide-react';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { Tooltip } from './Tooltip';
 import { apiClient } from '../services/apiClient';
+import { scanAllTickersForPatterns } from '../utils/aiPatternScanner';
+import { PatternBadge } from './PatternBadge';
+import { PatternInspectorModal } from './PatternInspectorModal';
+import { getVolumeSpikesMap } from '../utils/volumeScreenerUtils';
+import { VolumeAlertBadge } from './VolumeAlertBadge';
+import { VolumeSpikeInspectorModal } from './VolumeSpikeInspectorModal';
 
 export type TickerSortOption = 
   | 'volatility_desc'
+  | 'volume_spike_desc'
   | 'trend_strength_desc'
+  | 'pattern_confidence_desc'
   | 'confluence_desc'
   | 'price_change_abs_desc'
   | 'price_change_desc'
@@ -198,10 +207,30 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
   onSelectTicker,
 }) => {
   const [filterMarket, setFilterMarket] = useState<'all' | 'crypto_futures' | 'tradfi'>('all');
-  const [filterSignal, setFilterSignal] = useState<'all' | 'signals_only' | 'golden_pocket' | 'favorites'>('all');
+  const [filterSignal, setFilterSignal] = useState<'all' | 'signals_only' | 'golden_pocket' | 'favorites' | 'patterns_only' | 'volume_anomalies'>('all');
   const [sortBy, setSortBy] = useState<TickerSortOption>('volatility_desc');
   const [searchQuery, setSearchQuery] = useState('');
   const [favoriteSymbols, setFavoriteSymbols] = useState<Set<string>>(new Set());
+  const [selectedPatternModal, setSelectedPatternModal] = useState<{ ticker: TickerData; pattern: DetectedChartPattern } | null>(null);
+  const [selectedVolumeAlertModal, setSelectedVolumeAlertModal] = useState<{ ticker: TickerData; alert: VolumeSpikeAlert } | null>(null);
+
+  // Run AI Pattern Scanner on all tickers
+  const tickerPatternsMap = useMemo(() => {
+    return scanAllTickersForPatterns(tickers);
+  }, [tickers]);
+
+  const patternsCount = useMemo(() => {
+    return tickerPatternsMap.size;
+  }, [tickerPatternsMap]);
+
+  // Run Smart Volume Screener on all tickers
+  const tickerVolumeAlertsMap = useMemo(() => {
+    return getVolumeSpikesMap(tickers, 1.75);
+  }, [tickers]);
+
+  const volumeAnomaliesCount = useMemo(() => {
+    return tickerVolumeAlertsMap.size;
+  }, [tickerVolumeAlertsMap]);
 
   // Load favorites from API
   useEffect(() => {
@@ -250,6 +279,8 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
       if (filterSignal === 'signals_only' && (t.signalType === 'NEUTRAL' || !t.signalType)) return false;
       if (filterSignal === 'golden_pocket' && !t.fibonacci?.inGoldenPocket) return false;
       if (filterSignal === 'favorites' && !favoriteSymbols.has(t.symbol)) return false;
+      if (filterSignal === 'patterns_only' && !tickerPatternsMap.has(t.symbol)) return false;
+      if (filterSignal === 'volume_anomalies' && !tickerVolumeAlertsMap.has(t.symbol)) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         return (t.symbol || '').toLowerCase().includes(q) || (t.name || '').toLowerCase().includes(q);
@@ -264,10 +295,20 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           const volB = getTickerVolatility(b);
           return volB - volA;
         }
+        case 'volume_spike_desc': {
+          const rvolA = tickerVolumeAlertsMap.get(a.symbol)?.maxRvol || 0;
+          const rvolB = tickerVolumeAlertsMap.get(b.symbol)?.maxRvol || 0;
+          return rvolB - rvolA;
+        }
         case 'trend_strength_desc': {
           const trendA = getTickerTrendStrength(a).score;
           const trendB = getTickerTrendStrength(b).score;
           return trendB - trendA;
+        }
+        case 'pattern_confidence_desc': {
+          const confA = tickerPatternsMap.get(a.symbol)?.[0]?.confidence || 0;
+          const confB = tickerPatternsMap.get(b.symbol)?.[0]?.confidence || 0;
+          return confB - confA;
         }
         case 'confluence_desc':
           return (b.confluenceScore || 0) - (a.confluenceScore || 0);
@@ -285,7 +326,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           return 0;
       }
     });
-  }, [tickers, filterMarket, filterSignal, searchQuery, sortBy]);
+  }, [tickers, filterMarket, filterSignal, searchQuery, sortBy, favoriteSymbols, tickerPatternsMap, tickerVolumeAlertsMap]);
 
   return (
     <div className="space-y-4">
@@ -410,6 +451,44 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                 GOLDEN POCKET (0.68)
               </button>
             </Tooltip>
+
+            <Tooltip
+              position="bottom"
+              title="Filtro de Padrões Gráficos IA"
+              badge="AI SCANNER"
+              content="Filtra ativos onde o scanner de padrões identificou figuras técnicas de continuidade ou reversão (Bull Flags, Cunhas, Triângulos, etc.)."
+            >
+              <button
+                onClick={() => setFilterSignal(filterSignal === 'patterns_only' ? 'all' : 'patterns_only')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border shrink-0 cursor-pointer ${
+                  filterSignal === 'patterns_only'
+                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 shadow-xs shadow-cyan-500/20'
+                    : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Sparkles className={`h-3 w-3 ${filterSignal === 'patterns_only' ? 'text-cyan-400' : 'text-neutral-400'}`} />
+                PADRÕES IA ({patternsCount})
+              </button>
+            </Tooltip>
+
+            <Tooltip
+              position="bottom"
+              title="Filtro de Alertas de Volume Anômalo"
+              badge="VOLUME ALERT"
+              content="Filtra ativos com volume relativo anormal (R-Vol) disparado em 1h, 4h ou 1d com fluxo institucional relevante."
+            >
+              <button
+                onClick={() => setFilterSignal(filterSignal === 'volume_anomalies' ? 'all' : 'volume_anomalies')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border shrink-0 cursor-pointer ${
+                  filterSignal === 'volume_anomalies'
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-xs shadow-amber-500/20'
+                    : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Flame className={`h-3 w-3 ${filterSignal === 'volume_anomalies' ? 'text-amber-400' : 'text-neutral-400'}`} />
+                VOLUME ALERT ({volumeAnomaliesCount})
+              </button>
+            </Tooltip>
           </div>
 
           {/* Sort By Dropdown */}
@@ -428,6 +507,8 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                 className="bg-transparent text-xs text-neutral-200 font-bold focus:outline-none cursor-pointer"
               >
                 <option value="volatility_desc" className="bg-[#0A0A0A] text-white">Maior Volatilidade (Range 24h)</option>
+                <option value="volume_spike_desc" className="bg-[#0A0A0A] text-white">Maior Anomalia de Volume (R-Vol)</option>
+                <option value="pattern_confidence_desc" className="bg-[#0A0A0A] text-white">Maior Confiança de Padrão IA</option>
                 <option value="trend_strength_desc" className="bg-[#0A0A0A] text-white">Maior Força de Tendência (ADX 1-5)</option>
                 <option value="confluence_desc" className="bg-[#0A0A0A] text-white">Score de Confluência (Maior → Menor)</option>
                 <option value="price_change_abs_desc" className="bg-[#0A0A0A] text-white">Maior Oscilação (|%| 24h)</option>
@@ -509,6 +590,8 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
             const changePct = t.priceChangePercent24h ?? 0;
             const volatility = getTickerVolatility(t);
             const trendStrength = getTickerTrendStrength(t);
+            const topPattern = tickerPatternsMap.get(t.symbol)?.[0] || null;
+            const topVolumeAlert = tickerVolumeAlertsMap.get(t.symbol) || null;
 
             return (
               <div
@@ -573,6 +656,30 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                       </div>
                     </Tooltip>
                   </div>
+
+                  {/* AI Pattern Scanner & Volume Alert Badges */}
+                  {(topPattern || topVolumeAlert) && (
+                    <div className="mt-1 mb-1.5 flex items-center justify-between flex-wrap gap-1">
+                      {topVolumeAlert && (
+                        <VolumeAlertBadge
+                          alert={topVolumeAlert}
+                          onInspect={(a, e) => {
+                            e.stopPropagation();
+                            setSelectedVolumeAlertModal({ ticker: t, alert: a });
+                          }}
+                        />
+                      )}
+                      {topPattern && (
+                        <PatternBadge
+                          pattern={topPattern}
+                          onInspect={(p, e) => {
+                            e.stopPropagation();
+                            setSelectedPatternModal({ ticker: t, pattern: p });
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
 
                   {/* Price & Change & Volatility */}
                   <div className="flex items-baseline justify-between my-2">
@@ -748,6 +855,26 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
             );
           })}
         </div>
+      )}
+
+      {/* AI Pattern Details Inspector Modal */}
+      {selectedPatternModal && (
+        <PatternInspectorModal
+          ticker={selectedPatternModal.ticker}
+          pattern={selectedPatternModal.pattern}
+          onClose={() => setSelectedPatternModal(null)}
+          onSelectTicker={onSelectTicker}
+        />
+      )}
+
+      {/* Volume Spike Inspector Modal */}
+      {selectedVolumeAlertModal && (
+        <VolumeSpikeInspectorModal
+          alert={selectedVolumeAlertModal.alert}
+          ticker={selectedVolumeAlertModal.ticker}
+          onClose={() => setSelectedVolumeAlertModal(null)}
+          onSelectTicker={onSelectTicker}
+        />
       )}
     </div>
   );
