@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, Volume2, VolumeX, Bell, BellOff } from 'lucide-react';
+import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, Volume2, VolumeX, Bell, BellOff, Radar } from 'lucide-react';
 import { BotState, TickerData } from '../types';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { isAudioEnabled, setAudioEnabled, requestNotificationPermission, isNotificationEnabled, setNotificationEnabled, sendDesktopNotification, playSignalTone } from '../utils/soundAlerts';
@@ -95,6 +95,14 @@ export const Header: React.FC<HeaderProps> = ({
       icon: Activity,
       badge: null,
       desc: 'Grid de pares de cripto futures e ativos tradicionais com variações, volume e métricas.'
+    },
+    {
+      id: 'screener',
+      label: 'Radar Screener',
+      icon: Radar,
+      badge: 'PRO',
+      highlight: true,
+      desc: 'Universo dinâmico: Top Momentum, favoritos (★), expansão de Open Interest e RVOL.'
     },
     {
       id: 'signals',

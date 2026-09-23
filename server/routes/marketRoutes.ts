@@ -143,5 +143,102 @@ export function createMarketRouter(
     }
   });
 
+  // ==========================================
+  // MARKET SCREENER & DYNAMIC UNIVERSE ENDPOINTS
+  // ==========================================
+
+  // Get current Screener assets & summary
+  router.get('/screener/assets', async (req: Request, res: Response) => {
+    try {
+      const { marketScreener } = await import('../services/MarketScreenerService.js');
+      let assets = marketScreener.getCachedAssets();
+      let summary = marketScreener.getLastSummary();
+
+      if (!assets || assets.length === 0) {
+        const scanResult = await marketScreener.runScreenerScan();
+        assets = scanResult.assets;
+        summary = scanResult.summary;
+      }
+
+      res.json({ assets, summary, monitoredSymbols: marketScreener.getMonitoredSymbols() });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to fetch screener assets' });
+    }
+  });
+
+  // Toggle favorite symbol (★)
+  router.post('/screener/favorites/toggle', async (req: Request, res: Response) => {
+    try {
+      const { symbol, isFavorite } = req.body;
+      if (!symbol || typeof symbol !== 'string') {
+        res.status(400).json({ error: 'Symbol is required' });
+        return;
+      }
+
+      const { toggleFavoriteSymbol } = await import('../db.js');
+      const { marketScreener } = await import('../services/MarketScreenerService.js');
+      
+      const updatedStatus = await toggleFavoriteSymbol(symbol.toUpperCase(), typeof isFavorite === 'boolean' ? isFavorite : undefined);
+      
+      // Trigger instant screener re-evaluation
+      await marketScreener.runScreenerScan(true);
+
+      // Trigger instant market scan loop for immediate UI update
+      if (triggerMarketScan) {
+        triggerMarketScan().catch(() => {});
+      }
+
+      res.json({ success: true, symbol: symbol.toUpperCase(), isFavorite: updatedStatus });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to toggle favorite' });
+    }
+  });
+
+  // Get Screener settings
+  router.get('/screener/settings', async (req: Request, res: Response) => {
+    try {
+      const { getScreenerSettings } = await import('../db.js');
+      const settings = await getScreenerSettings();
+      res.json(settings);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to fetch screener settings' });
+    }
+  });
+
+  // Save Screener settings
+  router.post('/screener/settings', async (req: Request, res: Response) => {
+    try {
+      const { saveScreenerSettings } = await import('../db.js');
+      const { marketScreener } = await import('../services/MarketScreenerService.js');
+      
+      await saveScreenerSettings(req.body);
+      const scanResult = await marketScreener.runScreenerScan(true);
+
+      if (triggerMarketScan) {
+        triggerMarketScan().catch(() => {});
+      }
+
+      res.json({ success: true, settings: req.body, summary: scanResult.summary });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to save screener settings' });
+    }
+  });
+
+  // Force Screener manual re-scan
+  router.post('/screener/run-now', async (req: Request, res: Response) => {
+    try {
+      const { marketScreener } = await import('../services/MarketScreenerService.js');
+      const scanResult = await marketScreener.runScreenerScan(true);
+
+      if (triggerMarketScan) {
+        triggerMarketScan().catch(() => {});
+      }
+
+      res.json({ success: true, summary: scanResult.summary, monitoredCount: scanResult.assets.filter(a => a.isMonitored).length });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to run screener scan' });
+    }
+  });
+
   return router;
 }

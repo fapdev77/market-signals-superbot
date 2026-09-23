@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { TickerData } from '../types';
 import { 
   TrendingUp, 
@@ -12,10 +12,12 @@ import {
   Search,
   X,
   RotateCcw,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Star
 } from 'lucide-react';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { Tooltip } from './Tooltip';
+import { apiClient } from '../services/apiClient';
 
 export type TickerSortOption = 
   | 'volatility_desc'
@@ -44,9 +46,37 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
   onSelectTicker,
 }) => {
   const [filterMarket, setFilterMarket] = useState<'all' | 'crypto_futures' | 'tradfi'>('all');
-  const [filterSignal, setFilterSignal] = useState<'all' | 'signals_only' | 'golden_pocket'>('all');
+  const [filterSignal, setFilterSignal] = useState<'all' | 'signals_only' | 'golden_pocket' | 'favorites'>('all');
   const [sortBy, setSortBy] = useState<TickerSortOption>('volatility_desc');
   const [searchQuery, setSearchQuery] = useState('');
+  const [favoriteSymbols, setFavoriteSymbols] = useState<Set<string>>(new Set());
+
+  // Load favorites from API
+  useEffect(() => {
+    apiClient.getScreenerAssets().then(res => {
+      const favs = new Set<string>();
+      (res.assets || []).forEach(a => {
+        if (a.isFavorite) favs.add(a.symbol);
+      });
+      setFavoriteSymbols(favs);
+    }).catch(() => {});
+  }, []);
+
+  const handleToggleFavoriteInGrid = async (symbol: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const isCurrentFav = favoriteSymbols.has(symbol);
+    try {
+      const res = await apiClient.toggleFavorite(symbol, !isCurrentFav);
+      setFavoriteSymbols(prev => {
+        const next = new Set(prev);
+        if (res.isFavorite) next.add(symbol);
+        else next.delete(symbol);
+        return next;
+      });
+    } catch (err) {
+      console.error('Failed to toggle favorite in grid:', err);
+    }
+  };
 
   const hasActiveFilters = 
     filterMarket !== 'all' || 
@@ -67,6 +97,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
       if (filterMarket !== 'all' && t.marketType !== filterMarket) return false;
       if (filterSignal === 'signals_only' && (t.signalType === 'NEUTRAL' || !t.signalType)) return false;
       if (filterSignal === 'golden_pocket' && !t.fibonacci?.inGoldenPocket) return false;
+      if (filterSignal === 'favorites' && !favoriteSymbols.has(t.symbol)) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         return (t.symbol || '').toLowerCase().includes(q) || (t.name || '').toLowerCase().includes(q);
@@ -182,6 +213,25 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
               >
                 <Zap className="h-3 w-3 text-orange-400" />
                 SINAIS ATIVOS
+              </button>
+            </Tooltip>
+
+            <Tooltip
+              position="bottom"
+              title="Filtro de Ativos Favoritos"
+              badge="FAVORITOS"
+              content="Mostra apenas ativos fixados pelo trader como favoritos permanentes na lista de monitoramento."
+            >
+              <button
+                onClick={() => setFilterSignal(filterSignal === 'favorites' ? 'all' : 'favorites')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition border shrink-0 cursor-pointer ${
+                  filterSignal === 'favorites'
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                    : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Star className={`h-3 w-3 ${filterSignal === 'favorites' ? 'fill-amber-400 text-amber-400' : 'text-neutral-400'}`} />
+                FAVORITOS ({favoriteSymbols.size})
               </button>
             </Tooltip>
 
@@ -314,6 +364,18 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                   <div className="flex items-start justify-between mb-1.5">
                     <div>
                       <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleFavoriteInGrid(t.symbol, e)}
+                          className={`p-0.5 rounded transition ${
+                            favoriteSymbols.has(t.symbol)
+                              ? 'text-amber-400 hover:text-amber-300'
+                              : 'text-neutral-600 hover:text-amber-400 opacity-60 group-hover:opacity-100'
+                          }`}
+                          title={favoriteSymbols.has(t.symbol) ? 'Remover dos favoritos' : 'Fixar como favorito'}
+                        >
+                          <Star className={`h-3.5 w-3.5 ${favoriteSymbols.has(t.symbol) ? 'fill-amber-400' : ''}`} />
+                        </button>
                         <h3 className="font-extrabold text-sm text-white group-hover:text-orange-400 transition flex items-center gap-1">
                           {t.symbol}
                         </h3>

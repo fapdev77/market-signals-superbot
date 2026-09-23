@@ -6,6 +6,7 @@ import { DEFAULT_SYMBOLS, TRADFI_ASSETS, fetchBinanceFuturesTickers, fetchOpenIn
 import { initBinanceWebSocket, getWebSocketStatus } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels } from './server/db.js';
+import { marketScreener } from './server/services/MarketScreenerService.js';
 import { TickerData, BotState, IndicatorWeights, StrategyCategory } from './src/types.js';
 import { createMarketRouter } from './server/routes/marketRoutes.js';
 import { createAIRouter } from './server/routes/aiRoutes.js';
@@ -197,11 +198,13 @@ async function startServer() {
       // 1. Fetch live Binance Futures 24h Tickers
       const rawFutures = await fetchBinanceFuturesTickers();
       const weights = botState.weights;
+      const activeSymbols = marketScreener.getMonitoredSymbols();
+      botState.activeTickersCount = activeSymbols.length + TRADFI_ASSETS.length;
 
       // Process in batches of 4 to prevent socket burst congestion and avoid rate limits
       const BATCH_SIZE = 4;
-      for (let i = 0; i < DEFAULT_SYMBOLS.length; i += BATCH_SIZE) {
-        const batch = DEFAULT_SYMBOLS.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < activeSymbols.length; i += BATCH_SIZE) {
+        const batch = activeSymbols.slice(i, i + BATCH_SIZE);
         await Promise.allSettled(batch.map(async (symbol) => {
           try {
             const raw = rawFutures.find((t: any) => t.symbol === symbol) || {
@@ -463,6 +466,28 @@ async function startServer() {
 
     runMarketTick();
     setInterval(runMarketTick, 4000);
+
+    // Initial Market Screener scan & recurring periodic rescan
+    marketScreener.runScreenerScan().then(() => {
+      runMarketTick(true);
+    }).catch(err => {
+      console.warn('Initial market screener scan warning:', err);
+    });
+
+    // Check periodically (every 5 minutes) if screener is due for rescan
+    setInterval(async () => {
+      try {
+        const { getScreenerSettings } = await import('./server/db.js');
+        const settings = await getScreenerSettings();
+        const intervalMs = (settings.rescanIntervalMinutes || 15) * 60 * 1000;
+        if (Date.now() - settings.lastRescanTimestamp >= intervalMs) {
+          await marketScreener.runScreenerScan();
+          runMarketTick(true);
+        }
+      } catch (err) {
+        console.warn('Scheduled screener rescan error:', err);
+      }
+    }, 60000);
   });
 }
 

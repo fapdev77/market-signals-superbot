@@ -30,6 +30,7 @@ import {
 } from 'recharts';
 import { Tooltip as AppTooltip } from './Tooltip';
 import { AILogEntry, AIModelConfig } from '../types';
+import { SignalHitRateD3Chart, SignalHitRatePerformanceData } from './SignalHitRateD3Chart';
 
 export const AIDashboard: React.FC = () => {
   const [logs, setLogs] = useState<AILogEntry[]>([]);
@@ -39,14 +40,17 @@ export const AIDashboard: React.FC = () => {
   const [providerFilter, setProviderFilter] = useState<string>('Todos');
   const [selectedLog, setSelectedLog] = useState<AILogEntry | null>(null);
   const [isClearing, setIsClearing] = useState<boolean>(false);
+  const [performanceData, setPerformanceData] = useState<SignalHitRatePerformanceData | null>(null);
+  const [isPerfLoading, setIsPerfLoading] = useState<boolean>(false);
 
-  // Fetch AI Telemetry Logs and Configured Models
+  // Fetch AI Telemetry Logs, Configured Models, and Signal Hit-Rate Performance
   const fetchDashboardData = async () => {
     setIsLoading(true);
     try {
-      const [resLogs, resModels] = await Promise.all([
+      const [resLogs, resModels, resPerf] = await Promise.all([
         fetch('/api/ai/logs'),
-        fetch('/api/settings/ai-models')
+        fetch('/api/settings/ai-models'),
+        fetch('/api/ai/performance?days=30')
       ]);
 
       if (resLogs.ok) {
@@ -58,10 +62,30 @@ export const AIDashboard: React.FC = () => {
         const dataModels: AIModelConfig[] = await resModels.json();
         setConfiguredModels(dataModels);
       }
+
+      if (resPerf.ok) {
+        const dataPerf: SignalHitRatePerformanceData = await resPerf.json();
+        setPerformanceData(dataPerf);
+      }
     } catch (err) {
       console.error('Erro ao carregar telemetria de IA:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const refreshPerformanceOnly = async () => {
+    setIsPerfLoading(true);
+    try {
+      const res = await fetch('/api/ai/performance?days=30');
+      if (res.ok) {
+        const data: SignalHitRatePerformanceData = await res.json();
+        setPerformanceData(data);
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar assertividade:', err);
+    } finally {
+      setIsPerfLoading(false);
     }
   };
 
@@ -629,6 +653,13 @@ export const AIDashboard: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* D3 Hit-Rate Performance Chart (Signal validation vs subsequent price action) */}
+      <SignalHitRateD3Chart 
+        data={performanceData} 
+        isLoading={isPerfLoading || isLoading} 
+        onRefresh={refreshPerformanceOnly} 
+      />
 
       {/* Grid: Daily Usage Chart & Usage per Type */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

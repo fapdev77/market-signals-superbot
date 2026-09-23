@@ -225,4 +225,33 @@ export const apiClient = {
   getBacktestTrades: (symbol: string): Promise<{ success: boolean; trades: Array<Record<string, unknown>> }> => {
     return request(`/api/backtest/trades/${encodeURIComponent(symbol)}`);
   },
+
+  // --- Market Screener & Universe ---
+  getScreenerAssets: (): Promise<{ assets: import('../types').ScreenerAsset[]; summary: import('../types').ScreenerScanSummary; monitoredSymbols: string[] }> => {
+    return request('/api/screener/assets');
+  },
+
+  toggleFavorite: (symbol: string, isFavorite?: boolean): Promise<{ success: boolean; symbol: string; isFavorite: boolean }> => {
+    return request('/api/screener/favorites/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, isFavorite }),
+    });
+  },
+
+  getScreenerSettings: (): Promise<import('../types').ScreenerSettings> => {
+    return request('/api/screener/settings');
+  },
+
+  saveScreenerSettings: (settings: import('../types').ScreenerSettings): Promise<{ success: boolean; settings: import('../types').ScreenerSettings }> => {
+    return request('/api/screener/settings', {
+      method: 'POST',
+      body: JSON.stringify(settings),
+    });
+  },
+
+  triggerScreenerScan: (): Promise<{ success: boolean; summary: import('../types').ScreenerScanSummary; monitoredCount: number }> => {
+    return request('/api/screener/run-now', {
+      method: 'POST',
+    });
+  },
 };

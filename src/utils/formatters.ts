@@ -215,6 +215,13 @@ export function formatCompactNumber(value: number | null | undefined, currency =
   return `${sign}${prefix}${abs.toFixed(2)}`;
 }
 
+/**
+ * Formata volumes em notação monetária compacta (ex: $4.20B, $85.4M)
+ */
+export function formatVolume(value: number | null | undefined): string {
+  return formatCompactNumber(value, true);
+}
+
 export interface TradeMetrics {
   entryPrice: number;
   riskPct: number;

@@ -381,3 +381,66 @@ export interface AutoTuneResult {
   createdAt: number;
 }
 
+// ============================================
+// MARKET SCREENER & DYNAMIC UNIVERSE TYPES
+// ============================================
+
+export type MarketSector = 'ALL' | 'FAVORITES' | 'L1_L2' | 'DEFI' | 'MEME' | 'AI' | 'TRADFI';
+
+export type ScreenerMode = 'HYBRID' | 'FAVORITES_ONLY' | 'TOP_SCREENER';
+
+export interface ScreenerAsset {
+  symbol: string;
+  baseAsset: string;
+  quoteAsset: string;
+  name: string;
+  price: number;
+  priceChangePercent24h: number;
+  volume24h: number;
+  quoteVolume24h: number;
+  high24h: number;
+  low24h: number;
+  openInterest: number;
+  openInterestChange1h: number;
+  openInterestChange24h: number;
+  fundingRate: number;
+  fundingRateAnnualized: number;
+  rvol: number;                     // Relative Volume vs standard
+  compositeScore: number;           // 0 to 100 ranking score
+  isFavorite: boolean;              // User pinned/favorite
+  isMonitored: boolean;             // Currently in the active 4s scan universe
+  monitoringReason: 'FAVORITE' | 'SCREENER_TOP' | 'ACTIVE_TRADE' | 'TRADFI_MACRO' | 'NONE';
+  sector: MarketSector;
+  categoryTag?: string;
+  lastScannedAt: number;
+}
+
+export interface ScreenerSettings {
+  mode: ScreenerMode;
+  maxMonitoredDynamicAssets: number; // e.g. 6 to 12
+  minVolume24hUsd: number;           // e.g. 25_000_000
+  rescanIntervalMinutes: number;     // e.g. 15, 30, 60
+  includeMemes: boolean;
+  minPriceChangeFilter: number;      // e.g. 0% or 1.5%
+  weights: {
+    rvolWeight: number;              // 0 to 100
+    oiChangeWeight: number;          // 0 to 100
+    priceMomentumWeight: number;     // 0 to 100
+    fundingAnomalyWeight: number;    // 0 to 100
+  };
+  lastRescanTimestamp: number;
+}
+
+export interface ScreenerScanSummary {
+  totalAssetsAvailable: number;
+  totalMonitored: number;
+  favoritesCount: number;
+  dynamicCount: number;
+  topGainer: { symbol: string; change: number };
+  topVolume: { symbol: string; quoteVolume: number };
+  topOiSurge: { symbol: string; oiChange: number };
+  highestFundingRate: { symbol: string; rate: number };
+  lastScanDurationMs: number;
+  timestamp: number;
+}
+
