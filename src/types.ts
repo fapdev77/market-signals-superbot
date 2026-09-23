@@ -444,3 +444,23 @@ export interface ScreenerScanSummary {
   timestamp: number;
 }
 
+export interface UserPriceAlert {
+  id: string;
+  symbol: string;
+  targetPrice: number;
+  condition: 'CROSS_ABOVE' | 'CROSS_BELOW';
+  note?: string;
+  createdAt: number;
+  triggered: boolean;
+  triggeredAt?: number;
+  active: boolean;
+}
+
+export type AlertSoundProfile = 'SYNTH_CHIME' | 'RADAR_BEEP' | 'CRYSTAL_BELL' | 'CYBER_PULSE' | 'ZEN_GONG';
+
+export interface AlertAudioConfig {
+  enabled: boolean;
+  volume: number; // 0 to 1
+  profile: AlertSoundProfile;
+}
+

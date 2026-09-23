@@ -142,3 +142,48 @@ Inspeciona uma sequência de 3 velas consecutivas ($t-2$, $t-1$, $t$):
   $$\text{High}_t < \text{Low}_{t-2}$$
   Faixa do Gap: $[\text{Low}_t, \, \text{High}_{t-2}]$.
   Funciona como **ímã/resistência futura**.
+
+---
+
+## 7. Desequilíbrio do Livro de Ofertas (Order Book Imbalance Ratio)
+
+### O que é?
+O **Order Book Imbalance Ratio** quantifica a assimetria entre a liquidez agressora e a densidade de ordens passivas de compra versus venda no livro de ordens, permitindo antecipar se o rompimento ou teste do Golden Pocket possui sustentação de fluxo.
+
+### Fórmulas Matemáticas
+
+1. **Volume Estimado de Compra e Venda:**
+   $$V_{\text{buy}} = \text{Volume}_{24h} \times \text{TakerBuyRatio}$$
+   $$V_{\text{sell}} = \text{Volume}_{24h} \times (1 - \text{TakerBuyRatio})$$
+
+2. **Razão de Desequilíbrio (Imbalance Ratio):**
+   $$\text{ImbalanceRatio} = \frac{\text{TakerBuyRatio}}{1 - \text{TakerBuyRatio}}$$
+
+3. **Percentual de Desequilíbrio Normalizado ($-100\%$ a $+100\%$):**
+   $$\text{ImbalancePct} = (\text{TakerBuyRatio} - 0.50) \times 200$$
+
+### Interpretação Qualitativa:
+- **Forte Desequilíbrio Comprador:** $\text{ImbalanceRatio} \ge 1.25$ ($\text{ImbalancePct} \ge +20\%$).
+- **Forte Desequilíbrio Vendedor:** $\text{ImbalanceRatio} \le 0.80$ ($\text{ImbalancePct} \le -20\%$).
+- **Livro Equilibrado:** $0.92 < \text{ImbalanceRatio} < 1.08$.
+
+---
+
+## 8. Índice Multidimensional de Correlação Setorial (Market Breadth)
+
+### O que é?
+Mede a concordância vetorial simultânea de todos os pares monitorados em relação à oportunidade prime em destaque, calculando se o movimento é endossado por influxo macro de capital no setor de criptoativos.
+
+### Fórmulas Matemáticas
+
+Para cada ativo secundário $k$ contra o ativo prime $P$:
+
+$$\text{Score}(k) = (S_{\text{price}} \times 0.35) + (S_{\text{CVD}} \times 0.25) + (S_{\text{OI}} \times 0.20) + (S_{\text{confluence}} \times 0.20)$$
+
+Onde:
+- $S_{\text{price}} = 1.0$ se $\text{sign}(\Delta \%_{24h, P}) == \text{sign}(\Delta \%_{24h, k})$; caso contrário $-0.7$.
+- $S_{\text{CVD}} = 1.0$ se $\text{CVDDir}_P == \text{CVDDir}_k$; caso contrário $-0.6$.
+- $S_{\text{OI}} = 0.9$ se $\text{sign}(\Delta OI_P) == \text{sign}(\Delta OI_k)$; caso contrário $-0.4$.
+- $S_{\text{confluence}} = 1 - \frac{|\text{Score}_P - \text{Score}_k|}{100}$.
+
+$$\text{Amplitude Setorial (\% Co-alinhados)} = \frac{N_{\text{co-alinhados}}}{N_{\text{total}}} \times 100$$

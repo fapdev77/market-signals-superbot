@@ -10,6 +10,10 @@ import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
 import { LiquidityHeatmapReferenceAreas, LiquidityHeatmapBadge } from './LiquidityHeatmapOverlay';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 import { Tooltip as AppTooltip } from './Tooltip';
+import { PriceAlertManager } from './PriceAlertManager';
+import { AlertSoundSettingsMenu } from './AlertSoundSettingsMenu';
+import { PositionSizerCalculator } from './PositionSizerCalculator';
+import { UserPriceAlert } from '../types';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -71,6 +75,39 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     point1Type?: 'HH' | 'LL';
     point0Type?: 'HH' | 'LL';
   } | null>(null);
+
+  const [userAlerts, setUserAlerts] = useState<UserPriceAlert[]>(() => {
+    try {
+      const stored = localStorage.getItem('superbot_user_price_alerts');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Re-read alerts periodically or on custom storage event
+  useEffect(() => {
+    const handleStorage = () => {
+      try {
+        const stored = localStorage.getItem('superbot_user_price_alerts');
+        if (stored) setUserAlerts(JSON.parse(stored));
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    const interval = setInterval(handleStorage, 2000);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Filter active alerts for current ticker for Chart Reference Lines
+  const activeTickerPriceAlerts = useMemo(() => {
+    if (!ticker?.symbol) return [];
+    return userAlerts.filter(a => a.symbol === ticker.symbol && a.active && !a.triggered);
+  }, [userAlerts, ticker?.symbol]);
 
   const enabledModels = activeModels.filter(m => m.isActive);
 
@@ -1341,6 +1378,15 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             )}
           </div>
         </div>
+
+        {/* Position Sizer & PnL Calculator for the Selected Signal & Ticker */}
+        {ticker && (
+          <PositionSizerCalculator
+            ticker={ticker}
+            activeSignal={activeSignal}
+            aiReview={aiReview}
+          />
+        )}
       </div>
 
       {/* Main Full-Width Chart Section & Order Flow Sub-Charts */}
@@ -1473,6 +1519,24 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               </AppTooltip>
             </div>
 
+            {/* User-Defined Price Alert Manager & Audio Settings */}
+            {ticker && (
+              <div className="flex items-center gap-1.5">
+                <PriceAlertManager
+                  ticker={ticker}
+                  onAlertTriggered={(triggeredAlert) => {
+                    try {
+                      const stored = localStorage.getItem('superbot_user_price_alerts');
+                      if (stored) setUserAlerts(JSON.parse(stored));
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                />
+                <AlertSoundSettingsMenu />
+              </div>
+            )}
+
             {/* Golden Pocket Banner */}
             <AppTooltip
               position="bottom"
@@ -1563,6 +1627,22 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
                    <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
                 )}
+                {/* User-Defined Price Alerts */}
+                {activeTickerPriceAlerts.map(alert => (
+                  <ReferenceLine
+                    key={alert.id}
+                    y={alert.targetPrice}
+                    stroke="#f59e0b"
+                    strokeDasharray="4 2"
+                    strokeWidth={1.5}
+                    label={{
+                      value: `🔔 Alarme: ${formatPrice(alert.targetPrice)}`,
+                      fill: '#fbbf24',
+                      fontSize: 9,
+                      position: 'insideTopLeft'
+                    }}
+                  />
+                ))}
                 <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" activeDot={{ r: 4, fill: '#f97316', stroke: '#ffffff', strokeWidth: 1.5 }} />
               </AreaChart>
             </ResponsiveContainer>
@@ -1587,6 +1667,22 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 {(aiReview?.stopLoss || activeSignal?.stopLoss) && (
                    <ReferenceLine y={aiReview?.stopLoss || activeSignal?.stopLoss} stroke="#f43f5e" strokeDasharray="3 3" label={{ value: 'Stop', fill: '#f43f5e', fontSize: 9 }} />
                 )}
+                {/* User-Defined Price Alerts */}
+                {activeTickerPriceAlerts.map(alert => (
+                  <ReferenceLine
+                    key={alert.id}
+                    y={alert.targetPrice}
+                    stroke="#f59e0b"
+                    strokeDasharray="4 2"
+                    strokeWidth={1.5}
+                    label={{
+                      value: `🔔 Alarme: ${formatPrice(alert.targetPrice)}`,
+                      fill: '#fbbf24',
+                      fontSize: 9,
+                      position: 'insideTopLeft'
+                    }}
+                  />
+                ))}
                 <Bar dataKey="close" shape={<CandlestickShape />} />
               </BarChart>
             </ResponsiveContainer>

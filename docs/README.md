@@ -6,7 +6,7 @@ Bem-vindo à documentação oficial do **Market Signals SuperBot**. Este materia
 
 ## 📂 Estrutura da Documentação
 
-A documentação está dividida em 4 módulos especializados localizados nesta pasta `/docs`:
+A documentação está dividida em 5 módulos especializados localizados nesta pasta `/docs`:
 
 | Módulo | Arquivo | Descrição |
 | :--- | :--- | :--- |
@@ -14,6 +14,7 @@ A documentação está dividida em 4 módulos especializados localizados nesta p
 | **02. Pesos & Confluência** | [`PESOS_E_CONFLUENCIA.md`](./PESOS_E_CONFLUENCIA.md) | Configurações de pesos do motor quantitativo, perfis de operação (Scalp, Day Trade, Intraday, Swing Trade) e algoritmo de pontuação de confluência (0-100%). |
 | **03. Exemplos Práticos** | [`EXEMPLOS_PRATICOS_CALCULOS.md`](./EXEMPLOS_PRATICOS_CALCULOS.md) | Simulações numéricas reais passo a passo de entradas em LONG, SHORT e filtro anti-spike de pavios em 1m/5m. |
 | **04. Skills & Prompts de IA** | [`SKILLS_E_PROMPTS_IA.md`](./SKILLS_E_PROMPTS_IA.md) | Prompting institucional, JSON Schemas, regras de auditoria e diretrizes de IA para o motor Gemini (Google GenAI). |
+| **05. Funcionalidades & Interface** | [`FUNCIONALIDADES_E_INTERFACE.md`](./FUNCIONALIDADES_E_INTERFACE.md) | Manual de interface: Banner de Oportunidade Prime com animações, Gráfico D3 de Desfechos, Matriz de Correlação Setorial e Controles de Ruído via LocalStorage. |
 
 ---
 

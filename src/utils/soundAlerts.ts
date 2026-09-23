@@ -3,7 +3,42 @@
  * Uses HTML5 Web Audio API (Zero external assets required)
  */
 
+import { AlertSoundProfile, AlertAudioConfig } from '../types';
+
 let audioCtx: AudioContext | null = null;
+
+const AUDIO_STORAGE_KEY = 'superbot_alert_audio_config';
+
+export function getAudioConfig(): AlertAudioConfig {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { enabled: true, volume: 0.8, profile: 'SYNTH_CHIME' };
+  }
+  try {
+    const raw = window.localStorage.getItem(AUDIO_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        enabled: parsed.enabled ?? true,
+        volume: typeof parsed.volume === 'number' ? Math.max(0, Math.min(1, parsed.volume)) : 0.8,
+        profile: parsed.profile || 'SYNTH_CHIME'
+      };
+    }
+  } catch {
+    // fallback
+  }
+  return { enabled: true, volume: 0.8, profile: 'SYNTH_CHIME' };
+}
+
+export function saveAudioConfig(config: AlertAudioConfig): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(AUDIO_STORAGE_KEY, JSON.stringify(config));
+    // also keep legacy key for backward compatibility
+    window.localStorage.setItem('superbot_sound_alerts', config.enabled ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -24,58 +59,168 @@ function getAudioContext(): AudioContext | null {
 }
 
 export function isAudioEnabled(): boolean {
-  if (typeof window === 'undefined' || !window.localStorage) return false;
-  return window.localStorage.getItem('superbot_sound_alerts') !== 'false';
+  return getAudioConfig().enabled;
 }
 
 export function setAudioEnabled(enabled: boolean): void {
-  if (typeof window === 'undefined' || !window.localStorage) return;
-  window.localStorage.setItem('superbot_sound_alerts', enabled ? 'true' : 'false');
+  const current = getAudioConfig();
+  saveAudioConfig({ ...current, enabled });
   if (enabled) {
     getAudioContext();
   }
 }
 
-export function playSignalTone(direction: 'LONG' | 'SHORT' | 'ALERT'): void {
-  if (!isAudioEnabled()) return;
+export function playSignalTone(
+  direction: 'LONG' | 'SHORT' | 'ALERT',
+  customConfig?: Partial<AlertAudioConfig>
+): void {
+  const config = { ...getAudioConfig(), ...customConfig };
+  if (!config.enabled || config.volume <= 0) return;
+
   const ctx = getAudioContext();
   if (!ctx) return;
 
   try {
     const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    const baseVolume = config.volume; // 0.0 to 1.0
 
-    osc.type = 'sine';
-    gain.connect(ctx.destination);
-    osc.connect(gain);
+    switch (config.profile) {
+      case 'RADAR_BEEP': {
+        // High-tech pulsed radar blips
+        const freq = direction === 'LONG' ? 1200 : direction === 'SHORT' ? 750 : 980;
+        for (let i = 0; i < 2; i++) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          gain.connect(ctx.destination);
+          osc.connect(gain);
 
-    if (direction === 'LONG') {
-      // Ascending pleasant chord chime: D5 (587.33Hz) -> A5 (880Hz)
-      osc.frequency.setValueAtTime(587.33, now);
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.15);
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
-      osc.start(now);
-      osc.stop(now + 0.35);
-    } else if (direction === 'SHORT') {
-      // Descending crisp chime: A5 (880Hz) -> F5 (698.46Hz)
-      osc.frequency.setValueAtTime(880, now);
-      osc.frequency.exponentialRampToValueAtTime(698.46, now + 0.15);
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
-      osc.start(now);
-      osc.stop(now + 0.35);
-    } else {
-      // Notification single ding C6 (1046.5Hz)
-      osc.frequency.setValueAtTime(1046.5, now);
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
-      osc.start(now);
-      osc.stop(now + 0.2);
+          const startTime = now + i * 0.12;
+          osc.frequency.setValueAtTime(freq, startTime);
+          gain.gain.setValueAtTime(0.001, startTime);
+          gain.gain.exponentialRampToValueAtTime(0.09 * baseVolume, startTime + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.08);
+
+          osc.start(startTime);
+          osc.stop(startTime + 0.09);
+        }
+        break;
+      }
+
+      case 'CRYSTAL_BELL': {
+        // Pure harmonic bell chime with harmonics
+        const baseFreq = direction === 'LONG' ? 1046.5 : direction === 'SHORT' ? 659.25 : 880; // C6, E5, A5
+        [1, 2, 3].forEach((harmonic, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          gain.connect(ctx.destination);
+          osc.connect(gain);
+
+          osc.frequency.setValueAtTime(baseFreq * harmonic, now);
+          const peakGain = (0.1 / (idx + 1)) * baseVolume;
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.exponentialRampToValueAtTime(peakGain, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55 - idx * 0.1);
+
+          osc.start(now);
+          osc.stop(now + 0.6);
+        });
+        break;
+      }
+
+      case 'CYBER_PULSE': {
+        // Sawtooth frequency sweep with resonance feel
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        gain.connect(ctx.destination);
+        osc.connect(gain);
+
+        if (direction === 'LONG') {
+          osc.frequency.setValueAtTime(350, now);
+          osc.frequency.exponentialRampToValueAtTime(950, now + 0.22);
+        } else if (direction === 'SHORT') {
+          osc.frequency.setValueAtTime(950, now);
+          osc.frequency.exponentialRampToValueAtTime(350, now + 0.22);
+        } else {
+          osc.frequency.setValueAtTime(600, now);
+          osc.frequency.exponentialRampToValueAtTime(780, now + 0.15);
+        }
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.08 * baseVolume, now + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+        osc.start(now);
+        osc.stop(now + 0.3);
+        break;
+      }
+
+      case 'ZEN_GONG': {
+        // Deep relaxing acoustic bell resonance (low fundamental with slow decay)
+        const osc = ctx.createOscillator();
+        const subOsc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'triangle';
+        subOsc.type = 'sine';
+
+        gain.connect(ctx.destination);
+        osc.connect(gain);
+        subOsc.connect(gain);
+
+        const freq = direction === 'LONG' ? 440 : direction === 'SHORT' ? 330 : 392;
+        osc.frequency.setValueAtTime(freq, now);
+        subOsc.frequency.setValueAtTime(freq / 2, now);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.14 * baseVolume, now + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+
+        osc.start(now);
+        subOsc.start(now);
+        osc.stop(now + 0.75);
+        subOsc.stop(now + 0.75);
+        break;
+      }
+
+      case 'SYNTH_CHIME':
+      default: {
+        // Classic ascending / descending synth chime
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sine';
+        gain.connect(ctx.destination);
+        osc.connect(gain);
+
+        if (direction === 'LONG') {
+          osc.frequency.setValueAtTime(587.33, now); // D5
+          osc.frequency.exponentialRampToValueAtTime(880, now + 0.15); // A5
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.exponentialRampToValueAtTime(0.12 * baseVolume, now + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+          osc.start(now);
+          osc.stop(now + 0.35);
+        } else if (direction === 'SHORT') {
+          osc.frequency.setValueAtTime(880, now); // A5
+          osc.frequency.exponentialRampToValueAtTime(698.46, now + 0.15); // F5
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.exponentialRampToValueAtTime(0.12 * baseVolume, now + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+          osc.start(now);
+          osc.stop(now + 0.35);
+        } else {
+          osc.frequency.setValueAtTime(1046.5, now);
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.exponentialRampToValueAtTime(0.09 * baseVolume, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+          osc.start(now);
+          osc.stop(now + 0.2);
+        }
+        break;
+      }
     }
   } catch (err) {
     // Audio contexts might be blocked until user clicks
