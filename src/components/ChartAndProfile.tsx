@@ -2,15 +2,17 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
-import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock } from 'lucide-react';
+import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders } from 'lucide-react';
 import { MarketProfileMetrics, VolumeProfileCard, OrderFlowFundingCard, DivergenceStructureCard } from './MarketProfileMetrics';
 import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
+import { LiquidityDepth } from './LiquidityDepth';
 import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
 import { LiquidityHeatmapReferenceAreas, LiquidityHeatmapBadge } from './LiquidityHeatmapOverlay';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 import { Tooltip as AppTooltip } from './Tooltip';
 import { PriceAlertManager } from './PriceAlertManager';
+import { BulkAlertManager } from './BulkAlertManager';
 import { AlertSoundSettingsMenu } from './AlertSoundSettingsMenu';
 import { PositionSizerCalculator } from './PositionSizerCalculator';
 import { UserPriceAlert } from '../types';
@@ -84,6 +86,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
       return [];
     }
   });
+
+  const [showBulkAlertManager, setShowBulkAlertManager] = useState<boolean>(false);
 
   // Re-read alerts periodically or on custom storage event
   useEffect(() => {
@@ -1519,11 +1523,12 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               </AppTooltip>
             </div>
 
-            {/* User-Defined Price Alert Manager & Audio Settings */}
+            {/* User-Defined Price Alert Manager, Central Bulk Manager & Audio Settings */}
             {ticker && (
               <div className="flex items-center gap-1.5">
                 <PriceAlertManager
                   ticker={ticker}
+                  onOpenBulkManager={() => setShowBulkAlertManager(true)}
                   onAlertTriggered={(triggeredAlert) => {
                     try {
                       const stored = localStorage.getItem('superbot_user_price_alerts');
@@ -1533,6 +1538,27 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                     }
                   }}
                 />
+
+                {/* Centralized Bulk Price Alert Manager Trigger Button */}
+                <AppTooltip
+                  position="top"
+                  title="Gerenciador Geral de Alarmes (Bulk Manager)"
+                  badge={`${userAlerts.length} TOTAL`}
+                  content="Acesse a tabela centralizada para visualizar, filtrar, criar, pausar/ativar e excluir múltiplos alarmes em lote para todos os ativos cadastrados."
+                >
+                  <button
+                    onClick={() => setShowBulkAlertManager(true)}
+                    aria-label="Abrir Gerenciador Geral de Alarmes em Massa"
+                    className="px-2.5 py-1 rounded text-[10px] font-bold transition flex items-center gap-1.5 border bg-[#050505] text-neutral-300 border-white/10 hover:border-orange-500/40 hover:text-white active:scale-95 shadow-xs"
+                  >
+                    <Sliders className="h-3.5 w-3.5 text-orange-400" />
+                    <span className="hidden sm:inline">Central de Alarmes</span>
+                    <span className="text-[9px] bg-orange-500/20 text-orange-300 px-1.5 py-0.2 rounded font-mono font-bold">
+                      {userAlerts.length}
+                    </span>
+                  </button>
+                </AppTooltip>
+
                 <AlertSoundSettingsMenu />
               </div>
             )}
@@ -1697,6 +1723,12 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         />
       </div>
 
+      {/* D3 Liquidity Depth & Order Book Pressure Imbalance */}
+      <LiquidityDepth
+        ticker={ticker}
+        timeframe={timeframe}
+      />
+
       {/* Dedicated Section Below Charts: Volume Profile, Fibonacci, Order Flow & Market Structure */}
       <div className="space-y-3 pt-2">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-white/10 pb-2.5">
@@ -1753,6 +1785,16 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           />
         </div>
       </div>
+
+      {/* Centralized Bulk Price Alert Manager Modal */}
+      <BulkAlertManager
+        isOpen={showBulkAlertManager}
+        onClose={() => setShowBulkAlertManager(false)}
+        allTickers={allTickers}
+        currentTickerSymbol={ticker?.symbol}
+        onSelectTickerBySymbol={onSelectTickerBySymbol}
+        onAlertsUpdated={(updated) => setUserAlerts(updated)}
+      />
     </div>
   );
 };

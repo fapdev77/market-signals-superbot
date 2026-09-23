@@ -7,13 +7,14 @@ import {
   Activity, 
   Flame, 
   Brain, 
-  ArrowUpRight,
-  ArrowUpDown,
-  Search,
-  X,
-  RotateCcw,
-  SlidersHorizontal,
-  Star
+  ArrowUpRight, 
+  ArrowUpDown, 
+  Search, 
+  X, 
+  RotateCcw, 
+  SlidersHorizontal, 
+  Star,
+  Gauge
 } from 'lucide-react';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { Tooltip } from './Tooltip';
@@ -21,6 +22,7 @@ import { apiClient } from '../services/apiClient';
 
 export type TickerSortOption = 
   | 'volatility_desc'
+  | 'trend_strength_desc'
   | 'confluence_desc'
   | 'price_change_abs_desc'
   | 'price_change_desc'
@@ -33,6 +35,156 @@ export const getTickerVolatility = (t: TickerData): number => {
     return ((t.high24h - t.low24h) / t.low24h) * 100;
   }
   return Math.abs(t.priceChangePercent24h || 0);
+};
+
+export interface TrendStrengthInfo {
+  score: number; // 0 to 100
+  bars: 1 | 2 | 3 | 4 | 5;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  adxEstimated: number; // Approximate ADX value 10 - 65
+  label: string;
+  description: string;
+  colorClass: string;
+  barColorClass: string;
+  bgLightClass: string;
+}
+
+/**
+ * Calculates a robust 1-5 bar 'Trend Strength' indicator based on directional momentum,
+ * price location within 24h range (High-Low % positioning), CVD delta aggression,
+ * Open Interest expansion, and algorithmic confluence factors.
+ */
+export const getTickerTrendStrength = (t: TickerData): TrendStrengthInfo => {
+  if (!t) {
+    return {
+      score: 20,
+      bars: 1,
+      direction: 'NEUTRAL',
+      adxEstimated: 15,
+      label: 'Sem Tendência (Consolidação)',
+      description: 'Mercado lateral sem momentum direcional sustentado.',
+      colorClass: 'text-neutral-400',
+      barColorClass: 'bg-neutral-600',
+      bgLightClass: 'bg-neutral-800'
+    };
+  }
+
+  const changePct = t.priceChangePercent24h ?? 0;
+  const absChange = Math.abs(changePct);
+  
+  // 1. Directional bias determination
+  let isBullish = changePct > 0.2;
+  let isBearish = changePct < -0.2;
+
+  if (t.signalType && t.signalType !== 'NEUTRAL') {
+    if (t.signalType.includes('LONG')) isBullish = true;
+    if (t.signalType.includes('SHORT')) isBearish = true;
+  } else if (t.cvdDirection === 'BUY') {
+    isBullish = true;
+  } else if (t.cvdDirection === 'SELL') {
+    isBearish = true;
+  }
+
+  // 2. Range Position Factor (Close near High = Bullish trend push; Close near Low = Bearish trend push)
+  let rangeExpansionScore = 0;
+  if (t.high24h && t.low24h && t.high24h > t.low24h && t.price) {
+    const range = t.high24h - t.low24h;
+    const posInRange = (t.price - t.low24h) / range; // 0 (at low) to 1 (at high)
+    if (isBullish) {
+      rangeExpansionScore = Math.max(0, (posInRange - 0.45) * 50); // up to ~27 pts
+    } else if (isBearish) {
+      rangeExpansionScore = Math.max(0, (0.55 - posInRange) * 50); // up to ~27 pts
+    } else {
+      rangeExpansionScore = Math.abs(posInRange - 0.5) * 30;
+    }
+  }
+
+  // 3. Momentum & Price Velocity component (0 - 30 pts)
+  const momentumScore = Math.min(30, absChange * 3.5);
+
+  // 4. Orderflow & CVD alignment (0 - 20 pts)
+  let cvdAlignmentScore = 5;
+  if (isBullish && t.cvdDirection === 'BUY') cvdAlignmentScore = 20;
+  else if (isBearish && t.cvdDirection === 'SELL') cvdAlignmentScore = 20;
+  else if (t.cvdDirection === 'NEUTRAL') cvdAlignmentScore = 10;
+
+  // 5. Open Interest trend confirmation (0 - 15 pts)
+  let oiScore = 5;
+  const oiChange = t.openInterestChange1h ?? 0;
+  if (oiChange > 1.0) oiScore = 15;
+  else if (oiChange > 0.3) oiScore = 12;
+  else if (oiChange >= -0.3) oiScore = 7;
+  else oiScore = 2; // OI flushing out
+
+  // 6. Confluence bonus (0 - 15 pts)
+  const confluenceScoreBonus = ((t.confluenceScore || 50) / 100) * 15;
+
+  // Total raw strength score: 0 to 100
+  const rawScore = Math.max(5, Math.min(100, momentumScore + rangeExpansionScore + cvdAlignmentScore + oiScore + confluenceScoreBonus));
+
+  // Map to Estimated ADX equivalent (10 to 60+)
+  const adxEstimated = parseFloat((12 + (rawScore / 100) * 48).toFixed(1));
+
+  // Determine 1 - 5 bars
+  let bars: 1 | 2 | 3 | 4 | 5 = 1;
+  let label = 'Sem Tendência (Fraca)';
+  let description = 'Movimento lateral ou oscilação fraca sem convicção institucional.';
+
+  if (rawScore >= 80 || adxEstimated >= 48) {
+    bars = 5;
+    label = 'Tendência Muito Forte (Exaustão/Parabólica)';
+    description = 'Momentum direcional extremo com alto volume. Risco de clímax ou continuação agressiva.';
+  } else if (rawScore >= 62 || adxEstimated >= 38) {
+    bars = 4;
+    label = 'Tendência Forte (Sustentada)';
+    description = 'Tendência estrutural consistente com fluxo institucional favorável e sustentação de topo/fundo.';
+  } else if (rawScore >= 45 || adxEstimated >= 28) {
+    bars = 3;
+    label = 'Tendência Moderada';
+    description = 'Direcional ativo em desenvolvimento, requer acompanhamento de rompimento de níveis chave.';
+  } else if (rawScore >= 28 || adxEstimated >= 20) {
+    bars = 2;
+    label = 'Tendência Incipiente / Fraca';
+    description = 'Início tímido de direcional ou consolidação ampla.';
+  } else {
+    bars = 1;
+    label = 'Sem Tendência (Consolidação)';
+    description = 'Mercado lateralizado em equilíbrio ou baixa volatilidade.';
+  }
+
+  const direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 
+    isBullish && bars >= 2 ? 'BULLISH' : isBearish && bars >= 2 ? 'BEARISH' : 'NEUTRAL';
+
+  // Theming colors
+  let colorClass = 'text-neutral-400';
+  let barColorClass = 'bg-neutral-500';
+  let bgLightClass = 'bg-neutral-800';
+
+  if (direction === 'BULLISH') {
+    colorClass = bars >= 4 ? 'text-emerald-400' : 'text-teal-400';
+    barColorClass = bars >= 4 ? 'bg-emerald-400' : 'bg-teal-400';
+    bgLightClass = 'bg-emerald-950/40 border-emerald-500/20';
+  } else if (direction === 'BEARISH') {
+    colorClass = bars >= 4 ? 'text-rose-400' : 'text-amber-400';
+    barColorClass = bars >= 4 ? 'bg-rose-400' : 'bg-amber-400';
+    bgLightClass = 'bg-rose-950/40 border-rose-500/20';
+  } else {
+    colorClass = 'text-neutral-400';
+    barColorClass = 'bg-neutral-500';
+    bgLightClass = 'bg-neutral-900 border-white/5';
+  }
+
+  return {
+    score: Math.round(rawScore),
+    bars,
+    direction,
+    adxEstimated,
+    label,
+    description,
+    colorClass,
+    barColorClass,
+    bgLightClass
+  };
 };
 
 interface TickerGridProps {
@@ -111,6 +263,11 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           const volA = getTickerVolatility(a);
           const volB = getTickerVolatility(b);
           return volB - volA;
+        }
+        case 'trend_strength_desc': {
+          const trendA = getTickerTrendStrength(a).score;
+          const trendB = getTickerTrendStrength(b).score;
+          return trendB - trendA;
         }
         case 'confluence_desc':
           return (b.confluenceScore || 0) - (a.confluenceScore || 0);
@@ -271,6 +428,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                 className="bg-transparent text-xs text-neutral-200 font-bold focus:outline-none cursor-pointer"
               >
                 <option value="volatility_desc" className="bg-[#0A0A0A] text-white">Maior Volatilidade (Range 24h)</option>
+                <option value="trend_strength_desc" className="bg-[#0A0A0A] text-white">Maior Força de Tendência (ADX 1-5)</option>
                 <option value="confluence_desc" className="bg-[#0A0A0A] text-white">Score de Confluência (Maior → Menor)</option>
                 <option value="price_change_abs_desc" className="bg-[#0A0A0A] text-white">Maior Oscilação (|%| 24h)</option>
                 <option value="price_change_desc" className="bg-[#0A0A0A] text-white">Maiores Altas (+% Gainers)</option>
@@ -350,6 +508,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
             const price = t.price ?? 0;
             const changePct = t.priceChangePercent24h ?? 0;
             const volatility = getTickerVolatility(t);
+            const trendStrength = getTickerTrendStrength(t);
 
             return (
               <div
@@ -436,6 +595,42 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                       </Tooltip>
                     </div>
                   </div>
+
+                  {/* Subtle Trend Strength Indicator (1-5 Bars) */}
+                  <Tooltip
+                    position="top"
+                    title={`Força da Tendência: ${trendStrength.label}`}
+                    badge={`ADX ~${trendStrength.adxEstimated}`}
+                    content={`${trendStrength.description} Momentum derivado do range 24h, delta CVD e expansão direcional de contratos.`}
+                  >
+                    <div className="flex items-center justify-between px-2 py-1 rounded bg-[#070707] border border-white/5 mb-2 cursor-help group-hover:border-white/10 transition-colors">
+                      <div className="flex items-center gap-1.5 text-[9px]">
+                        <Gauge className="h-3 w-3 text-neutral-500 shrink-0" />
+                        <span className="text-neutral-400 font-bold tracking-tight uppercase">Tendência</span>
+                        <span className={`font-extrabold ${trendStrength.colorClass}`}>
+                          {trendStrength.direction === 'BULLISH' ? '▲ ALTA' : trendStrength.direction === 'BEARISH' ? '▼ BAIXA' : '— LATERAL'}
+                        </span>
+                      </div>
+
+                      {/* 1-5 Ascending Trend Bars */}
+                      <div className="flex items-end gap-[3px] h-3.5 px-0.5">
+                        {[1, 2, 3, 4, 5].map((barNum) => {
+                          const isActive = barNum <= trendStrength.bars;
+                          const heightMap = ['h-1.5', 'h-2', 'h-2.5', 'h-3', 'h-3.5'];
+                          return (
+                            <div
+                              key={barNum}
+                              className={`w-1 rounded-xs transition-all duration-200 ${heightMap[barNum - 1]} ${
+                                isActive 
+                                  ? `${trendStrength.barColorClass} shadow-xs` 
+                                  : 'bg-neutral-800/80'
+                              }`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </Tooltip>
 
                   {/* Quant Indicators Summary Matrix */}
                   <div className="grid grid-cols-2 gap-1.5 bg-[#050505] p-2 rounded border border-white/5 text-[10px] mb-2.5">

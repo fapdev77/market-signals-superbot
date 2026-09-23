@@ -1,4 +1,4 @@
-import { TickerData, KlineCandle } from '../src/types.js';
+import { TickerData, KlineCandle, OrderBookDepthData, OrderBookLevel } from '../src/types.js';
 import { addBinanceLog, getLiveWSTickers } from './binanceWebsocket.js';
 import { requestJson } from './utils/httpClient.js';
 
@@ -511,4 +511,217 @@ export function detectFVG(klines: KlineCandle[]) {
   }
 
   return { hasSinglePrintFVG: false };
+}
+
+/**
+ * Normalizes raw order book levels into cumulative depth with USD calculation and wall detection
+ */
+function processDepthData(
+  symbol: string,
+  rawBids: string[][],
+  rawAsks: string[][],
+  timestamp: number
+): OrderBookDepthData {
+  const parsedBids = rawBids.map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })).filter(b => b.price > 0 && b.qty > 0);
+  const parsedAsks = rawAsks.map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })).filter(a => a.price > 0 && a.qty > 0);
+
+  // Sort bids descending (highest buy offer first), asks ascending (lowest sell offer first)
+  parsedBids.sort((a, b) => b.price - a.price);
+  parsedAsks.sort((a, b) => a.price - b.price);
+
+  const bestBid = parsedBids[0]?.price || 1;
+  const bestAsk = parsedAsks[0]?.price || bestBid * 1.0002;
+  const spread = Math.max(0, bestAsk - bestBid);
+  const midPrice = (bestBid + bestAsk) / 2;
+  const spreadPct = midPrice > 0 ? (spread / midPrice) * 100 : 0;
+
+  // Compute average qty to detect Whale Walls
+  const allQtys = [...parsedBids.map(b => b.qty), ...parsedAsks.map(a => a.qty)];
+  const avgQty = allQtys.length > 0 ? allQtys.reduce((acc, q) => acc + q, 0) / allQtys.length : 1;
+  const wallThreshold = avgQty * 2.3;
+
+  let cumBidQty = 0;
+  let cumBidUsd = 0;
+  let maxBidWall: OrderBookLevel | undefined;
+
+  const bids: OrderBookLevel[] = parsedBids.map(b => {
+    cumBidQty += b.qty;
+    const usd = b.price * b.qty;
+    cumBidUsd += usd;
+    const isWall = b.qty >= wallThreshold;
+    const level: OrderBookLevel = {
+      price: b.price,
+      qty: b.qty,
+      totalQty: cumBidQty,
+      totalUsd: cumBidUsd,
+      deviationPct: Number((((b.price - midPrice) / midPrice) * 100).toFixed(3)),
+      isWall
+    };
+    if (isWall && (!maxBidWall || b.qty > maxBidWall.qty)) {
+      maxBidWall = level;
+    }
+    return level;
+  });
+
+  let cumAskQty = 0;
+  let cumAskUsd = 0;
+  let maxAskWall: OrderBookLevel | undefined;
+
+  const asks: OrderBookLevel[] = parsedAsks.map(a => {
+    cumAskQty += a.qty;
+    const usd = a.price * a.qty;
+    cumAskUsd += usd;
+    const isWall = a.qty >= wallThreshold;
+    const level: OrderBookLevel = {
+      price: a.price,
+      qty: a.qty,
+      totalQty: cumAskQty,
+      totalUsd: cumAskUsd,
+      deviationPct: Number((((a.price - midPrice) / midPrice) * 100).toFixed(3)),
+      isWall
+    };
+    if (isWall && (!maxAskWall || a.qty > maxAskWall.qty)) {
+      maxAskWall = level;
+    }
+    return level;
+  });
+
+  const totalDepthUsd = cumBidUsd + cumAskUsd;
+  const imbalancePct = totalDepthUsd > 0
+    ? Number((((cumBidUsd - cumAskUsd) / totalDepthUsd) * 100).toFixed(2))
+    : 0;
+  const imbalanceRatio = cumAskUsd > 0 ? Number((cumBidUsd / cumAskUsd).toFixed(2)) : 1;
+
+  let pressureLabel = 'LIVRO EQUILIBRADO (FLUXO NEUTRO)';
+  let pressureBias: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
+
+  if (imbalancePct >= 20) {
+    pressureLabel = 'FORTE PRESSÃO COMPRADORA (SUPORTE CARREGADO)';
+    pressureBias = 'BUY';
+  } else if (imbalancePct >= 7) {
+    pressureLabel = 'MODERADA PRESSÃO COMPRADORA (BID DOMINANTE)';
+    pressureBias = 'BUY';
+  } else if (imbalancePct <= -20) {
+    pressureLabel = 'FORTE PRESSÃO VENDEDORA (RESISTÊNCIA CARREGADA)';
+    pressureBias = 'SELL';
+  } else if (imbalancePct <= -7) {
+    pressureLabel = 'MODERADA PRESSÃO VENDEDORA (ASK DOMINANTE)';
+    pressureBias = 'SELL';
+  }
+
+  return {
+    symbol,
+    timestamp,
+    bids,
+    asks,
+    spread,
+    spreadPct,
+    midPrice,
+    bidDepthUsd: cumBidUsd,
+    askDepthUsd: cumAskUsd,
+    totalDepthUsd,
+    imbalancePct,
+    imbalanceRatio,
+    pressureLabel,
+    pressureBias,
+    whaleWalls: {
+      bidWall: maxBidWall,
+      askWall: maxAskWall
+    }
+  };
+}
+
+/**
+ * Generates synthetic high-fidelity Order Book Depth centered around the asset's active price
+ */
+export function generateSimulatedDepth(
+  symbol: string,
+  currentPrice: number = 100,
+  limit: number = 35,
+  timestamp: number = Date.now()
+): OrderBookDepthData {
+  let midPrice = currentPrice || 100;
+  if (!currentPrice || currentPrice <= 0) {
+    if (symbol.includes('BTC')) midPrice = 92000;
+    else if (symbol.includes('ETH')) midPrice = 3400;
+    else if (symbol.includes('SOL')) midPrice = 185;
+    else if (symbol.includes('BNB')) midPrice = 640;
+    else if (symbol.includes('XRP')) midPrice = 2.45;
+    else if (symbol.includes('SPY')) midPrice = 585;
+    else if (symbol.includes('GOLD')) midPrice = 2650;
+    else midPrice = 50;
+  }
+
+  const spread = midPrice * 0.00015; // tight institutional spread
+  const bestBid = midPrice - spread / 2;
+  const bestAsk = midPrice + spread / 2;
+
+  const rawBids: string[][] = [];
+  const rawAsks: string[][] = [];
+
+  // Seed with deterministic pseudo-random variations based on symbol and time
+  const seed = symbol.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const biasFactor = Math.sin(seed + Math.floor(timestamp / 60000)) * 0.25; // slight natural cyclical shift
+
+  const baseUnitQty = midPrice > 1000 ? 0.8 : midPrice > 100 ? 15 : midPrice > 1 ? 500 : 25000;
+
+  for (let i = 0; i < limit; i++) {
+    // Step size grows slightly as we move deeper into the order book
+    const distPct = 0.0002 + (i / limit) * 0.02; // up to ~2% depth
+    const bidPrice = bestBid * (1 - distPct);
+    const askPrice = bestAsk * (1 + distPct);
+
+    // Depth volume: increasing with distance + random variance + potential whale wall spike
+    let bidQty = (baseUnitQty * (1 + i * 0.35)) * (0.7 + Math.random() * 0.6) * (1 + biasFactor);
+    let askQty = (baseUnitQty * (1 + i * 0.35)) * (0.7 + Math.random() * 0.6) * (1 - biasFactor);
+
+    // Inject deliberate institutional walls at ~tier 7 or 15
+    if (i === 7 || i === 18) {
+      if (Math.sin(seed + i) > 0) {
+        bidQty *= 3.4; // Bid Wall
+      } else {
+        askQty *= 3.4; // Ask Wall
+      }
+    }
+
+    rawBids.push([bidPrice.toFixed(midPrice > 10 ? 2 : 5), bidQty.toFixed(2)]);
+    rawAsks.push([askPrice.toFixed(midPrice > 10 ? 2 : 5), askQty.toFixed(2)]);
+  }
+
+  return processDepthData(symbol, rawBids, rawAsks, timestamp);
+}
+
+/**
+ * Fetches Order Book Depth (bids, asks) with depth imbalance and whale wall detection
+ */
+export async function fetchOrderBookDepth(
+  symbol: string,
+  currentPrice?: number,
+  limit: number = 35
+): Promise<OrderBookDepthData> {
+  const cleanSymbol = symbol.toUpperCase();
+  const now = Date.now();
+
+  const isTradfi = TRADFI_ASSETS.some(a => a.symbol === cleanSymbol);
+
+  if (!isTradfi) {
+    const endpoints = [
+      `https://fapi.binance.com/fapi/v1/depth?symbol=${cleanSymbol}&limit=${limit}`,
+      `https://data-api.binance.vision/api/v3/depth?symbol=${cleanSymbol}&limit=${limit}`,
+      `https://api.binance.us/api/v3/depth?symbol=${cleanSymbol}&limit=${limit}`
+    ];
+
+    for (const url of endpoints) {
+      try {
+        const res = await requestJson<{ bids?: string[][]; asks?: string[][] }>(url, { timeoutMs: 2500 });
+        if (res.data?.bids && res.data?.asks && res.data.bids.length > 0 && res.data.asks.length > 0) {
+          return processDepthData(cleanSymbol, res.data.bids, res.data.asks, now);
+        }
+      } catch {
+        // try next endpoint
+      }
+    }
+  }
+
+  return generateSimulatedDepth(cleanSymbol, currentPrice, limit, now);
 }

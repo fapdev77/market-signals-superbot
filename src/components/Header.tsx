@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, Volume2, VolumeX, Bell, BellOff, Radar } from 'lucide-react';
+import { Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, Volume2, VolumeX, Bell, BellOff, Radar, Flame } from 'lucide-react';
 import { BotState, TickerData } from '../types';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { isAudioEnabled, setAudioEnabled, requestNotificationPermission, isNotificationEnabled, setNotificationEnabled, sendDesktopNotification, playSignalTone } from '../utils/soundAlerts';
@@ -97,6 +97,14 @@ export const Header: React.FC<HeaderProps> = ({
       desc: 'Grid de pares de cripto futures e ativos tradicionais com variações, volume e métricas.'
     },
     {
+      id: 'heatmap',
+      label: 'Heatmap',
+      icon: Flame,
+      badge: 'D3',
+      highlight: true,
+      desc: 'Mapa de calor global D3 por volume 24h e desvio da média móvel 24h (MA24h).'
+    },
+    {
       id: 'screener',
       label: 'Radar Screener',
       icon: Radar,
@@ -110,6 +118,14 @@ export const Header: React.FC<HeaderProps> = ({
       icon: Zap,
       badge: botState.signalsGenerated24h,
       desc: 'Matriz com sinais validados de entrada, stop loss, take profit e confluências de Order Flow.'
+    },
+    {
+      id: 'risk',
+      label: 'Exposição & Gregas',
+      icon: ShieldAlert,
+      badge: 'RISK',
+      highlight: true,
+      desc: 'Dashboard de exposição de risco da carteira: Delta Líquido, Gamma, VaR, stress test e concentração setorial.'
     },
     {
       id: 'ai_motor',

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getBinanceLogs } from '../binanceWebsocket.js';
-import { fetchKlines } from '../binanceService.js';
+import { fetchKlines, fetchOrderBookDepth } from '../binanceService.js';
 import { getRecentSignals, saveIndicatorWeights, saveAIModels, expireActiveSignalsByCategory, expireAllActiveSignals } from '../db.js';
 import { TickerData, BotState, StrategyCategory } from '../../src/types.js';
 
@@ -55,6 +55,20 @@ export function createMarketRouter(
     const ticker = tickerCache[symbol];
     const klines = await fetchKlines(symbol, timeframe, 60);
     res.json({ ticker, klines });
+  });
+
+  // Order Book Liquidity Depth & Imbalance
+  router.get('/tickers/:symbol/depth', async (req: Request, res: Response) => {
+    try {
+      const symbol = req.params.symbol.toUpperCase();
+      const limit = Math.min(60, Math.max(10, parseInt((req.query.limit as string) || '35', 10)));
+      const tickerCache = getTickerCache();
+      const ticker = tickerCache[symbol];
+      const depthData = await fetchOrderBookDepth(symbol, ticker?.price, limit);
+      res.json(depthData);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to fetch depth data' });
+    }
   });
 
   // Recent Generated Signals from SQLite

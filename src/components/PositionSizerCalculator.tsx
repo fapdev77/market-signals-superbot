@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { formatPrice, formatPercent } from '../utils/formatters';
 import { Tooltip } from './Tooltip';
+import { useToast } from './Toast';
 
 interface PositionSizerCalculatorProps {
   ticker: TickerData;
@@ -40,6 +41,7 @@ export const PositionSizerCalculator: React.FC<PositionSizerCalculatorProps> = (
   aiReview
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
+  const { showToast } = useToast();
 
   // User input states with localStorage persistence
   const [initialCapital, setInitialCapital] = useState<number>(() => {
@@ -262,6 +264,37 @@ export const PositionSizerCalculator: React.FC<PositionSizerCalculatorProps> = (
       isStopSaferThanLiq
     };
   }, [setup, sizingMode, initialCapital, riskPercent, customMargin, leverage]);
+
+  const handleRegisterInRiskDashboard = () => {
+    if (!calculations) return;
+    try {
+      const STORAGE_KEY_POS = 'superbot_portfolio_positions';
+      const existingStr = localStorage.getItem(STORAGE_KEY_POS);
+      const existing = existingStr ? JSON.parse(existingStr) : [];
+
+      const newPos = {
+        id: `calc-pos-${Date.now()}`,
+        symbol: ticker.symbol,
+        direction: setup.direction,
+        entryPrice: setup.avgEntry,
+        currentPrice: ticker.price,
+        quantity: calculations.contracts,
+        notionalUsd: calculations.positionNotional,
+        marginUsd: calculations.margin,
+        leverage,
+        stopLoss: setup.stopLoss,
+        takeProfit1: setup.tp1,
+        takeProfit2: setup.tp2,
+        openedAt: Date.now(),
+        notes: `Simulado na Calculadora (${setup.direction} ${leverage}x)`
+      };
+
+      localStorage.setItem(STORAGE_KEY_POS, JSON.stringify([newPos, ...existing]));
+      showToast('success', 'Posição Registrada no Portfolio', `${ticker.symbol} ${setup.direction} $${calculations.positionNotional.toFixed(0)} adicionado ao Risk Exposure Dashboard.`);
+    } catch {
+      showToast('error', 'Erro ao Salvar', 'Não foi possível salvar a posição na carteira.');
+    }
+  };
 
   return (
     <div className="bg-[#050505] rounded-2xl border border-white/10 overflow-hidden shadow-2xl transition-all">
@@ -675,6 +708,29 @@ export const PositionSizerCalculator: React.FC<PositionSizerCalculatorProps> = (
                   <span>Variação Ativo: <strong>-{calculations.effectiveStopPct.toFixed(2)}%</strong></span>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Quick Action: Register into Risk Exposure Dashboard */}
+          {calculations && (
+            <div className="p-3 bg-cyan-950/20 border border-cyan-500/20 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-3 font-mono">
+              <div className="text-[11px] text-neutral-300">
+                <span className="text-neutral-400">Impacto no Portfolio: </span>
+                <strong className={setup.direction === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}>
+                  {setup.direction === 'LONG' ? '+' : '-'}${calculations.positionNotional.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                </strong>
+                <span className="text-[10px] text-neutral-500 ml-1.5">
+                  (Margem: ${calculations.margin.toFixed(0)} • {leverage}x)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRegisterInRiskDashboard}
+                className="w-full sm:w-auto px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-cyan-500/20 active:scale-95"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Enviar ao Risk Exposure</span>
+              </button>
             </div>
           )}
         </div>

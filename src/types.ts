@@ -14,6 +14,10 @@ export interface TickerData {
   volume24h: number;
   quoteVolume24h: number;
   
+  // Moving Average & Trend Deviations
+  ma24h?: number;                   // 24h Simple/Weighted Moving Average price
+  ma24hDeviationPct?: number;       // % deviation: ((price - ma24h) / ma24h) * 100
+  
   // Futures / Advanced Metrics
   openInterest: number;             // USDT or Contract volume
   openInterestChange24h: number;     // % change
@@ -79,6 +83,36 @@ export interface TickerData {
   confluenceFactors: string[];
   
   updatedAt: number;                // timestamp
+}
+
+export interface OrderBookLevel {
+  price: number;
+  qty: number;
+  totalQty: number;
+  totalUsd: number;
+  deviationPct: number;
+  isWall?: boolean;
+}
+
+export interface OrderBookDepthData {
+  symbol: string;
+  timestamp: number;
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  spread: number;
+  spreadPct: number;
+  midPrice: number;
+  bidDepthUsd: number;
+  askDepthUsd: number;
+  totalDepthUsd: number;
+  imbalancePct: number;       // e.g. +24.5% (bids outweigh asks) or -18.2%
+  imbalanceRatio: number;     // bids / asks ratio
+  pressureLabel: string;      // e.g. "PRESSÃO COMPRADORA FORTE"
+  pressureBias: 'BUY' | 'SELL' | 'NEUTRAL';
+  whaleWalls: {
+    bidWall?: OrderBookLevel;
+    askWall?: OrderBookLevel;
+  };
 }
 
 export interface KlineCandle {
@@ -462,5 +496,72 @@ export interface AlertAudioConfig {
   enabled: boolean;
   volume: number; // 0 to 1
   profile: AlertSoundProfile;
+}
+
+// ============================================
+// PORTFOLIO & RISK EXPOSURE DASHBOARD TYPES
+// ============================================
+
+export interface PortfolioPosition {
+  id: string;
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  currentPrice: number;
+  quantity: number;
+  notionalUsd: number;
+  marginUsd: number;
+  leverage: number;
+  stopLoss?: number;
+  takeProfit1?: number;
+  takeProfit2?: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  roePct: number;
+  sector: MarketSector;
+  categoryTag?: string;
+  beta: number;
+  deltaUsd: number;
+  betaWeightedDeltaUsd: number;
+  gammaUsd: number;
+  maxLossAtStopUsd?: number;
+  openedAt: number;
+  isSyntheticFromSignal?: boolean;
+  notes?: string;
+}
+
+export interface SectorRiskExposure {
+  sector: MarketSector;
+  sectorName: string;
+  positionsCount: number;
+  grossNotionalUsd: number;
+  grossNotionalPct: number;
+  netDeltaUsd: number;
+  betaWeightedDeltaUsd: number;
+  unrealizedPnlUsd: number;
+  avgBeta: number;
+  longNotionalUsd: number;
+  shortNotionalUsd: number;
+  concentrationWarning: boolean;
+}
+
+export interface PortfolioRiskSummary {
+  portfolioEquity: number;
+  grossNotionalUsd: number;
+  netDeltaUsd: number;
+  betaWeightedDeltaUsd: number;
+  portfolioBeta: number;
+  effectiveLeverage: number;
+  marginUtilizationPct: number;
+  totalUnrealizedPnlUsd: number;
+  totalUnrealizedPnlPct: number;
+  maxStopLossLossUsd: number;
+  maxStopLossLossPct: number;
+  portfolioGammaUsd: number;
+  gammaRiskLevel: 'LOW' | 'MODERATE' | 'ELEVATED' | 'HIGH';
+  var95DailyUsd: number;
+  var99DailyUsd: number;
+  directionalBias: 'HEAVY_LONG' | 'MODERATE_LONG' | 'NEUTRAL' | 'MODERATE_SHORT' | 'HEAVY_SHORT';
+  sectorBreakdown: SectorRiskExposure[];
 }
 

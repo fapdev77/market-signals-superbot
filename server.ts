@@ -127,6 +127,8 @@ async function startServer() {
         low24h: parseFloat((basePrice * 0.97).toFixed(2)),
         volume24h: 450000,
         quoteVolume24h: 4100000000,
+        ma24h: basePrice * 0.995,
+        ma24hDeviationPct: 0.50,
         openInterest: basePrice * 50000,
         openInterestChange24h: 2.5,
         openInterestChange1h: 0.4,

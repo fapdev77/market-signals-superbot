@@ -23,13 +23,15 @@ import { Tooltip } from './Tooltip';
 interface PriceAlertManagerProps {
   ticker: TickerData;
   onAlertTriggered?: (alert: UserPriceAlert) => void;
+  onOpenBulkManager?: () => void;
 }
 
 const STORAGE_KEY = 'superbot_user_price_alerts';
 
 export const PriceAlertManager: React.FC<PriceAlertManagerProps> = ({
   ticker,
-  onAlertTriggered
+  onAlertTriggered,
+  onOpenBulkManager
 }) => {
   const [alerts, setAlerts] = useState<UserPriceAlert[]>(() => {
     try {
@@ -58,6 +60,7 @@ export const PriceAlertManager: React.FC<PriceAlertManagerProps> = ({
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(alerts));
+      window.dispatchEvent(new Event('storage'));
     } catch {
       // ignore
     }
@@ -445,6 +448,28 @@ export const PriceAlertManager: React.FC<PriceAlertManagerProps> = ({
                 })
               )}
             </div>
+
+            {/* Central Bulk Alert Manager Footer Link */}
+            {onOpenBulkManager && (
+              <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenBulkManager();
+                  }}
+                  className="w-full py-1.5 px-2.5 rounded-lg bg-[#14151a] hover:bg-neutral-800 text-orange-400 hover:text-orange-300 font-mono font-bold text-[11px] flex items-center justify-between border border-orange-500/20 hover:border-orange-500/40 transition"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Gerenciador Geral em Massa</span>
+                  </div>
+                  <span className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded">
+                    {alerts.length} total &rarr;
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

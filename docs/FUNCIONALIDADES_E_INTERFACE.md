@@ -144,3 +144,132 @@ Incorporado dentro da visualização técnica (`ChartAndProfile.tsx`), o **Posit
 - **Alternância de Origem de Zonas:** Escolha entre os níveis técnicos do **Bot Quant** (com resolução do timeframe ativo) ou da **Auditoria do Agente de IA**.
 - **Controle de Alavancagem Futuros (1x a 50x):** Slider contínuo com presets táteis (2x, 5x, 10x, 20x, 25x, 50x) e diagnóstico visual de risco.
 - **Persistência Local (`superbot_position_sizer_prefs`):** Guarda a banca, a alavancagem e a tolerância de risco entre sessões.
+
+---
+
+## 8. Indicador Visual de Força de Tendência (*Trend Strength* 1-5 Barras / ADX) (`TickerGrid.tsx`)
+
+### O que é?
+Integrado em cada card do `TickerGrid`, este indicador sutil fornece um relance imediato da sustentabilidade direcional do movimento de cada ativo, evitando que o trader entre contra tendências exaustivas ou se envolva em mercados estagnados/consolidados.
+
+### Metodologia de Cálculo
+O score de 0 a 100 e a graduação de 1 a 5 barras é derivado de múltiplos vetores estatísticos em tempo real:
+1. **Posicionamento Relativo no Range 24h:** Avaliação da proximidade da cotação atual em relação às máximas (`high24h`) ou mínimas (`low24h`).
+2. **Velocidade & Momentum do Preço:** Variação percentual das 24h ponderada por velocidade.
+3. **Alinhamento do Delta CVD:** Confirmação se o fluxo institucional de compras ou vendas a mercado corrobora a direção do movimento.
+4. **Expansão de Open Interest (OI 1h):** Validação se novos contratos alavancados estão entrando para sustentar a tendência ou se há perda de liquidez.
+5. **Confluência Algorítmica Global:** Bônus quantitativo do motor analítico.
+
+### Escala de Barras & Equivalência ADX (Average Directional Index)
+- **1 Barra (ADX ~12-19):** *Sem Tendência (Consolidação)* — Mercado lateral sem momentum direcional sustentado.
+- **2 Barras (ADX ~20-27):** *Tendência Incipiente / Fraca* — Início tímido de direcional ou consolidação ampla.
+- **3 Barras (ADX ~28-37):** *Tendência Moderada* — Direcional ativo em desenvolvimento, acompanhando rompimento de níveis chave.
+- **4 Barras (ADX ~38-47):** *Tendência Forte (Sustentada)* — Tendência estrutural consistente com fluxo institucional favorável e sustentação de topos/fundos.
+- **5 Barras (ADX ~48-60+):** *Tendência Muito Forte (Exaustão/Parabólica)* — Momentum extremo com volume alto e risco de clímax ou continuação agressiva.
+
+### Recursos de Interface
+- **Micro-gráfico de 5 barras ascendentes:** Cores contextuais (Verde Esmeralda para Alta Forte, Vermelho/Rubi para Baixa Forte, Cinza para Consolidação).
+- **Tooltip detalhado:** Exibe o valor estimado de ADX, classificação textual e diagnóstico do momentum.
+- **Ordenação Rápida:** Filtro no menu drop-down para listar os ativos do grid por *Maior Força de Tendência (ADX 1-5)*.
+
+---
+
+## 9. Dashboard Customizável com Drag-and-Drop (`DashboardGridLayout.tsx`)
+
+### O que é?
+Sistema de gerenciamento de layout drag-and-drop responsivo implementado com `react-grid-layout`, permitindo que os traders personalizem e reorganizem livremente os painéis do dashboard de acordo com seu estilo operacional (Scalping, Day Trading, Análise Macro).
+
+### Funcionalidades
+- **Reordenação Drag-and-Drop:** Alça tátil de arrasto (`.widget-drag-handle`) presente no topo de cada widget para reposicionamento fluido sem interferir nos controles internos dos gráficos.
+- **Trava de Layout (*Drag Lock*):** Botão para alternar entre "Arrasto Ativo" e "Layout Travado" prevenindo movimentações indesejadas durante operações de mercado agitadas.
+- **Gaveta de Visibilidade de Widgets:** Menu para ocultar ou exibir painéis individuais (Oportunidade Prime, Mapa de Calor D3, Matriz de Correlação Setorial, Grid de Tickers).
+- **Persistência em Tempo Real:** Armazenamento automático da ordem e visibilidade no `localStorage` (`superbot_dashboard_grid_layouts_v2` e `superbot_dashboard_widgets_visibility_v2`).
+- **Botão de Restauração:** Redefine o layout para as posições otimizadas de fábrica com um clique.
+
+---
+
+## 10. Mapa de Calor Global do Mercado com D3 (*Market Heatmap*) (`MarketHeatmap.tsx`)
+
+### O que é?
+Visualização em Treemap interativo construída com **D3.js** (`d3.treemap` e `d3.hierarchy`), mapeando a liquidez e a posição relativa de todos os ativos monitorados.
+
+### Metodologia e Codificação Visual
+1. **Dimensionamento dos Blocos por Volume 24h:** A área de cada retângulo é proporcional ao volume financeiro negociado nas últimas 24 horas (`quoteVolume24h` em USDT ou USD), destacando visualmente onde está concentrada a liquidez do mercado.
+2. **Colorização por Desvio da Média Móvel de 24h (MA24h):**
+   - **Cálculo do Desvio:** $\text{Desvio \%} = \frac{\text{Preço Atual} - \text{MA24h}}{\text{MA24h}} \times 100$.
+   - **Escala de Cores D3 Divergente:**
+     - **Abaixo da Média (-8% a -1%):** Tons de Vermelho Rubi / Carmesim (`#be123c` a `#9f1239`), sinalizando sobre-venda ou desconto acentuado.
+     - **Em torno da Média (~0%):** Ardósia / Grafite neutro (`#1e222d`).
+     - **Acima da Média (+1% a +8%+):** Tons de Verde Esmeralda (`#065f46` a `#10b981`), indicando expansão altista e impulso comprador.
+3. **Alternância de Métrica de Cor:** Botão rápido para alternar entre *Desvio MA 24h* e *Variação 24h % clássica*.
+4. **Filtro de Mercados:** Opções para visualizar *Todos*, apenas *Cripto Futuros* ou apenas *TradFi* (Ouro, Petróleo, S&P 500, DXY).
+5. **Tooltip Dinâmico & Integração:** Hover com dados completos de cotação, MA 24h, desvio percentual, volume e direção de fluxo CVD. Clique em qualquer bloco para abrir a análise técnica do ativo.
+
+---
+
+## 11. Profundidade de Liquidez & Pressão de Livro com D3 (*Liquidity Depth*) (`LiquidityDepth.tsx`)
+
+### O que é?
+Componente de visualização quantitativa construído em **D3.js** que mapeia as curvas cumulativas de profundidade do livro de ordens (Bids vs. Asks) do ativo selecionado, mensurando com precisão matemática a assimetria (*imbalance*) e a pressão institucional exercida pelas ordens limite passivas.
+
+### Metodologia e Codificação Visual
+1. **Curvas Cumulativas de Profundidade em D3:**
+   - **Lado Comprador (Bids - Verde Esmeralda `#10b981`):** Degraus/curvas cumulativas (`d3.curveStepBefore` ou `d3.curveMonotoneX`) com preenchimento em gradiente translúcido, acumulando o volume em USD desde os níveis mais profundos até o melhor preço de compra (*Best Bid*).
+   - **Lado Vendedor (Asks - Vermelho Rubi `#f43f5e`):** Degraus/curvas cumulativas (`d3.curveStepAfter` ou `d3.curveMonotoneX`) com preenchimento em gradiente translúcido, acumulando o volume em USD a partir do melhor preço de venda (*Best Ask*).
+   - **Preço Médio de Mercado (*Mid Market Price*):** Linha vertical pontilhada em amarelo âmbar com badge indicador centralizado no ponto médio exato entre a melhor compra e melhor venda.
+2. **Identificação de Muralhas de Liquidez (*Whale Walls*):**
+   - Níveis do livro de ordens individuais cujo volume excede $\ge 2.3\times$ a média das ordens são marcados com halos pulsantes e etiquetas contextuais (`MURALHA BID` / `MURALHA ASK`).
+3. **Mensuração Quantitativa de Pressão & Imbalance:**
+   - **Fórmula de Desequilíbrio:** $\text{Imbalance \%} = \frac{\text{Profundidade Bids (USD)} - \text{Profundidade Asks (USD)}}{\text{Profundidade Total (USD)}} \times 100$.
+   - **Barra de Balanço Bid/Ask:** Barra gráfica dividida exibindo a proporção exata entre volume comprador e vendedor (ex.: 58% Bids vs 42% Asks).
+   - **Classificação Diagnóstica de Fluxo:**
+     - $\ge +20\%$: *Forte Pressão Compradora (Suporte Carregado)*
+     - $+7\%$ a $+20\%$: *Moderada Pressão Compradora (Bid Dominante)*
+     - $-7\%$ a $+7\%$: *Livro Equilibrado (Fluxo Neutro)*
+     - $-20\%$ a $-7\%$: *Moderada Pressão Vendedora (Ask Dominante)*
+     - $\le -20\%$: *Forte Pressão Vendedora (Resistência Carregada)*
+4. **Controles Operacionais:**
+   - **Filtro de Range de Profundidade:** $\pm 0.5\%$, $\pm 1.0\%$, $\pm 2.0\%$, $\pm 5.0\%$ em relação ao preço médio.
+   - **Estilo de Curva:** Alternância entre *Degraus (Step Ladder)* e *Suave (Monotone Curve)*.
+   - **Modo Live:** Atualização automática periódica com indicador visual de pulso e botão de recarga manual.
+   - **Crosshair Interativo:** Cursor flutuante com cálculo instantâneo de preço, desvio percentual, volume cumulativo em USD e quantidade de tokens.
+5. **Disponibilidade:**
+   - Integrado na tela de análise detalhada do ativo (`ChartAndProfile.tsx`) logo abaixo dos indicadores de order flow/delta.
+   - Disponível como widget reorganizável com drag-and-drop no dashboard principal (`DashboardGridLayout.tsx`).
+
+---
+
+## 12. Gerenciador Geral de Alarmes em Massa (*Bulk Alert Manager*) (`BulkAlertManager.tsx`)
+
+### O que é?
+Painel centralizado e tabela unificada que expande o sistema de alarmes de preço do SuperBot, permitindo aos traders visualizar, monitorar, filtrar, ordenar, criar, alternar (ativar/pausar) e excluir em lote (*bulk actions*) múltiplos alarmes cadastrados em todos os ativos da carteira simultaneamente.
+
+### Principais Recursos & Metodologia
+1. **Tabela Central Unificada Multi-Ativos:**
+   - **Ativo (Ticker):** Exibição do par com atalho direto (*Ver Gráfico*) para focar a análise técnica imediatamente no ativo desejado.
+   - **Condição:** Indicadores visuais claros para rompimento de alta (`▲ >= Cruzar Acima`) em verde esmeralda e perda de suporte (`▼ <= Cruzar Abaixo`) em vermelho rubi.
+   - **Preço Alvo & Preço Atual Live:** Comparação lado a lado do preço estipulado versus cotação em tempo real e variação percentual 24h.
+   - **Distância para o Alvo & Barra de Proximidade:** Cálculo contínuo da distância percentual restante até o disparo. Alarmes a $\le 1.0\%$ de distância recebem badge pulsante de prioridade `IMINENTE`.
+   - **Status Interativo:** Toggle switch direto para alternar entre *Ativo* (monitorando) e *Pausado*, além de badge com histórico de disparo e botão de *Rearmar/Resetar* para alarmes acionados.
+   - **Notas Contextuais:** Visualização de observações personalizadas inseridas pelo trader.
+2. **Ações em Massa (*Bulk Actions*):**
+   - Seleção múltipla por caixas de marcação (com botão de marcar/desmarcar todos).
+   - **Ativar Selecionados:** Reativa e rearma múltiplos alarmes em um único clique.
+   - **Pausar Selecionados:** Suspende temporariamente o monitoramento dos itens marcados.
+   - **Excluir Selecionados:** Remove em lote os alarmes obsoletos.
+   - **Limpar Disparados:** Higienização com um clique de todos os alarmes que já cumpriram seu objetivo.
+3. **Filtros, Busca e Ordenação:**
+   - Filtro por ativo específico ou visualização consolidada de todos os pares monitorados.
+   - Filtro por estado: *Todos*, *Ativos*, *Pausados* ou *Disparados*.
+   - Busca em tempo real por ticker ou texto da nota explicativa.
+   - Ordenação inteligente por: *Mais Próximo do Disparo (% Distância)*, *Data de Criação*, *Preço Alvo* ou *Ticker (A-Z)*.
+4. **Criador Rápido de Alarmes (*Quick Drawer*):**
+   - Permite cadastrar novos alertas para qualquer par disponível no screener sem precisar trocar de gráfico.
+   - Atalhos de cálculo rápido percentual ($\pm 0.5\%$, $\pm 1.0\%$, $\pm 2.0\%$).
+5. **Backup & Portabilidade:**
+   - **Exportar JSON:** Download instantâneo de todos os alarmes configurados.
+   - **Importar JSON:** Restauração ou mesclagem rápida de listas de alarmes prévias.
+6. **Monitoramento Global em Segundo Plano:**
+   - Avalia continuamente as cotações em tempo real de todos os ativos da carteira (`allTickers`).
+   - Dispara tons sonoros sintetizados via Web Audio API (`playSignalTone`) e notificações na Área de Trabalho (`Notification API`) mesmo quando o usuário estiver analisando outro gráfico.
+

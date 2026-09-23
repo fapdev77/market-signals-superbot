@@ -40,6 +40,18 @@ export function processTickerState(
   const volume24h = parseFloat(rawTicker.volume || '10000');
   const quoteVolume24h = parseFloat(rawTicker.quoteVolume || (volume24h * price).toFixed(0));
 
+  // Compute 24h Moving Average (from available klines or estimate from 24h high, low, open, close)
+  let ma24h = price;
+  if (klines && klines.length > 0) {
+    const sumCloses = klines.reduce((acc, k) => acc + (k.close || price), 0);
+    ma24h = sumCloses / klines.length;
+  } else {
+    // If no klines yet, synthesize from 24h open and price range
+    const open24h = price / (1 + (priceChangePercent24h / 100));
+    ma24h = (open24h + high24h + low24h + price) / 4;
+  }
+  const ma24hDeviationPct = ma24h > 0 ? Number((((price - ma24h) / ma24h) * 100).toFixed(2)) : 0;
+
   // Compute Volume Profile (Passo 6: default 50 bins/linhas de preço)
   const rawProfile = calculateVolumeProfile(klines, weights.volumeProfileRange || 50);
   const inValueArea = price >= rawProfile.val && price <= rawProfile.vah;
@@ -248,6 +260,8 @@ export function processTickerState(
     low24h,
     volume24h,
     quoteVolume24h,
+    ma24h,
+    ma24hDeviationPct,
     openInterest,
     openInterestChange24h,
     openInterestChange1h,
