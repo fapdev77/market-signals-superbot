@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Layers, Activity, Target, Sliders, Info } from 'lucide-react';
+import { Layers, Activity, Target, Sliders, Info, BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
 import { TickerData } from '../types';
 import { formatPrice, formatCompactNumber } from '../utils/formatters';
 import { ChartDataItem } from './OrderflowIndicators';
 import { Tooltip } from './Tooltip';
+import { calculateVolumeProfile, VolumeProfileResult } from '../utils/volumeProfileUtils';
 
 export interface VolumeProfileCardProps {
   ticker: TickerData;
@@ -23,96 +24,37 @@ export const VolumeProfileCard: React.FC<VolumeProfileCardProps> = ({
   botWeights
 }) => {
   const [profileMode, setProfileMode] = useState<'chart' | 'bot'>('chart');
+  const [showMiniDistribution, setShowMiniDistribution] = useState<boolean>(true);
   const baseAsset = ticker.baseAsset || (ticker.symbol ? ticker.symbol.replace(/USDT|BUSD|USDC/g, '') : 'ATIVO');
   const currentPrice = ticker.price ?? 0;
 
   // Dynamic Volume Profile calculation based on visible candles
-  const chartProfile = useMemo(() => {
+  const fullProfile = useMemo(() => {
     if (!slicedData || slicedData.length === 0) return null;
-    const minP = Math.min(...slicedData.map(d => d.low));
-    const maxP = Math.max(...slicedData.map(d => d.high));
-    const priceDelta = maxP - minP;
-    if (priceDelta <= 0) return null;
-
-    const rowCount = botWeights?.volumeProfileRange || 50;
-    const step = priceDelta / rowCount;
-    const bins = new Array(rowCount).fill(0);
-    let totalVol = 0;
-
-    slicedData.forEach(d => {
-      const vol = (d.takerBuy ?? 0) + (d.takerSell ?? 0);
-      totalVol += vol;
-      const binIdx = Math.min(rowCount - 1, Math.max(0, Math.floor(((d.close - minP) / priceDelta) * rowCount)));
-      bins[binIdx] += vol;
-    });
-
-    let maxBinIdx = 0;
-    let maxBinVol = 0;
-    bins.forEach((v, idx) => {
-      if (v > maxBinVol) {
-        maxBinVol = v;
-        maxBinIdx = idx;
-      }
-    });
-
-    const poc = minP + (maxBinIdx + 0.5) * step;
-
-    // Value area (70% of total volume around POC)
-    const targetVA = totalVol * 0.70;
-    let accumulatedVA = maxBinVol;
-    let upIdx = maxBinIdx;
-    let downIdx = maxBinIdx;
-
-    while (accumulatedVA < targetVA && (upIdx < rowCount - 1 || downIdx > 0)) {
-      const nextUpVol = upIdx < rowCount - 1 ? bins[upIdx + 1] : -1;
-      const nextDownVol = downIdx > 0 ? bins[downIdx - 1] : -1;
-
-      if (nextUpVol >= nextDownVol && nextUpVol !== -1) {
-        upIdx++;
-        accumulatedVA += bins[upIdx];
-      } else if (nextDownVol !== -1) {
-        downIdx--;
-        accumulatedVA += bins[downIdx];
-      } else if (nextUpVol !== -1) {
-        upIdx++;
-        accumulatedVA += bins[upIdx];
-      } else {
-        break;
-      }
-    }
-
-    const vah = minP + (upIdx + 1) * step;
-    const val = minP + downIdx * step;
-
-    return {
-      vah,
-      val,
-      poc,
-      minPrice: minP,
-      maxPrice: maxP,
-      totalVolume: totalVol,
-      candlesCount: slicedData.length,
-      timeframe,
-      rowCount
-    };
-  }, [slicedData, timeframe, botWeights?.volumeProfileRange]);
+    const rowCount = botWeights?.volumeProfileRange || 28;
+    return calculateVolumeProfile(slicedData, rowCount, 0.70);
+  }, [slicedData, botWeights?.volumeProfileRange]);
 
   const botRange = ticker.rangeProfile || { vah: 0, val: 0, poc: 0 };
   const botTf = botWeights?.volumeProfileTimeframe || '30m';
   const botCandles = botWeights?.volumeProfileCandles || 48;
   const botRows = botWeights?.volumeProfileRange || 50;
 
-  const activeProfile = (profileMode === 'chart' && chartProfile) ? {
-    vah: chartProfile.vah,
-    val: chartProfile.val,
-    poc: chartProfile.poc,
+  const activeProfile = (profileMode === 'chart' && fullProfile) ? {
+    vah: fullProfile.vah,
+    val: fullProfile.val,
+    poc: fullProfile.poc,
     isDynamic: true,
-    tf: chartProfile.timeframe,
-    candles: chartProfile.candlesCount,
-    rows: chartProfile.rowCount,
-    minPrice: chartProfile.minPrice,
-    maxPrice: chartProfile.maxPrice,
-    totalVol: chartProfile.totalVolume
+    tf: timeframe,
+    candles: fullProfile.candleCount,
+    rows: fullProfile.bins.length,
+    minPrice: fullProfile.minPrice,
+    maxPrice: fullProfile.maxPrice,
+    totalVol: fullProfile.totalVolume,
+    bins: fullProfile.bins,
+    maxBinVolume: fullProfile.maxBinVolume,
+    delta: fullProfile.sessionDelta,
+    deltaUSD: fullProfile.sessionDeltaUSD
   } : {
     vah: botRange.vah,
     val: botRange.val,
@@ -123,7 +65,11 @@ export const VolumeProfileCard: React.FC<VolumeProfileCardProps> = ({
     rows: botRows,
     minPrice: undefined,
     maxPrice: undefined,
-    totalVol: undefined
+    totalVol: undefined,
+    bins: [],
+    maxBinVolume: 0,
+    delta: 0,
+    deltaUSD: 0
   };
 
   const inValueArea = currentPrice >= activeProfile.val && currentPrice <= activeProfile.vah;
@@ -293,6 +239,54 @@ export const VolumeProfileCard: React.FC<VolumeProfileCardProps> = ({
           </div>
         </Tooltip>
       </div>
+
+      {/* Mini Volume Profile Visual Distribution Preview */}
+      {activeProfile.bins && activeProfile.bins.length > 0 && (
+        <div className="mt-2.5 pt-2 border-t border-white/5 space-y-1.5">
+          <div className="flex items-center justify-between text-[10px] text-neutral-400">
+            <span className="flex items-center gap-1 font-bold text-neutral-300">
+              <BarChart3 className="h-3 w-3 text-cyan-400" />
+              Distribuição por Nível:
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowMiniDistribution(!showMiniDistribution)}
+              className="text-cyan-400 hover:text-cyan-300 text-[9px] font-bold flex items-center gap-0.5"
+            >
+              {showMiniDistribution ? (
+                <><span>Recolher</span><ChevronUp className="h-3 w-3" /></>
+              ) : (
+                <><span>Expandir</span><ChevronDown className="h-3 w-3" /></>
+              )}
+            </button>
+          </div>
+
+          {showMiniDistribution && (
+            <div className="bg-[#050505] p-2 rounded border border-white/5 space-y-0.5 max-h-[140px] overflow-y-auto scrollbar-thin scrollbar-thumb-neutral-800">
+              {[...activeProfile.bins].reverse().slice(0, 18).map((bin, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-[8.5px] py-0.2">
+                  <span className={`w-14 truncate font-mono ${bin.isPOC ? 'text-cyan-400 font-bold' : bin.isInValueArea ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                    {formatPrice(bin.price)}
+                  </span>
+                  <div className="flex-1 h-1.5 bg-neutral-900 rounded-full overflow-hidden flex">
+                    <div
+                      className={`h-full ${bin.isPOC ? 'bg-cyan-400' : 'bg-emerald-500'}`}
+                      style={{ width: `${(bin.widthPercent * (bin.buyPercent / 100)).toFixed(1)}%` }}
+                    />
+                    <div
+                      className={`h-full ${bin.isPOC ? 'bg-cyan-600' : 'bg-rose-500'}`}
+                      style={{ width: `${(bin.widthPercent * (bin.sellPercent / 100)).toFixed(1)}%` }}
+                    />
+                  </div>
+                  <span className="w-10 text-right text-neutral-400 text-[8px] font-mono">
+                    {formatCompactNumber(bin.totalVolume)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

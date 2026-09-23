@@ -2,13 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
-import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders } from 'lucide-react';
+import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders, Layers, BarChart3 } from 'lucide-react';
 import { MarketProfileMetrics, VolumeProfileCard, OrderFlowFundingCard, DivergenceStructureCard } from './MarketProfileMetrics';
 import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
 import { LiquidityDepth } from './LiquidityDepth';
 import { calculateLiquidityHeatmap } from '../utils/heatmapUtils';
 import { LiquidityHeatmapReferenceAreas, LiquidityHeatmapBadge } from './LiquidityHeatmapOverlay';
+import { calculateVolumeProfile, VolumeProfileResult } from '../utils/volumeProfileUtils';
+import { VolumeDeltaGauge } from './VolumeDeltaGauge';
+import { VolumeProfileVisualization, VolumeProfileOverlayOnChart } from './VolumeProfileVisualization';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 import { Tooltip as AppTooltip } from './Tooltip';
 import { PriceAlertManager } from './PriceAlertManager';
@@ -59,6 +62,11 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [dragModeActive, setDragModeActive] = useState<boolean>(false);
   const [heatmapEnabled, setHeatmapEnabled] = useState<boolean>(true);
   const [heatmapBucketCount, setHeatmapBucketCount] = useState<number>(36);
+  const [volumeProfileEnabled, setVolumeProfileEnabled] = useState<boolean>(true);
+  const [volumeProfileBins, setVolumeProfileBins] = useState<number>(36);
+  const [volumeProfileSide, setVolumeProfileSide] = useState<'right' | 'left'>('right');
+  const [showDetailedVolumeProfile, setShowDetailedVolumeProfile] = useState<boolean>(false);
+  const [showVolumeDeltaGauge, setShowVolumeDeltaGauge] = useState<boolean>(true);
   const [activeFibLevels, setActiveFibLevels] = useState<{
     fib0?: number;
     fib236: number;
@@ -818,6 +826,12 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     }
     return calculateLiquidityHeatmap(target, ticker.price, heatmapBucketCount);
   }, [slicedData, chartData, ticker?.price, heatmapBucketCount]);
+
+  const volumeProfileData = useMemo(() => {
+    const target = slicedData.length > 0 ? slicedData : chartData;
+    if (!target.length || !ticker) return null;
+    return calculateVolumeProfile(target, volumeProfileBins, 0.70);
+  }, [slicedData, chartData, ticker?.symbol, volumeProfileBins]);
 
   const chartHeightPx = 240;
 
@@ -1598,14 +1612,124 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           </div>
         </div>
 
-        {/* Liquidity Heatmap Overlay Badge & Controls */}
-        <LiquidityHeatmapBadge
-          heatmapData={heatmapData}
-          visible={heatmapEnabled}
-          onToggle={() => setHeatmapEnabled(!heatmapEnabled)}
-          bucketCount={heatmapBucketCount}
-          onChangeBucketCount={(cnt) => setHeatmapBucketCount(cnt)}
-        />
+        {/* Liquidity Heatmap & Volume Profile Overlay Badges & Controls */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <LiquidityHeatmapBadge
+            heatmapData={heatmapData}
+            visible={heatmapEnabled}
+            onToggle={() => setHeatmapEnabled(!heatmapEnabled)}
+            bucketCount={heatmapBucketCount}
+            onChangeBucketCount={(cnt) => setHeatmapBucketCount(cnt)}
+          />
+
+          {/* Volume Profile & Volume Delta Controls */}
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+            {/* Toggle Volume Profile On Chart */}
+            <AppTooltip
+              position="top"
+              title="Volume Profile do Range (VP)"
+              badge={volumeProfileEnabled ? "ATIVO NO GRÁFICO" : "OCULTO"}
+              content="Projeta barras horizontais de distribuição de volume por faixa de preço diretamente no gráfico, com destaque para o POC (Point of Control) e Área de Valor (70%)."
+            >
+              <button
+                type="button"
+                onClick={() => setVolumeProfileEnabled(!volumeProfileEnabled)}
+                className={`px-2.5 py-1 rounded-lg border font-bold transition flex items-center gap-1.5 ${
+                  volumeProfileEnabled
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-xs'
+                    : 'bg-[#050505] text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Layers className={`h-3.5 w-3.5 ${volumeProfileEnabled ? 'text-cyan-400 animate-pulse' : 'text-neutral-500'}`} />
+                <span>Volume Profile (VP)</span>
+                {volumeProfileData?.poc && (
+                  <span className="text-[9px] bg-cyan-400/20 text-cyan-300 px-1 py-0.2 rounded font-bold">
+                    POC {formatPrice(volumeProfileData.poc)}
+                  </span>
+                )}
+              </button>
+            </AppTooltip>
+
+            {/* Volume Profile Resolution Selector */}
+            {volumeProfileEnabled && (
+              <div className="flex items-center bg-[#050505] rounded border border-white/10 p-0.5">
+                {[24, 36, 48, 64].map(cnt => (
+                  <button
+                    key={cnt}
+                    type="button"
+                    onClick={() => setVolumeProfileBins(cnt)}
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition ${
+                      volumeProfileBins === cnt ? 'bg-cyan-500 text-black shadow' : 'text-neutral-500 hover:text-white'
+                    }`}
+                  >
+                    {cnt}L
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Volume Profile Side Position Toggle */}
+            {volumeProfileEnabled && (
+              <button
+                type="button"
+                onClick={() => setVolumeProfileSide(volumeProfileSide === 'right' ? 'left' : 'right')}
+                className="px-2 py-1 rounded border bg-[#050505] text-neutral-400 border-white/10 hover:text-white text-[9px] font-bold"
+                title="Alternar lado do Volume Profile no gráfico (Direita / Esquerda)"
+              >
+                Lado: {volumeProfileSide === 'right' ? 'Dir' : 'Esq'}
+              </button>
+            )}
+
+            {/* Toggle Detailed Volume Profile Distribution Inspector */}
+            <AppTooltip
+              position="top"
+              title="Painel Detalhado de Volume Profile"
+              badge="DISTRIBUIÇÃO DE LIQUIDEZ"
+              content="Exibe a lista completa de níveis de preço com a divisão exata entre volume comprador e vendedor (Delta), High Volume Nodes (HVN) e Low Volume Nodes (LVN)."
+            >
+              <button
+                type="button"
+                onClick={() => setShowDetailedVolumeProfile(!showDetailedVolumeProfile)}
+                className={`px-2.5 py-1 rounded-lg border font-bold transition flex items-center gap-1.5 ${
+                  showDetailedVolumeProfile
+                    ? 'bg-cyan-500/25 text-cyan-200 border-cyan-500 shadow-xs ring-1 ring-cyan-500/50'
+                    : 'bg-[#050505] text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <BarChart3 className="h-3.5 w-3.5 text-cyan-400" />
+                <span>Níveis Detalhados</span>
+              </button>
+            </AppTooltip>
+
+            {/* Toggle Real-time Volume Delta Gauge */}
+            <AppTooltip
+              position="top"
+              title="Medidor de Volume Delta Real-Time"
+              badge={showVolumeDeltaGauge ? "GAUGE ATIVO" : "GAUGE OCULTO"}
+              content="Visualizador em ponteiro (gauge) de agressão compradora vs vendedora na sessão atual."
+            >
+              <button
+                type="button"
+                onClick={() => setShowVolumeDeltaGauge(!showVolumeDeltaGauge)}
+                className={`px-2.5 py-1 rounded-lg border font-bold transition flex items-center gap-1.5 ${
+                  showVolumeDeltaGauge
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
+                    : 'bg-[#050505] text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Zap className={`h-3.5 w-3.5 ${showVolumeDeltaGauge ? 'text-emerald-400 animate-pulse' : 'text-neutral-500'}`} />
+                <span>Volume Delta Gauge</span>
+                {volumeProfileData && (
+                  <span className={`text-[9px] px-1 py-0.2 rounded font-bold ${
+                    volumeProfileData.sessionDelta >= 0 ? 'text-emerald-300 bg-emerald-500/20' : 'text-rose-300 bg-rose-500/20'
+                  }`}>
+                    {volumeProfileData.sessionDelta >= 0 ? '+' : ''}{volumeProfileData.pressureScore.toFixed(0)}%
+                  </span>
+                )}
+              </button>
+            </AppTooltip>
+          </div>
+        </div>
 
         {/* Recharts Area Chart / Candlestick Chart (Expanded Height for Pristine Readability) */}
         <div 
@@ -1624,6 +1748,16 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
+          {/* On-Chart Horizontal Volume Profile Overlay */}
+          <VolumeProfileOverlayOnChart
+            volumeProfile={volumeProfileData}
+            domainMin={domainMin}
+            domainMax={domainMax}
+            priceRange={priceRange}
+            visible={volumeProfileEnabled}
+            side={volumeProfileSide}
+            widthPercent={22}
+          />
           {/* Pan Indicator Pill when dragging or dragModeActive */}
           {dragModeActive && (
             <div className="absolute top-3 left-4 z-20 pointer-events-none flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-neutral-900/90 border border-orange-500/40 text-[10px] font-mono text-orange-400 backdrop-blur-md shadow-lg">
@@ -1723,6 +1857,25 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             </ResponsiveContainer>
           )}
         </div>
+
+        {/* Real-time Session Volume Delta Gauge Indicator */}
+        {showVolumeDeltaGauge && (
+          <VolumeDeltaGauge
+            volumeProfile={volumeProfileData}
+            baseAsset={baseAsset}
+            timeframe={timeframe}
+            currentPrice={price}
+          />
+        )}
+
+        {/* Detailed Horizontal Volume Profile Distribution Inspector */}
+        {showDetailedVolumeProfile && (
+          <VolumeProfileVisualization
+            volumeProfile={volumeProfileData}
+            currentPrice={price}
+            baseAsset={baseAsset}
+          />
+        )}
 
         {/* Sub-gráficos de Orderflow e Volume Taker */}
         <OrderflowIndicators

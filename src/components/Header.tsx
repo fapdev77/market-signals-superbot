@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, 
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
-  Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, Sparkles, Search,
-  Sun, Moon
+  ChevronDown, Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, 
+  Sparkles, Search, Sun, Moon, Check, Layers, BarChart3, Radio
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { BotState, TickerData } from '../types';
@@ -23,6 +23,26 @@ interface HeaderProps {
   onOpenAutoTune?: () => void;
 }
 
+interface NavSubItem {
+  id: string;
+  label: string;
+  icon: React.ElementType;
+  badge: string | number | null;
+  highlight?: boolean;
+  desc: string;
+  shortcut?: string;
+}
+
+interface NavCategory {
+  id: string;
+  label: string;
+  shortLabel: string;
+  icon: React.ElementType;
+  desc: string;
+  items: NavSubItem[];
+  badge?: string | number | null;
+}
+
 export const Header: React.FC<HeaderProps> = ({
   botState,
   tickers,
@@ -34,10 +54,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAutoTune
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [soundOn, setSoundOn] = useState(true);
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [networkPing, setNetworkPing] = useState<number>(14);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
   const { theme, toggleTheme } = useTheme();
 
@@ -52,6 +74,28 @@ export const Header: React.FC<HeaderProps> = ({
   useEffect(() => {
     setSoundOn(isAudioEnabled());
     setNotifEnabled(isNotificationEnabled());
+  }, []);
+
+  // Close dropdown on outside click or ESC key
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpenDropdownId(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpenDropdownId(null);
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const handleToggleSound = () => {
@@ -108,108 +152,161 @@ export const Header: React.FC<HeaderProps> = ({
 
   const topTickers = (tickers || []).slice(0, 6);
 
-  const navItems = [
+  // Categorized Navigation Structure (Option 1)
+  const navCategories: NavCategory[] = [
     {
-      id: 'dashboard',
-      label: 'Tickers',
+      id: 'market_group',
+      label: 'Mercado & Screeners',
+      shortLabel: 'Mercado',
       icon: Activity,
-      badge: null,
-      desc: 'Grid de pares de cripto futures e ativos tradicionais com variações, volume e métricas.'
+      desc: 'Catálogo de ativos, visualização em mapa de calor e rastreadores de fluxo.',
+      items: [
+        {
+          id: 'dashboard',
+          label: 'Grid de Tickers',
+          icon: Activity,
+          badge: null,
+          desc: 'Grid de pares de cripto futures e ativos tradicionais com variações, volume e métricas.'
+        },
+        {
+          id: 'heatmap',
+          label: 'Heatmap Global',
+          icon: Flame,
+          badge: 'D3',
+          highlight: true,
+          desc: 'Mapa de calor global D3 por volume 24h e desvio da média móvel 24h (MA24h).'
+        },
+        {
+          id: 'volume_screener',
+          label: 'Volume Screener',
+          icon: BarChart3,
+          badge: 'SPIKE',
+          highlight: true,
+          desc: 'Smart Volume Screener: Identifica picos anômalos de volume relativo (R-Vol) e fluxo taker institucional.'
+        },
+        {
+          id: 'screener',
+          label: 'Radar Screener Pro',
+          icon: Radar,
+          badge: 'PRO',
+          highlight: true,
+          desc: 'Universo dinâmico: Top Momentum, favoritos (★), expansão de Open Interest e RVOL.'
+        }
+      ]
     },
     {
-      id: 'heatmap',
-      label: 'Heatmap',
-      icon: Flame,
-      badge: 'D3',
-      highlight: true,
-      desc: 'Mapa de calor global D3 por volume 24h e desvio da média móvel 24h (MA24h).'
-    },
-    {
-      id: 'volume_screener',
-      label: 'Volume Screener',
-      icon: Flame,
-      badge: 'SPIKE',
-      highlight: true,
-      desc: 'Smart Volume Screener: Identifica picos anômalos de volume relativo (R-Vol) e fluxo taker institucional em múltiplos timeframes (1h, 4h, 1d).'
-    },
-    {
-      id: 'screener',
-      label: 'Radar Screener',
-      icon: Radar,
-      badge: 'PRO',
-      highlight: true,
-      desc: 'Universo dinâmico: Top Momentum, favoritos (★), expansão de Open Interest e RVOL.'
-    },
-    {
-      id: 'signals',
-      label: 'Sinais',
+      id: 'trading_group',
+      label: 'Operacional & Sinais',
+      shortLabel: 'Sinais & Análise',
       icon: Zap,
-      badge: botState.signalsGenerated24h,
-      desc: 'Matriz com sinais validados de entrada, stop loss, take profit e confluências de Order Flow.'
+      badge: botState.signalsGenerated24h > 0 ? botState.signalsGenerated24h : null,
+      desc: 'Sinais de confluência algorítmica, gráficos com Volume Profile e gestão de risco.',
+      items: [
+        {
+          id: 'signals',
+          label: 'Sinais & Confluências',
+          icon: Zap,
+          badge: botState.signalsGenerated24h > 0 ? `${botState.signalsGenerated24h} sinais` : null,
+          highlight: true,
+          desc: 'Matriz com sinais validados de entrada, stop loss, take profit e confluências de Order Flow.'
+        },
+        {
+          id: 'chart',
+          label: 'Análise Detalhada (Gráfico)',
+          icon: LineChart,
+          badge: 'PRO',
+          desc: 'Gráfico interativo com Volume Profile (VAH/VAL/POC), Heatmap de Liquidez e níveis Fibonacci.'
+        },
+        {
+          id: 'risk',
+          label: 'Exposição & Gregas (Risco)',
+          icon: ShieldAlert,
+          badge: 'RISK',
+          highlight: true,
+          desc: 'Dashboard de exposição de risco da carteira: Delta Líquido, Gamma, VaR, stress test e concentração setorial.'
+        }
+      ]
     },
     {
-      id: 'risk',
-      label: 'Exposição & Gregas',
-      icon: ShieldAlert,
-      badge: 'RISK',
-      highlight: true,
-      desc: 'Dashboard de exposição de risco da carteira: Delta Líquido, Gamma, VaR, stress test e concentração setorial.'
-    },
-    {
-      id: 'ai_motor',
-      label: 'Motor IA',
+      id: 'ai_group',
+      label: 'Inteligência Artificial',
+      shortLabel: 'Motor IA',
       icon: BrainCircuit,
-      badge: null,
-      desc: 'Auditoria de gráficos por IA, chat interativo de análise quantitativa e personas de trading.'
+      desc: 'Auditoria de gráficos por IA, chat quantitativo, personas e telemetria de LLMs.',
+      items: [
+        {
+          id: 'ai_motor',
+          label: 'Motor IA & Chat',
+          icon: BrainCircuit,
+          badge: botState.aiAnalysisEnabled ? 'ON' : 'OFF',
+          desc: 'Auditoria de gráficos por IA, chat interativo de análise quantitativa e personas de trading.'
+        },
+        {
+          id: 'ai_models_config',
+          label: 'Modelos LLM & Contingência',
+          icon: Cpu,
+          badge: null,
+          desc: 'Configuração de prioridade, chave de API, teste de latência e contingência (fallback) dos LLMs.'
+        },
+        {
+          id: 'ai_dashboard',
+          label: 'IA Telemetria & Custos',
+          icon: BarChart2,
+          badge: null,
+          highlight: true,
+          desc: 'Telemetria de chamadas de IA, métricas de custo, tempo de resposta e taxa de acertos.'
+        }
+      ]
     },
     {
-      id: 'chart',
-      label: 'Análise Detalhada',
-      icon: LineChart,
-      badge: null,
-      desc: 'Gráfico interativo com Volume Profile (VAH/VAL/POC), Heatmap de Liquidez e níveis Fibonacci.'
-    },
-    {
-      id: 'backtest',
-      label: 'Backtest',
-      icon: Database,
-      badge: null,
-      desc: 'Simulação estatística com Sharpe, Sortino, Drawdown, taxas, slippage e exportação CSV.'
-    },
-    {
-      id: 'ai_models_config',
-      label: 'Modelos IA',
-      icon: Cpu,
-      badge: null,
-      desc: 'Configuração de prioridade, chave de API, teste de latência e contingência (fallback) dos LLMs.'
-    },
-    {
-      id: 'ai_dashboard',
-      label: 'IA Dash',
-      icon: BarChart2,
-      badge: null,
-      highlight: true,
-      desc: 'Telemetria de chamadas de IA, métricas de custo, tempo de resposta e taxa de acertos.'
-    },
-    {
-      id: 'settings',
-      label: 'Pesos',
+      id: 'system_group',
+      label: 'Quant & Sistema',
+      shortLabel: 'Quant & Config',
       icon: Sliders,
-      badge: null,
-      desc: 'Ajuste de pesos para confluência de Delta CVD, Open Interest, Funding Rate e Otimizador Genético.'
-    },
-    {
-      id: 'binance_logs',
-      label: 'Logs API & IA',
-      icon: Wifi,
-      badge: null,
-      desc: 'Monitor de conexão WebSocket em tempo real, latência de pacotes e stream de eventos.'
-    },
+      desc: 'Backtest estatístico, pesos algorítmicos e monitor de conexão WebSocket.',
+      items: [
+        {
+          id: 'backtest',
+          label: 'Backtest Quantitativo',
+          icon: Database,
+          badge: null,
+          desc: 'Simulação estatística com Sharpe, Sortino, Drawdown, taxas, slippage e exportação CSV.'
+        },
+        {
+          id: 'settings',
+          label: 'Pesos & Otimizador',
+          icon: Sliders,
+          badge: null,
+          desc: 'Ajuste de pesos para confluência de Delta CVD, Open Interest, Funding Rate e Otimizador Genético.'
+        },
+        {
+          id: 'binance_logs',
+          label: 'Logs API & WebSocket',
+          icon: Wifi,
+          badge: `${networkPing}ms`,
+          desc: 'Monitor de conexão WebSocket em tempo real, latência de pacotes e stream de eventos.'
+        }
+      ]
+    }
   ];
+
+  // Flattened nav items for mobile and search reference
+  const allNavItems: NavSubItem[] = navCategories.flatMap(c => c.items);
 
   const handleSelectTab = (tabId: string) => {
     setActiveTab(tabId);
+    setOpenDropdownId(null);
     setIsMobileMenuOpen(false);
+  };
+
+  const handleCategoryClick = (category: NavCategory) => {
+    // If the category is already open, close it
+    if (openDropdownId === category.id) {
+      setOpenDropdownId(null);
+      return;
+    }
+    // Open the dropdown for inspection
+    setOpenDropdownId(category.id);
   };
 
   const activeModels = (botState.aiModels || []).filter(m => m.isActive).sort((a, b) => a.priority - b.priority);
@@ -351,14 +448,15 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main Navigation & Brand Header */}
-      <div className="max-w-[2400px] mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2">
+      <div className="max-w-[2400px] mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-4 relative" ref={dropdownRef}>
+        {/* Brand Logo & Name */}
         <Tooltip
           position="bottom"
           title="Market Signals SuperBot"
           badge="QUANT TRADING"
           content="Painel analítico e robô de confluência algorítmica para cripto futuros e ativos TradFi com Order Flow e IA."
         >
-          <div className="flex items-center gap-2.5 cursor-pointer min-w-0" onClick={() => handleSelectTab('dashboard')}>
+          <div className="flex items-center gap-2.5 cursor-pointer min-w-0 shrink-0" onClick={() => handleSelectTab('dashboard')}>
             <div className="h-9 w-9 shrink-0 rounded-lg bg-orange-500 flex items-center justify-center font-extrabold text-black font-mono text-sm tracking-tighter shadow-md shadow-orange-500/20 border border-orange-400">
               MS
             </div>
@@ -371,41 +469,132 @@ export const Header: React.FC<HeaderProps> = ({
                   HIGH DENSITY
                 </span>
               </div>
-              <p className="text-[9px] sm:text-[10px] text-neutral-400 font-mono truncate hidden xs:block">Order Flow • Delta CVD • Open Interest • Fibo Golden Pocket</p>
+              <p className="text-[9px] sm:text-[10px] text-neutral-400 font-mono truncate hidden lg:block">Order Flow • Delta CVD • Open Interest • Fibo Golden Pocket</p>
             </div>
           </div>
         </Tooltip>
 
-        {/* Desktop Navigation Tabs */}
-        <nav className="hidden md:flex items-center gap-1 bg-[#050505] p-1 rounded-lg border border-white/10 overflow-x-auto scrollbar-none">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
+        {/* Desktop Categorized Navigation (Option 1: Categorized Dropdown / Mega-Menu Clusters) */}
+        <nav className="hidden md:flex items-center gap-1.5 bg-[#050505] p-1 rounded-xl border border-white/10 font-mono text-xs z-40">
+          {navCategories.map(category => {
+            const Icon = category.icon;
+            const isCategoryActive = category.items.some(sub => sub.id === activeTab);
+            const isDropdownOpen = openDropdownId === category.id;
+            const activeSubItem = category.items.find(sub => sub.id === activeTab);
+
             return (
-              <Tooltip
-                key={item.id}
-                position="bottom"
-                title={item.label}
-                badge={item.badge !== null ? `${item.badge} sinais` : undefined}
-                content={item.desc}
+              <div 
+                key={category.id} 
+                className="relative"
+                onMouseEnter={() => setOpenDropdownId(category.id)}
+                onMouseLeave={() => setOpenDropdownId(null)}
               >
+                {/* Master Category Button */}
                 <button
-                  onClick={() => handleSelectTab(item.id)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition-all font-mono whitespace-nowrap ${
-                    isActive
-                      ? item.highlight ? 'bg-cyan-500 text-black shadow font-bold' : 'bg-orange-500 text-black shadow font-bold'
-                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-white/5'
+                  type="button"
+                  onClick={() => handleCategoryClick(category)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap border ${
+                    isCategoryActive
+                      ? 'bg-orange-500/15 text-orange-300 border-orange-500/40 shadow-xs shadow-orange-500/10'
+                      : isDropdownOpen
+                        ? 'bg-neutral-800/80 text-white border-white/20'
+                        : 'bg-transparent text-neutral-300 border-transparent hover:text-white hover:bg-white/5'
                   }`}
+                  aria-expanded={isDropdownOpen}
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                  {item.label}
-                  {item.badge !== null && (
-                    <span className={`text-[9px] px-1 rounded font-bold ${isActive ? 'bg-black/30 text-black' : 'bg-orange-500/20 text-orange-400'}`}>
-                      {item.badge}
+                  <Icon className={`h-3.5 w-3.5 ${isCategoryActive ? 'text-orange-400' : 'text-neutral-400'}`} />
+                  
+                  {/* Category Title or Active Subitem */}
+                  <span>{category.shortLabel}</span>
+
+                  {/* Active Sub-item Pill or Category Badge */}
+                  {isCategoryActive && activeSubItem ? (
+                    <span className="hidden xl:inline-block text-[10px] px-1.5 py-0.2 rounded font-black bg-orange-500 text-black shadow-xs">
+                      {activeSubItem.label.split(' ')[0]}
+                    </span>
+                  ) : null}
+
+                  {category.badge && !isCategoryActive && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded font-black bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                      {category.badge}
                     </span>
                   )}
+
+                  <ChevronDown className={`h-3 w-3 text-neutral-400 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180 text-orange-400' : ''}`} />
                 </button>
-              </Tooltip>
+
+                {/* Dropdown Popover Card */}
+                {isDropdownOpen && (
+                  <div className="absolute top-full left-0 mt-1.5 w-72 sm:w-80 bg-[#0A0A0C] border border-white/15 rounded-xl shadow-2xl p-2 z-50 backdrop-blur-xl animate-in fade-in slide-in-from-top-1 duration-150">
+                    {/* Category Header */}
+                    <div className="px-2.5 py-1.5 border-b border-white/10 mb-1.5 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-neutral-300 tracking-wider">
+                        <Icon className="w-3.5 h-3.5 text-orange-400" />
+                        <span>{category.label}</span>
+                      </div>
+                      <span className="text-[9px] text-neutral-500 font-mono">
+                        {category.items.length} módulos
+                      </span>
+                    </div>
+
+                    {/* Sub-items List */}
+                    <div className="space-y-1">
+                      {category.items.map(subItem => {
+                        const SubIcon = subItem.icon;
+                        const isSubActive = activeTab === subItem.id;
+
+                        return (
+                          <button
+                            key={subItem.id}
+                            type="button"
+                            onClick={() => handleSelectTab(subItem.id)}
+                            className={`w-full text-left p-2 rounded-lg transition flex items-start justify-between gap-2.5 border group ${
+                              isSubActive
+                                ? 'bg-orange-500/20 border-orange-500/50 text-white shadow-xs'
+                                : 'bg-[#050507] border-white/5 hover:border-white/20 hover:bg-neutral-900/80 text-neutral-300 hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-start gap-2.5 min-w-0">
+                              <div className={`p-1.5 rounded-md mt-0.5 shrink-0 ${
+                                isSubActive 
+                                  ? 'bg-orange-500 text-black' 
+                                  : 'bg-white/5 text-neutral-400 group-hover:text-orange-400 group-hover:bg-orange-500/10'
+                              }`}>
+                                <SubIcon className="h-3.5 w-3.5" />
+                              </div>
+
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-xs font-bold truncate ${isSubActive ? 'text-orange-300 font-black' : 'text-neutral-200'}`}>
+                                    {subItem.label}
+                                  </span>
+                                  {isSubActive && (
+                                    <Check className="w-3 h-3 text-orange-400 shrink-0" />
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-neutral-400 line-clamp-2 leading-relaxed mt-0.5 font-sans">
+                                  {subItem.desc}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Badges */}
+                            {subItem.badge !== null && (
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-black uppercase shrink-0 border ${
+                                isSubActive
+                                  ? 'bg-orange-500 text-black border-orange-400'
+                                  : 'bg-orange-500/15 text-orange-400 border-orange-500/30'
+                              }`}>
+                                {subItem.badge}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
@@ -421,7 +610,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={onOpenCommandPalette}
-              className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#0D0E12] border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 hover:text-white transition font-mono text-xs cursor-pointer shadow-xs shadow-cyan-500/20"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0E12] border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 hover:text-white transition font-mono text-xs cursor-pointer shadow-xs shadow-cyan-500/20"
             >
               <Search className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden lg:inline font-bold">Comandos</span>
@@ -440,7 +629,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={onOpenAutoTune || (() => handleSelectTab('settings'))}
-              className="flex items-center gap-1 px-2 py-1 rounded bg-gradient-to-r from-amber-500/20 to-cyan-500/20 border border-amber-500/40 text-amber-300 hover:from-amber-500/30 hover:to-cyan-500/30 transition font-mono text-xs cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-cyan-500/20 border border-amber-500/40 text-amber-300 hover:from-amber-500/30 hover:to-cyan-500/30 transition font-mono text-xs cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
               <span className="hidden xl:inline font-black">Auto-Tune</span>
@@ -454,7 +643,7 @@ export const Header: React.FC<HeaderProps> = ({
             badge="PRO FEED"
             content={`Conexão de baixa latência ativa com feed Binance Futures. Ping estimado: ${networkPing}ms.`}
           >
-            <div className="hidden lg:flex items-center gap-1 px-1.5 py-1 rounded bg-neutral-900 border border-white/5 text-[10px] font-mono text-neutral-400 tabular-nums">
+            <div className="hidden 2xl:flex items-center gap-1 px-2 py-1.5 rounded-lg bg-neutral-900 border border-white/5 text-[10px] font-mono text-neutral-400 tabular-nums">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
               <span className="text-white font-bold">{networkPing}ms</span>
             </div>
@@ -473,7 +662,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={onToggleBot}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-bold transition-all border font-mono ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all border font-mono ${
                 botState.isMonitoring
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
@@ -495,7 +684,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={handleRefreshClick}
               disabled={isRefreshing}
-              className="p-1.5 rounded bg-neutral-900 border border-white/10 text-neutral-300 hover:bg-neutral-800 hover:text-white transition disabled:opacity-60"
+              className="p-2 rounded-lg bg-neutral-900 border border-white/10 text-neutral-300 hover:bg-neutral-800 hover:text-white transition disabled:opacity-60"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-orange-400' : ''}`} />
             </button>
@@ -514,7 +703,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={handleToggleSound}
-              className={`p-1.5 rounded border transition ${
+              className={`p-2 rounded-lg border transition ${
                 soundOn 
                   ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20' 
                   : 'bg-neutral-900 border-white/10 text-neutral-500 hover:text-neutral-300'
@@ -537,7 +726,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={handleToggleNotif}
-              className={`p-1.5 rounded border transition hidden sm:flex items-center justify-center ${
+              className={`p-2 rounded-lg border transition hidden sm:flex items-center justify-center ${
                 notifEnabled
                   ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
                   : 'bg-neutral-900 border-white/10 text-neutral-500 hover:text-neutral-300'
@@ -560,7 +749,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={toggleTheme}
-              className={`p-1.5 rounded border transition flex items-center justify-center ${
+              className={`p-2 rounded-lg border transition flex items-center justify-center ${
                 theme === 'light'
                   ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 hover:bg-amber-500/30'
                   : 'bg-neutral-900 border-white/10 text-neutral-300 hover:text-white hover:bg-neutral-800'
@@ -578,7 +767,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Mobile Menu Hamburger Button */}
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-1.5 rounded bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 transition ml-1"
+            className="md:hidden p-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 transition ml-1"
             aria-label="Abrir Menu Principal"
           >
             {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -588,7 +777,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Mobile Horizontal Quick-Nav Scroll Bar */}
       <div className="md:hidden bg-[#050505] px-3 py-1.5 border-t border-white/5 overflow-x-auto flex items-center gap-1.5 scrollbar-none font-mono">
-        {navItems.map(item => {
+        {allNavItems.map(item => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
@@ -616,7 +805,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Mobile Drawer Navigation Menu Modal Overlay */}
       {isMobileMenuOpen && (
         <div className="fixed inset-0 top-24 z-50 bg-black/80 backdrop-blur-sm md:hidden flex flex-col animate-fade-in">
-          <div className="bg-[#0A0A0A] border-b border-white/10 p-4 space-y-3 shadow-2xl max-h-[80vh] overflow-y-auto">
+          <div className="bg-[#0A0A0A] border-b border-white/10 p-4 space-y-4 shadow-2xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
               <span className="text-xs font-bold font-mono text-orange-400 uppercase tracking-wider flex items-center gap-2">
                 <Sliders className="h-4 w-4" />
@@ -657,39 +846,54 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2 font-mono">
-              {navItems.map(item => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
+            {/* Categorized Modules in Mobile Drawer */}
+            <div className="space-y-4 font-mono">
+              {navCategories.map(category => {
+                const CatIcon = category.icon;
                 return (
-                  <button
-                    key={item.id}
-                    onClick={() => handleSelectTab(item.id)}
-                    className={`flex items-center justify-between p-3 rounded-lg text-xs font-bold transition-all border min-h-[44px] ${
-                      isActive
-                        ? 'bg-orange-500/15 text-orange-400 border-orange-500/40'
-                        : 'bg-[#050505] text-neutral-300 border-white/5 hover:bg-white/5'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`p-1.5 rounded ${isActive ? 'bg-orange-500 text-black' : 'bg-white/5 text-neutral-400'}`}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="text-left">
-                        <div className="text-sm font-bold">{item.label}</div>
-                        <div className="text-[10px] text-neutral-400 font-normal">{item.desc}</div>
-                      </div>
+                  <div key={category.id} className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-neutral-400 px-1">
+                      <CatIcon className="w-3.5 h-3.5 text-orange-400" />
+                      <span>{category.label}</span>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {item.badge !== null && (
-                        <span className="text-[10px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded font-black">
-                          {item.badge} sinais
-                        </span>
-                      )}
-                      <ChevronRight className="h-4 w-4 text-neutral-500" />
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {category.items.map(item => {
+                        const Icon = item.icon;
+                        const isActive = activeTab === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={() => handleSelectTab(item.id)}
+                            className={`flex items-center justify-between p-2.5 rounded-lg text-xs font-bold transition-all border min-h-[44px] ${
+                              isActive
+                                ? 'bg-orange-500/15 text-orange-400 border-orange-500/40'
+                                : 'bg-[#050505] text-neutral-300 border-white/5 hover:bg-white/5'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className={`p-1.5 rounded ${isActive ? 'bg-orange-500 text-black' : 'bg-white/5 text-neutral-400'}`}>
+                                <Icon className="h-4 w-4" />
+                              </div>
+                              <div className="text-left min-w-0">
+                                <div className="text-xs font-bold truncate">{item.label}</div>
+                                <div className="text-[9.5px] text-neutral-400 font-normal truncate">{item.desc}</div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {item.badge !== null && (
+                                <span className="text-[9px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded font-black">
+                                  {item.badge}
+                                </span>
+                              )}
+                              <ChevronRight className="h-4 w-4 text-neutral-500" />
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>

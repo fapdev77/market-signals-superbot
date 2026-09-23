@@ -24,6 +24,7 @@ import { GoldenPocketSparkline, GoldenPocketStats } from './components/GoldenPoc
 import { MarketCorrelationMatrix } from './components/MarketCorrelationMatrix';
 import { PrimeOpportunityBanner } from './components/PrimeOpportunityBanner';
 import { MarketHeatmap } from './components/MarketHeatmap';
+import { VolatilityHeatmap } from './components/VolatilityHeatmap';
 import { DashboardGridLayout } from './components/DashboardGridLayout';
 import { LiquidityDepth } from './components/LiquidityDepth';
 import { RiskExposureDashboard } from './components/RiskExposureDashboard';
@@ -470,6 +471,17 @@ export default function App() {
               ),
               market_heatmap: (
                 <MarketHeatmap
+                  tickers={tickers}
+                  onSelectTicker={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                    setActiveTab('chart');
+                  }}
+                />
+              ),
+              volatility_heatmap: (
+                <VolatilityHeatmap
                   tickers={tickers}
                   onSelectTicker={(t) => {
                     setSelectedTicker(t);

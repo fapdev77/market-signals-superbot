@@ -30,6 +30,7 @@ export type DashboardWidgetId =
   | 'system_health'
   | 'prime_banner'
   | 'market_heatmap'
+  | 'volatility_heatmap'
   | 'liquidity_depth'
   | 'correlation_matrix'
   | 'ticker_grid';
@@ -50,30 +51,33 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
     { i: 'system_health', x: 0, y: 0, w: 12, h: 5, minW: 6, minH: 4 },
     { i: 'prime_banner', x: 0, y: 5, w: 12, h: 4, minW: 6, minH: 3 },
     { i: 'market_heatmap', x: 0, y: 9, w: 12, h: 9, minW: 6, minH: 6 },
-    { i: 'liquidity_depth', x: 0, y: 18, w: 12, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 28, w: 12, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 35, w: 12, h: 14, minW: 6, minH: 6 }
+    { i: 'volatility_heatmap', x: 0, y: 18, w: 12, h: 8, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 26, w: 12, h: 10, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 36, w: 12, h: 7, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 43, w: 12, h: 14, minW: 6, minH: 6 }
   ],
   md: [
     { i: 'system_health', x: 0, y: 0, w: 10, h: 5, minW: 5, minH: 4 },
     { i: 'prime_banner', x: 0, y: 5, w: 10, h: 4, minW: 5, minH: 3 },
     { i: 'market_heatmap', x: 0, y: 9, w: 10, h: 9, minW: 5, minH: 6 },
-    { i: 'liquidity_depth', x: 0, y: 18, w: 10, h: 10, minW: 5, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 28, w: 10, h: 7, minW: 5, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 35, w: 10, h: 14, minW: 5, minH: 6 }
+    { i: 'volatility_heatmap', x: 0, y: 18, w: 10, h: 8, minW: 5, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 26, w: 10, h: 10, minW: 5, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 36, w: 10, h: 7, minW: 5, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 43, w: 10, h: 14, minW: 5, minH: 6 }
   ],
   sm: [
     { i: 'system_health', x: 0, y: 0, w: 6, h: 5, minW: 6, minH: 4 },
     { i: 'prime_banner', x: 0, y: 5, w: 6, h: 4, minW: 6, minH: 3 },
     { i: 'market_heatmap', x: 0, y: 9, w: 6, h: 8, minW: 6, minH: 6 },
-    { i: 'liquidity_depth', x: 0, y: 17, w: 6, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 27, w: 6, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 34, w: 6, h: 14, minW: 6, minH: 6 }
+    { i: 'volatility_heatmap', x: 0, y: 17, w: 6, h: 8, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 25, w: 6, h: 10, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 35, w: 6, h: 7, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 42, w: 6, h: 14, minW: 6, minH: 6 }
   ]
 };
 
-const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v4';
-const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v4';
+const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v5';
+const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v5';
 
 interface DashboardGridLayoutProps {
   childrenMap: Record<DashboardWidgetId, React.ReactNode>;
@@ -124,6 +128,16 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
       badge: 'D3'
     },
     {
+      id: 'volatility_heatmap',
+      title: 'Heatmap de Volatilidade & Ação (ATR)',
+      description: 'Mapeamento de expansão de volatilidade, ATR%, compressão de range e ranking de ativos de alta ação.',
+      icon: Activity,
+      visible: true,
+      minW: 6,
+      minH: 5,
+      badge: 'ATR PRO'
+    },
+    {
       id: 'liquidity_depth',
       title: 'Profundidade de Liquidez & Pressão (D3 Depth)',
       description: 'Curvas cumulativas de Bids vs Asks, spread, desequilíbrio e muralhas institucionais.',
@@ -146,7 +160,7 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
       id: 'ticker_grid',
       title: 'Grid de Ativos & Métricas Quânticas',
       description: 'Catálogo de ativos com cards técnicos, força de tendência e filtros rápidos.',
-      icon: Activity,
+      icon: Zap,
       visible: true,
       minW: 6,
       minH: 6
