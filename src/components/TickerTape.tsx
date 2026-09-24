@@ -32,23 +32,22 @@ export const TickerTape: React.FC<TickerTapeProps> = ({ tickers, onSelectTicker 
         <span className="hidden sm:inline">LIVE TAPE</span>
         <button
           type="button"
-          onClick={() => setIsPaused(!isPaused)}
+          onClick={() => setIsPaused(prev => !prev)}
           className="text-neutral-500 hover:text-white transition cursor-pointer p-0.5"
           title={isPaused ? 'Retomar fita' : 'Pausar fita'}
         >
-          {isPaused ? <Play className="w-2.5 h-2.5" /> : <Pause className="w-2.5 h-2.5" />}
+          {isPaused ? <Play className="w-2.5 h-2.5 text-emerald-400" /> : <Pause className="w-2.5 h-2.5" />}
         </button>
       </div>
 
       {/* Scrolling Track */}
-      <div 
-        className="flex items-center overflow-x-hidden whitespace-nowrap w-full group/tape"
-        onMouseEnter={() => setIsPaused(true)}
-        onMouseLeave={() => setIsPaused(false)}
-      >
-        <div 
-          className={`flex items-center gap-4 ${isPaused ? '' : 'animate-marquee'}`}
-          style={{ animationDuration: '65s' }}
+      <div className="flex items-center overflow-x-hidden whitespace-nowrap w-full group/tape">
+        <div
+          className="flex items-center gap-4 animate-marquee group-hover/tape:[animation-play-state:paused]"
+          style={{
+            animationDuration: '165s',
+            ...(isPaused ? { animationPlayState: 'paused' } : {}),
+          }}
         >
           {tapeList.map((t, idx) => {
             const spike = spikesMap.get(t.symbol);
@@ -61,7 +60,7 @@ export const TickerTape: React.FC<TickerTapeProps> = ({ tickers, onSelectTicker 
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => e.key === 'Enter' && onSelectTicker(t)}
-                className="inline-flex items-center gap-2 px-2 py-1 rounded hover:bg-white/5 transition cursor-pointer shrink-0"
+                className="inline-flex items-center gap-2 px-2 py-1 rounded hover:bg-white/10 hover:ring-1 hover:ring-white/20 active:scale-95 transition-all cursor-pointer shrink-0"
               >
                 <span className="font-extrabold text-white text-[11px] flex items-center gap-1">
                   {t.symbol}
@@ -82,7 +81,7 @@ export const TickerTape: React.FC<TickerTapeProps> = ({ tickers, onSelectTicker 
                     VOL {spike.maxRvol}x
                   </span>
                 )}
-                
+
                 <span className="text-neutral-700 font-normal">|</span>
               </div>
             );
@@ -92,3 +91,4 @@ export const TickerTape: React.FC<TickerTapeProps> = ({ tickers, onSelectTicker 
     </div>
   );
 };
+

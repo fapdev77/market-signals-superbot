@@ -3,9 +3,10 @@ import {
   Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, 
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
   ChevronDown, Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, 
-  Sparkles, Search, Sun, Moon, Check, Layers, BarChart3, Radio, Target,
+  Sparkles, Search, Sun, Moon, Monitor, Check, Layers, BarChart3, Radio, Target,
   MoreVertical, SlidersHorizontal, PieChart
 } from 'lucide-react';
+
 import { useTheme } from '../context/ThemeContext';
 import { BotState, TickerData } from '../types';
 import { formatPrice, formatPercent } from '../utils/formatters';
@@ -63,8 +64,10 @@ export const Header: React.FC<HeaderProps> = ({
   const [networkPing, setNetworkPing] = useState<number>(14);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const quickActionsRef = useRef<HTMLDivElement>(null);
+  const themeMenuRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
 
   useEffect(() => {
     // Simulate slight natural ping variation 12-24ms
@@ -88,12 +91,16 @@ export const Header: React.FC<HeaderProps> = ({
       if (quickActionsRef.current && !quickActionsRef.current.contains(e.target as Node)) {
         setIsQuickActionsOpen(false);
       }
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) {
+        setIsThemeMenuOpen(false);
+      }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpenDropdownId(null);
         setIsMobileMenuOpen(false);
         setIsQuickActionsOpen(false);
+        setIsThemeMenuOpen(false);
       }
     };
 
@@ -760,33 +767,162 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </Tooltip>
 
-          {/* Theme Engine Switcher - Visible on sm+ */}
-          <Tooltip
-            position="bottom-right"
-            title={`Tema do Terminal: ${theme === 'dark' ? 'INSTITUTIONAL DARK' : 'PRO LIGHT'}`}
-            badge="TEMA UI"
-            content={
-              theme === 'dark'
-                ? 'Modo Dark Institucional ativo com fundo OLED e alto contraste. Clique para alternar para o modo Pro Light diurno.'
-                : 'Modo Pro Light diurno de alto contraste ativo para ambientes iluminados. Clique para alternar para Institutional Dark.'
-            }
-          >
+
+          {/* Theme Picker Dropdown — Desktop (sm+) */}
+          <div className="relative hidden sm:block" ref={themeMenuRef}>
             <button
-              onClick={toggleTheme}
-              className={`p-2 rounded-lg border transition hidden sm:flex items-center justify-center shrink-0 ${
+              onClick={() => setIsThemeMenuOpen(prev => !prev)}
+              className={`p-2 rounded-lg border transition-all flex items-center gap-1.5 shrink-0 ${
                 theme === 'light'
-                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 hover:bg-amber-500/30'
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-500 hover:bg-amber-500/30'
+                  : theme === 'system'
+                  ? 'bg-purple-500/15 border-purple-500/40 text-purple-400 hover:bg-purple-500/25'
                   : 'bg-neutral-900 border-white/10 text-neutral-300 hover:text-white hover:bg-neutral-800'
-              }`}
-              aria-label="Alternar Tema Visual"
+              } ${isThemeMenuOpen ? 'ring-2 ring-orange-500/50' : ''}`}
+              title="Selecionar Tema Visual"
+              aria-label="Selecionar Tema Visual"
+              aria-expanded={isThemeMenuOpen}
             >
               {theme === 'light' ? (
-                <Sun className="h-3.5 w-3.5 text-amber-500 animate-spin-slow" />
+                <Sun className="h-3.5 w-3.5" />
+              ) : theme === 'system' ? (
+                <Monitor className="h-3.5 w-3.5" />
               ) : (
-                <Moon className="h-3.5 w-3.5 text-cyan-400" />
+                <Moon className="h-3.5 w-3.5" />
               )}
+              <ChevronDown className={`w-2.5 h-2.5 opacity-60 transition-transform duration-200 ${isThemeMenuOpen ? 'rotate-180' : ''}`} />
             </button>
-          </Tooltip>
+
+            {/* Animated dropdown panel */}
+            {isThemeMenuOpen && (
+              <div
+                className="absolute right-0 top-full mt-2 w-56 rounded-xl border shadow-2xl z-50 overflow-hidden"
+                style={{
+                  background: resolvedTheme === 'light' ? '#ffffff' : '#0d1017',
+                  borderColor: resolvedTheme === 'light' ? '#e2e8f0' : 'rgba(255,255,255,0.12)',
+                  boxShadow: resolvedTheme === 'light'
+                    ? '0 16px 32px -4px rgba(15,23,42,0.15), 0 4px 12px -2px rgba(15,23,42,0.08)'
+                    : '0 20px 40px -8px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.08)',
+                  animation: 'themeMenuIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                }}
+              >
+                {/* Header */}
+                <div
+                  className="px-3.5 py-2.5 border-b flex items-center justify-between"
+                  style={{ borderColor: resolvedTheme === 'light' ? '#f1f5f9' : 'rgba(255,255,255,0.08)' }}
+                >
+                  <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">
+                    Tema da Interface
+                  </span>
+                  <span
+                    className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider"
+                    style={{
+                      backgroundColor: resolvedTheme === 'light' ? '#f1f5f9' : 'rgba(255,255,255,0.08)',
+                      color: resolvedTheme === 'light' ? '#64748b' : '#9ca3af',
+                    }}
+                  >
+                    {theme}
+                  </span>
+                </div>
+
+                {/* Options */}
+                <div className="py-1">
+                  {([
+                    {
+                      mode: 'dark' as const,
+                      label: 'Institutional Dark',
+                      sub: 'OLED · Alto contraste',
+                      icon: <Moon className="w-4 h-4" />,
+                      accent: '#06b6d4',
+                      activeBg: resolvedTheme === 'light' ? '#f0f9ff' : 'rgba(6,182,212,0.12)',
+                      badge: 'Escuro',
+                    },
+                    {
+                      mode: 'light' as const,
+                      label: 'Pro Light',
+                      sub: 'Diurno · Day trading',
+                      icon: <Sun className="w-4 h-4" />,
+                      accent: '#f59e0b',
+                      activeBg: resolvedTheme === 'light' ? '#fffbeb' : 'rgba(245,158,11,0.12)',
+                      badge: 'Claro',
+                    },
+                    {
+                      mode: 'system' as const,
+                      label: 'Automático',
+                      sub: 'Sincroniza com Sistema',
+                      icon: <Monitor className="w-4 h-4" />,
+                      accent: '#a78bfa',
+                      activeBg: resolvedTheme === 'light' ? '#f5f3ff' : 'rgba(167,139,250,0.12)',
+                      badge: 'Auto SO',
+                    },
+                  ]).map(({ mode, label, sub, icon, accent, activeBg, badge }) => {
+                    const isActive = theme === mode;
+                    return (
+                      <button
+                        key={mode}
+                        onClick={() => {
+                          setTheme(mode);
+                          setIsThemeMenuOpen(false);
+                          showToast('info', 'Tema Atualizado', `Modo alterado para ${label}.`);
+                        }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2.5 transition-all text-left group"
+                        style={{
+                          background: isActive ? activeBg : 'transparent',
+                          borderLeft: isActive ? `3px solid ${accent}` : '3px solid transparent',
+                        }}
+                        onMouseEnter={e => {
+                          if (!isActive) {
+                            (e.currentTarget as HTMLElement).style.background =
+                              resolvedTheme === 'light' ? '#f8fafc' : 'rgba(255,255,255,0.04)';
+                          }
+                        }}
+                        onMouseLeave={e => {
+                          if (!isActive) {
+                            (e.currentTarget as HTMLElement).style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        <span
+                          className="shrink-0 transition-transform group-hover:scale-110 duration-150"
+                          style={{ color: isActive ? accent : resolvedTheme === 'light' ? '#64748b' : '#6b7280' }}
+                        >
+                          {icon}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className="text-[12px] font-semibold leading-tight truncate"
+                              style={{ color: isActive ? accent : resolvedTheme === 'light' ? '#0f172a' : '#e2e8f0' }}
+                            >
+                              {label}
+                            </span>
+                            <span
+                              className="text-[9px] px-1.5 py-0.2 rounded font-mono font-medium"
+                              style={{
+                                color: isActive ? accent : resolvedTheme === 'light' ? '#94a3b8' : '#6b7280',
+                                backgroundColor: isActive ? `${accent}15` : 'transparent',
+                              }}
+                            >
+                              {badge}
+                            </span>
+                          </div>
+                          <span
+                            className="block text-[10px] leading-tight mt-0.5"
+                            style={{ color: resolvedTheme === 'light' ? '#94a3b8' : '#64748b' }}
+                          >
+                            {sub}
+                          </span>
+                        </div>
+                        {isActive && (
+                          <Check className="w-3.5 h-3.5 shrink-0 animate-in fade-in zoom-in duration-150" style={{ color: accent }} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Mobile Quick Actions Dropdown / Popover - Only on Mobile (< sm) */}
           <div className="sm:hidden relative" ref={quickActionsRef}>
@@ -830,29 +966,59 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </div>
 
-                {/* Theme Switcher in Mobile Popover */}
-                <button
-                  onClick={() => {
-                    toggleTheme();
-                  }}
-                  className={`w-full flex items-center justify-between p-2 rounded-xl border transition ${
-                    theme === 'light'
-                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 hover:bg-amber-500/20'
-                      : 'bg-neutral-900/80 border-white/10 text-neutral-200 hover:bg-neutral-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    {theme === 'light' ? (
-                      <Sun className="w-4 h-4 text-amber-500" />
-                    ) : (
-                      <Moon className="w-4 h-4 text-cyan-400" />
-                    )}
-                    <span className="font-bold">Tema da Interface</span>
+                {/* Theme Selector in Mobile Popover */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-neutral-400 px-0.5">
+                    <span className="flex items-center gap-1.5">
+                      {theme === 'light' ? (
+                        <Sun className="w-3.5 h-3.5 text-amber-500" />
+                      ) : theme === 'system' ? (
+                        <Monitor className="w-3.5 h-3.5 text-purple-400" />
+                      ) : (
+                        <Moon className="w-3.5 h-3.5 text-cyan-400" />
+                      )}
+                      Tema Visual
+                    </span>
+                    <span className="text-orange-400 font-mono text-[9px] font-bold">
+                      {theme === 'light' ? 'Light Pro' : theme === 'system' ? 'Auto SO' : 'Dark OLED'}
+                    </span>
                   </div>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase bg-black/20">
-                    {theme === 'light' ? 'Diurno' : 'Dark OLED'}
-                  </span>
-                </button>
+                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/30 border border-white/10">
+                    <button
+                      onClick={() => setTheme('dark')}
+                      className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg border text-[10px] font-bold transition-all ${
+                        theme === 'dark'
+                          ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300 shadow-sm'
+                          : 'border-transparent text-neutral-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <Moon className="w-3.5 h-3.5 mb-1" />
+                      <span>Dark</span>
+                    </button>
+                    <button
+                      onClick={() => setTheme('light')}
+                      className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg border text-[10px] font-bold transition-all ${
+                        theme === 'light'
+                          ? 'bg-amber-500/20 border-amber-500/50 text-amber-400 shadow-sm'
+                          : 'border-transparent text-neutral-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <Sun className="w-3.5 h-3.5 mb-1" />
+                      <span>Light</span>
+                    </button>
+                    <button
+                      onClick={() => setTheme('system')}
+                      className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg border text-[10px] font-bold transition-all ${
+                        theme === 'system'
+                          ? 'bg-purple-500/20 border-purple-500/50 text-purple-300 shadow-sm'
+                          : 'border-transparent text-neutral-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <Monitor className="w-3.5 h-3.5 mb-1" />
+                      <span>Auto</span>
+                    </button>
+                  </div>
+                </div>
 
                 {/* Audio & Notifications in 2 columns */}
                 <div className="grid grid-cols-2 gap-2">
@@ -983,6 +1149,50 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Quick Actions in Mobile Drawer */}
+            <div className="space-y-2 pb-2 border-b border-white/10 font-mono">
+              <div className="flex items-center justify-between text-[10px] uppercase font-bold text-neutral-400 px-1">
+                <span>Tema da Interface</span>
+                <span className="text-orange-400 text-[10px] font-bold">
+                  {theme === 'light' ? 'Light Pro' : theme === 'system' ? 'Automático' : 'Dark OLED'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  onClick={() => setTheme('dark')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg border text-xs font-bold transition-all ${
+                    theme === 'dark'
+                      ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300'
+                      : 'bg-neutral-900 border-white/10 text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  <Moon className="w-3.5 h-3.5" />
+                  <span>Dark</span>
+                </button>
+                <button
+                  onClick={() => setTheme('light')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg border text-xs font-bold transition-all ${
+                    theme === 'light'
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                      : 'bg-neutral-900 border-white/10 text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  <Sun className="w-3.5 h-3.5" />
+                  <span>Light</span>
+                </button>
+                <button
+                  onClick={() => setTheme('system')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg border text-xs font-bold transition-all ${
+                    theme === 'system'
+                      ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
+                      : 'bg-neutral-900 border-white/10 text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Auto</span>
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2 pb-2 border-b border-white/10 font-mono">
               <button
                 onClick={handleToggleSound}

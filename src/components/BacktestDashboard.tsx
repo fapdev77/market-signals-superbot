@@ -27,6 +27,18 @@ import { Tooltip } from './Tooltip';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ReferenceLine } from 'recharts';
 import { exportTradesToCSV } from '../utils/backtestMetrics';
 
+const WEIGHT_LABELS: Record<string, string> = {
+  volumeSurgeWeight: 'Volume Surge',
+  openInterestWeight: 'Open Interest',
+  fundingRateWeight: 'Funding Rate',
+  cvdImbalanceWeight: 'CVD Imbalance',
+  fibonacciZoneWeight: 'Fibonacci Zone',
+  rangePocWeight: 'Range POC',
+  supportResistanceWeight: 'Suporte / Res.',
+  rsiDivergenceWeight: 'RSI Divergence',
+  trappedTradersWeight: 'Trapped Traders'
+};
+
 interface BacktestDashboardProps {
   tickers: TickerData[];
   weights: IndicatorWeights;
@@ -676,13 +688,14 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
             <span className="text-[10px] text-neutral-400 font-bold uppercase block mb-1.5">
               Pesos Otimizados para o Perfil {PROFILE_PRESETS[profile].name}:
             </span>
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
               {Object.entries(autoTuneResult.bestWeights).map(([k, v]) => {
-                if (k === 'minRiskRewardRatio' || k === 'volumeProfileRange') return null;
+                if (!k.endsWith('Weight') || typeof v !== 'number') return null;
+                const label = WEIGHT_LABELS[k] || k.replace('Weight', '');
                 return (
                   <div key={k} className="bg-[#050505] p-2 rounded border border-amber-500/20 text-center">
-                    <span className="text-[8px] text-neutral-400 uppercase block font-bold truncate">
-                      {k.replace('Weight', '')}
+                    <span className="text-[8px] text-neutral-400 uppercase block font-bold truncate" title={label}>
+                      {label}
                     </span>
                     <strong className="text-amber-400 text-xs">{v}%</strong>
                   </div>

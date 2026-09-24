@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="theme-dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,6 +7,48 @@
     <meta name="description" content="Professional crypto and market trading bot monitor with real-time Binance futures signals, order book CVD, Fibonacci 0.68, VAH/VAL/POC ranges, and AI strategy review." />
     <meta property="og:title" content="Market Signals SuperBot" />
     <meta property="og:description" content="Professional crypto and market trading bot monitor with real-time Binance futures signals, order book CVD, Fibonacci 0.68, VAH/VAL/POC ranges, and AI strategy review." />
+    <!--
+      Anti-FOUC Script: runs synchronously before any render.
+      Reads persisted preference from localStorage and applies the correct
+      theme class to <html> instantly — preventing the white flash on load.
+      Supports 3 modes: 'dark', 'light', 'system'.
+    -->
+    <script>
+      (function () {
+        var STORAGE_KEY = 'superbot_theme_mode_v1';
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+        var prefersDark =
+          typeof window !== 'undefined' &&
+          window.matchMedia &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        // Resolve which visual theme to apply
+        var resolved;
+        if (saved === 'light') {
+          resolved = 'light';
+        } else if (saved === 'dark') {
+          resolved = 'dark';
+        } else if (saved === 'system') {
+          resolved = prefersDark ? 'dark' : 'light';
+        } else {
+          // No preference saved → default to dark (institutional)
+          resolved = 'dark';
+        }
+
+        var root = document.documentElement;
+        if (resolved === 'light') {
+          root.classList.remove('theme-dark');
+          root.classList.add('theme-light');
+          root.setAttribute('data-theme', 'light');
+        } else {
+          root.classList.remove('theme-light');
+          root.classList.add('theme-dark');
+          root.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

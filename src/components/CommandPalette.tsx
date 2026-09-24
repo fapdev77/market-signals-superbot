@@ -22,11 +22,14 @@ import {
   TrendingDown,
   Sun,
   Moon,
+  Monitor,
   Palette,
   Target,
   PieChart
 } from 'lucide-react';
+
 import { useTheme } from '../context/ThemeContext';
+
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -50,7 +53,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const { theme, setTheme, toggleTheme } = useTheme();
+  const { theme, setTheme, cycleTheme } = useTheme();
+
 
   useEffect(() => {
     if (isOpen) {
@@ -113,9 +117,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     },
     {
       id: 'action_toggle_theme',
-      label: `Alternar Tema UI (Atualmente: ${theme === 'dark' ? 'Institutional Dark' : 'Pro Light'})`,
+      label: `Ciclar Tema UI: ${theme === 'dark' ? 'Dark → Light' : theme === 'light' ? 'Light → Auto' : 'Auto → Dark'}`,
       icon: Palette,
-      action: () => toggleTheme(),
+      action: () => cycleTheme(),
       tag: 'THEME'
     },
     {
@@ -130,6 +134,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       label: 'Ativar Modo Pro Light (Day Trading Visibility)',
       icon: Sun,
       action: () => setTheme('light'),
+      tag: 'THEME'
+    },
+    {
+      id: 'action_theme_system',
+      label: 'Ativar Modo Automático (segue tema do Sistema Operacional)',
+      icon: Monitor,
+      action: () => setTheme('system'),
       tag: 'THEME'
     }
   ];
