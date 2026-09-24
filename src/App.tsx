@@ -30,6 +30,7 @@ import { LiquidityDepth } from './components/LiquidityDepth';
 import { RiskExposureDashboard } from './components/RiskExposureDashboard';
 import { SystemHealthWidget } from './components/SystemHealthWidget';
 import { TrappedTradersRadar } from './components/TrappedTradersRadar';
+import { RSIDivergenceMonitor } from './components/RSIDivergenceMonitor';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -470,6 +471,24 @@ export default function App() {
               ),
               trapped_radar: (
                 <TrappedTradersRadar
+                  tickers={tickers}
+                  selectedTicker={selectedTicker}
+                  onSelectTicker={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                  }}
+                  onRequestAIReview={handleRequestAIReviewFromGrid}
+                  onOpenChart={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                    setActiveTab('chart');
+                  }}
+                />
+              ),
+              rsi_divergence: (
+                <RSIDivergenceMonitor
                   tickers={tickers}
                   selectedTicker={selectedTicker}
                   onSelectTicker={(t) => {

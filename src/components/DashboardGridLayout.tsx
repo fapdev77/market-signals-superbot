@@ -24,7 +24,8 @@ import {
   Scale,
   Server,
   CheckCheck,
-  Target
+  Target,
+  Compass
 } from 'lucide-react';
 import { useToast } from './Toast';
 
@@ -32,6 +33,7 @@ export type DashboardWidgetId =
   | 'system_health'
   | 'prime_banner'
   | 'trapped_radar'
+  | 'rsi_divergence'
   | 'market_heatmap'
   | 'volatility_heatmap'
   | 'liquidity_depth'
@@ -54,36 +56,39 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
     { i: 'system_health', x: 0, y: 0, w: 12, h: 5, minW: 6, minH: 4 },
     { i: 'prime_banner', x: 0, y: 5, w: 12, h: 4, minW: 6, minH: 3 },
     { i: 'trapped_radar', x: 0, y: 9, w: 12, h: 8, minW: 6, minH: 5 },
-    { i: 'market_heatmap', x: 0, y: 17, w: 12, h: 9, minW: 6, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 26, w: 12, h: 8, minW: 6, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 34, w: 12, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 44, w: 12, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 51, w: 12, h: 14, minW: 6, minH: 6 }
+    { i: 'rsi_divergence', x: 0, y: 17, w: 12, h: 8, minW: 6, minH: 5 },
+    { i: 'market_heatmap', x: 0, y: 25, w: 12, h: 9, minW: 6, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 34, w: 12, h: 8, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 42, w: 12, h: 10, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 52, w: 12, h: 7, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 59, w: 12, h: 14, minW: 6, minH: 6 }
   ],
   md: [
     { i: 'system_health', x: 0, y: 0, w: 10, h: 5, minW: 5, minH: 4 },
     { i: 'prime_banner', x: 0, y: 5, w: 10, h: 4, minW: 5, minH: 3 },
     { i: 'trapped_radar', x: 0, y: 9, w: 10, h: 8, minW: 5, minH: 5 },
-    { i: 'market_heatmap', x: 0, y: 17, w: 10, h: 9, minW: 5, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 26, w: 10, h: 8, minW: 5, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 34, w: 10, h: 10, minW: 5, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 44, w: 10, h: 7, minW: 5, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 51, w: 10, h: 14, minW: 5, minH: 6 }
+    { i: 'rsi_divergence', x: 0, y: 17, w: 10, h: 8, minW: 5, minH: 5 },
+    { i: 'market_heatmap', x: 0, y: 25, w: 10, h: 9, minW: 5, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 34, w: 10, h: 8, minW: 5, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 42, w: 10, h: 10, minW: 5, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 52, w: 10, h: 7, minW: 5, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 59, w: 10, h: 14, minW: 5, minH: 6 }
   ],
   sm: [
     { i: 'system_health', x: 0, y: 0, w: 6, h: 5, minW: 6, minH: 4 },
     { i: 'prime_banner', x: 0, y: 5, w: 6, h: 4, minW: 6, minH: 3 },
     { i: 'trapped_radar', x: 0, y: 9, w: 6, h: 8, minW: 6, minH: 5 },
-    { i: 'market_heatmap', x: 0, y: 17, w: 6, h: 8, minW: 6, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 25, w: 6, h: 8, minW: 6, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 33, w: 6, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 43, w: 6, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 50, w: 6, h: 14, minW: 6, minH: 6 }
+    { i: 'rsi_divergence', x: 0, y: 17, w: 6, h: 8, minW: 6, minH: 5 },
+    { i: 'market_heatmap', x: 0, y: 25, w: 6, h: 8, minW: 6, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 33, w: 6, h: 8, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 41, w: 6, h: 10, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 51, w: 6, h: 7, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 58, w: 6, h: 14, minW: 6, minH: 6 }
   ]
 };
 
-const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v7';
-const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v7';
+const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v8';
+const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v8';
 
 // Helper to sanitize and ensure all widgets are present with proper dimensions
 function sanitizeLayouts(
@@ -169,6 +174,16 @@ const INITIAL_WIDGETS: WidgetConfig[] = [
     minW: 6,
     minH: 5,
     badge: 'ORDER FLOW'
+  },
+  {
+    id: 'rsi_divergence',
+    title: 'Monitor de Divergência RSI (14)',
+    description: 'Radar de divergências regulares e ocultas no RSI para detecção precoce de reversão e exaustão de tendência.',
+    icon: Compass,
+    visible: true,
+    minW: 6,
+    minH: 5,
+    badge: 'REVERSÃO'
   },
   {
     id: 'market_heatmap',

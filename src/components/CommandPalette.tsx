@@ -87,6 +87,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       tag: 'ALPHA'
     },
     {
+      id: 'action_rsi_divergence',
+      label: 'Abrir Monitor de Divergências RSI (14) — Reversão de Tendência',
+      icon: Activity,
+      action: () => onNavigateToTab('dashboard'),
+      tag: 'RSI'
+    },
+    {
       id: 'action_golden_pocket',
       label: 'Filtrar ativos no Golden Pocket (0.618 - 0.68)',
       icon: Flame,

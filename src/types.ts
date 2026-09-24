@@ -722,8 +722,44 @@ export interface DetectedChartPattern {
 }
 
 // ==========================================
-// TERMINAL LAYOUTS & AUTO-TUNER TYPES
+// RSI DIVERGENCE TYPES
 // ==========================================
+
+export type RSIDivergenceType = 
+  | 'REGULAR_BULLISH'   // Price: Lower Low, RSI: Higher Low (Reversão Altista)
+  | 'REGULAR_BEARISH'   // Price: Higher High, RSI: Lower High (Reversão Baixista)
+  | 'HIDDEN_BULLISH'    // Price: Higher Low, RSI: Lower Low (Continuação de Alta)
+  | 'HIDDEN_BEARISH'    // Price: Lower High, RSI: Higher High (Continuação de Baixa)
+  | 'NO_DIVERGENCE';
+
+export type RSIDivergenceStatus = 'ACTIVE' | 'TRIGGERED' | 'EXHAUSTED' | 'INVALIDATED';
+
+export interface RSIDivergenceItem {
+  id: string;
+  symbol: string;
+  ticker: TickerData;
+  timeframe: string; // '15m' | '1h' | '4h' | '1D'
+  divergenceType: RSIDivergenceType;
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  rsiCurrent: number; // 0-100
+  rsiPrevSwing: number; // 0-100
+  priceCurrent: number;
+  pricePrevSwing: number;
+  divergenceSlope: number;
+  confidence: number; // 0-100
+  status: RSIDivergenceStatus;
+  isOverbought: boolean; // RSI >= 70
+  isOversold: boolean; // RSI <= 30
+  entryZone: [number, number];
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  riskRewardRatio: number;
+  confluences: string[];
+  verdict: string;
+  detectedAt: number;
+}
+
 
 export type TerminalLayoutMode = 
   | 'modular_grid'      // Default multi-panel grid
