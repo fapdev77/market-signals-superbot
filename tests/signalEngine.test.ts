@@ -185,4 +185,27 @@ describe('Signal Engine & Multi-Timeframe Validation Suite', () => {
     expect(signal?.validationStatus).toBe('REJECTED_SPIKE');
     expect(signal?.validationStage).toContain('REJEITADO');
   });
+
+  it('incorporates RSI divergence into signal confluence when configured', () => {
+    const rawTicker = {
+      symbol: 'SOLUSDT',
+      lastPrice: '175.50',
+      priceChangePercent: '-3.5',
+      highPrice: '185.00',
+      lowPrice: '174.00',
+      volume: '150000',
+      quoteVolume: '26000000'
+    };
+
+    const weightsWithRsi: IndicatorWeights = {
+      ...defaultWeights,
+      rsiDivergenceWeight: 25,
+      volumeProfileTimeframe: '15m'
+    };
+
+    const processed = processTickerState(rawTicker, sampleKlines, 500000, 0.0001, weightsWithRsi);
+    expect(processed.symbol).toBe('SOLUSDT');
+    expect(processed.confluenceScore).toBeGreaterThan(0);
+    expect(Array.isArray(processed.confluenceFactors)).toBe(true);
+  });
 });

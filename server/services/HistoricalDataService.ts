@@ -2,6 +2,7 @@ import { db } from '../backtest_db';
 import { historicalKlines } from '../backtest_db/schema';
 import { eq, desc, and, sql, gte, lte } from 'drizzle-orm';
 import { requestJson } from '../utils/httpClient.js';
+import { getBenchmarkPrice } from '../../src/utils/benchmarkPrices.js';
 
 export interface SyncProgress {
   symbol: string;
@@ -153,7 +154,7 @@ export class HistoricalDataService {
    * Generates realistic synthetic 1m klines into database if remote API is blocked
    */
   public static async seedSyntheticKlines(symbol: string, startTime: number, endTime: number): Promise<void> {
-    let basePrice = symbol.includes('BTC') ? 92000 : symbol.includes('ETH') ? 3400 : symbol.includes('SOL') ? 185 : 15;
+    let basePrice = getBenchmarkPrice(symbol);
     const intervalMs = 60 * 1000; // 1 minute
     const rows: any[] = [];
     let curTime = startTime;

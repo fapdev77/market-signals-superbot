@@ -255,5 +255,49 @@ export function createMarketRouter(
     }
   });
 
+  // Toggle Excluded Asset in Screener
+  router.post('/screener/exclude/toggle', async (req: Request, res: Response) => {
+    try {
+      const { symbol, isExcluded } = req.body;
+      if (!symbol || typeof symbol !== 'string') {
+        res.status(400).json({ error: 'Valid symbol string required' });
+        return;
+      }
+
+      const { toggleExcludedSymbol } = await import('../db.js');
+      const { marketScreener } = await import('../services/MarketScreenerService.js');
+
+      const updatedList = await toggleExcludedSymbol(symbol, isExcluded);
+      const scanResult = await marketScreener.runScreenerScan(true);
+
+      if (triggerMarketScan) {
+        triggerMarketScan().catch(() => {});
+      }
+
+      res.json({ success: true, symbol: symbol.toUpperCase(), excludedSymbols: updatedList, summary: scanResult.summary });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to toggle exclusion' });
+    }
+  });
+
+  // Reset Excluded Symbols to default standard list
+  router.post('/screener/exclude/reset', async (req: Request, res: Response) => {
+    try {
+      const { resetExcludedSymbols } = await import('../db.js');
+      const { marketScreener } = await import('../services/MarketScreenerService.js');
+
+      const defaultList = await resetExcludedSymbols();
+      const scanResult = await marketScreener.runScreenerScan(true);
+
+      if (triggerMarketScan) {
+        triggerMarketScan().catch(() => {});
+      }
+
+      res.json({ success: true, excludedSymbols: defaultList, summary: scanResult.summary });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to reset exclusions' });
+    }
+  });
+
   return router;
 }

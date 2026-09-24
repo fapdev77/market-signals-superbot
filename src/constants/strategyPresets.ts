@@ -19,7 +19,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     rangePocWeight: 15,
     supportResistanceWeight: 5,
     volumeProfileRange: 30,
-    trappedTradersWeight: 10
+    trappedTradersWeight: 10,
+    rsiDivergenceWeight: 10
   },
   daytrade: {
     key: 'daytrade',
@@ -37,7 +38,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     rangePocWeight: 20,
     supportResistanceWeight: 10,
     volumeProfileRange: 40,
-    trappedTradersWeight: 15
+    trappedTradersWeight: 15,
+    rsiDivergenceWeight: 20
   },
   intraday: {
     key: 'intraday',
@@ -55,7 +57,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     rangePocWeight: 15,
     supportResistanceWeight: 10,
     volumeProfileRange: 50,
-    trappedTradersWeight: 20
+    trappedTradersWeight: 20,
+    rsiDivergenceWeight: 20
   },
   swing: {
     key: 'swing',
@@ -73,7 +76,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     rangePocWeight: 10,
     supportResistanceWeight: 10,
     volumeProfileRange: 70,
-    trappedTradersWeight: 20
+    trappedTradersWeight: 20,
+    rsiDivergenceWeight: 25
   },
   position: {
     key: 'position',
@@ -91,7 +95,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     rangePocWeight: 5,
     supportResistanceWeight: 15,
     volumeProfileRange: 100,
-    trappedTradersWeight: 15
+    trappedTradersWeight: 15,
+    rsiDivergenceWeight: 20
   },
   counter: {
     key: 'counter',
@@ -109,7 +114,8 @@ export const STRATEGY_PRESETS: Record<Exclude<StrategyKey, 'custom'>, StrategyCo
     rangePocWeight: 15,
     supportResistanceWeight: 15,
     volumeProfileRange: 50,
-    trappedTradersWeight: 35
+    trappedTradersWeight: 35,
+    rsiDivergenceWeight: 30
   }
 };
 
@@ -138,6 +144,7 @@ export function getDefaultIndicatorWeights(): IndicatorWeights {
     rangePocWeight: 15,
     supportResistanceWeight: 10,
     trappedTradersWeight: 25,
+    rsiDivergenceWeight: 20,
     minRiskRewardRatio: 2.5,
     volumeProfileRange: 50,
     volumeProfileTimeframe: '30m',
@@ -206,6 +213,7 @@ export function configToWeights(config: StrategyConfigItem): IndicatorWeights {
     rangePocWeight: config.rangePocWeight,
     supportResistanceWeight: config.supportResistanceWeight,
     trappedTradersWeight: config.trappedTradersWeight || 25,
+    rsiDivergenceWeight: config.rsiDivergenceWeight || 20,
     minRiskRewardRatio: config.minRiskRewardRatio,
     volumeProfileRange: config.volumeProfileRange,
     volumeProfileTimeframe: config.timeframe,

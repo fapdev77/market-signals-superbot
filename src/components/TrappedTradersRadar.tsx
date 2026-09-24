@@ -16,6 +16,7 @@ import {
   Coins
 } from 'lucide-react';
 import { formatCompactNumber, formatPrice } from '../utils/formatters';
+import { Tooltip } from './Tooltip';
 
 interface TrappedTradersRadarProps {
   tickers: TickerData[];
@@ -189,31 +190,62 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
 
           {/* Quick Asset Selector Buttons */}
           <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
-            {cryptoTickers.slice(0, 7).map((t) => {
+            {cryptoTickers.slice(0, 10).map((t) => {
               const isSelected = t.symbol === currentTicker.symbol;
               const tStatus = t.trappedTraders?.status;
+              const statusLabel = tStatus === 'TRAPPED_LONGS' 
+                ? 'Trapped Longs' 
+                : tStatus === 'TRAPPED_SHORTS' 
+                ? 'Trapped Shorts' 
+                : 'Equilibrado';
+              const statusColor = tStatus === 'TRAPPED_LONGS' ? 'rose' : tStatus === 'TRAPPED_SHORTS' ? 'emerald' : 'cyan';
+
               return (
-                <button
+                <Tooltip
                   key={t.symbol}
-                  onClick={() => {
-                    setActiveSymbol(t.symbol);
-                    if (onSelectTicker) onSelectTicker(t);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1 border ${
-                    isSelected
-                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400 shadow-md shadow-cyan-950/50 ring-1 ring-cyan-500/40'
-                      : 'bg-neutral-900/70 text-neutral-400 border-neutral-800 hover:border-neutral-700 hover:text-neutral-200'
-                  }`}
-                  title={`Monitorar ${t.symbol}`}
+                  position="bottom"
+                  title={t.symbol}
+                  badge={statusLabel}
+                  badgeColor={statusColor as any}
+                  content={
+                    <div className="space-y-1 font-mono text-[11px]">
+                      <div className="flex justify-between gap-4">
+                        <span className="opacity-70">Preço:</span>
+                        <span className="font-bold">${formatPrice(t.price)}</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="opacity-70">Variação 24h:</span>
+                        <span className={t.priceChangePercent24h >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                          {t.priceChangePercent24h >= 0 ? '+' : ''}{t.priceChangePercent24h.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="opacity-70">TTI Score:</span>
+                        <span className="font-bold text-amber-400">{t.trappedTraders?.trappedIndex ?? 30}/100</span>
+                      </div>
+                    </div>
+                  }
                 >
-                  <span>{t.symbol.replace('USDT', '')}</span>
-                  {tStatus === 'TRAPPED_LONGS' && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" title="Trapped Longs" />
-                  )}
-                  {tStatus === 'TRAPPED_SHORTS' && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Trapped Shorts" />
-                  )}
-                </button>
+                  <button
+                    onClick={() => {
+                      setActiveSymbol(t.symbol);
+                      if (onSelectTicker) onSelectTicker(t);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1 border ${
+                      isSelected
+                        ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400 shadow-md shadow-cyan-950/50 ring-1 ring-cyan-500/40'
+                        : 'bg-neutral-900/70 text-neutral-400 border-neutral-800 hover:border-neutral-700 hover:text-neutral-200'
+                    }`}
+                  >
+                    <span>{t.symbol.replace('USDT', '')}</span>
+                    {tStatus === 'TRAPPED_LONGS' && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                    )}
+                    {tStatus === 'TRAPPED_SHORTS' && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    )}
+                  </button>
+                </Tooltip>
               );
             })}
           </div>
@@ -325,24 +357,36 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
 
           {/* TTI Gauge Card */}
           <div className={`p-3 rounded-xl border flex items-center justify-between ${ttiColor}`}>
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 block">
-                Score TTI / Wyckoff
-              </span>
-              <div className="text-2xl font-black font-mono">
-                {trapped.trappedIndex}
-                <span className="text-xs font-normal text-neutral-400 ml-1">/100</span>
+            <Tooltip
+              position="top"
+              title="Trapped Traders Index (TTI)"
+              content="Algoritmo Wyckoff que mede o grau de aprisionamento de ordens a mercado agressivas em extremos de preço com absorção institucional passiva."
+            >
+              <div className="cursor-help">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 block underline decoration-dotted">
+                  Score TTI / Wyckoff
+                </span>
+                <div className="text-2xl font-black font-mono">
+                  {trapped.trappedIndex}
+                  <span className="text-xs font-normal text-neutral-400 ml-1">/100</span>
+                </div>
               </div>
-            </div>
+            </Tooltip>
 
-            <div className="text-right">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 block">
-                Absorção Passiva
-              </span>
-              <div className="text-lg font-bold font-mono text-cyan-400">
-                {trapped.absorptionRatio}%
+            <Tooltip
+              position="top"
+              title="Taxa de Absorção Passiva"
+              content="Percentual de ordens compradoras/vendedoras agressivas que foram travadas por blocos de liquidez passiva (limit orders de market makers)."
+            >
+              <div className="text-right cursor-help">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 block underline decoration-dotted">
+                  Absorção Passiva
+                </span>
+                <div className="text-lg font-bold font-mono text-cyan-400">
+                  {trapped.absorptionRatio}%
+                </div>
               </div>
-            </div>
+            </Tooltip>
           </div>
 
           {/* Trapped Zone Details */}

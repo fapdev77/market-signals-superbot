@@ -1,8 +1,9 @@
 import { ScreenerAsset, ScreenerSettings, ScreenerScanSummary, MarketSector } from '../../src/types.js';
 import { requestJson } from '../utils/httpClient.js';
 import { addBinanceLog } from '../binanceWebsocket.js';
-import { getFavoriteSymbols, getScreenerSettings, saveScreenerSettings, getActiveSignals, setWatchedSymbol } from '../db.js';
+import { getFavoriteSymbols, getScreenerSettings, saveScreenerSettings, getActiveSignals, setWatchedSymbol, DEFAULT_EXCLUDED_SYMBOLS } from '../db.js';
 import { DEFAULT_SYMBOLS } from '../binanceService.js';
+import { getBenchmarkPrice } from '../../src/utils/benchmarkPrices.js';
 
 // Classification mapping for sectors
 const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
@@ -11,6 +12,7 @@ const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
   SOLUSDT: { sector: 'L1_L2', tag: 'High Performance L1' },
   BNBUSDT: { sector: 'L1_L2', tag: 'Exchange Ecosystem' },
   XRPUSDT: { sector: 'L1_L2', tag: 'Cross-Border Payments' },
+  ADAUSDT: { sector: 'L1_L2', tag: 'PoS Smart Contracts L1' },
   DOGEUSDT: { sector: 'MEME', tag: 'OG Meme Coin' },
   SHIBUSDT: { sector: 'MEME', tag: 'Meme Ecosystem' },
   PEPEUSDT: { sector: 'MEME', tag: 'High Beta Meme' },
@@ -33,7 +35,28 @@ const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
   TIAUSDT: { sector: 'L1_L2', tag: 'Modular DA' },
   SEIUSDT: { sector: 'L1_L2', tag: 'Trading Optimized L1' },
   ARBUSDT: { sector: 'L1_L2', tag: 'Ethereum L2 Rollup' },
-  OPUSDT: { sector: 'L1_L2', tag: 'Optimism L2 Superchain' }
+  OPUSDT: { sector: 'L1_L2', tag: 'Optimism L2 Superchain' },
+  BCHUSDT: { sector: 'L1_L2', tag: 'P2P Electronic Cash' },
+  LTCUSDT: { sector: 'L1_L2', tag: 'Scrypt PoW Payments' },
+  // Stablecoins / Pegged assets mappings
+  USDCUSDT: { sector: 'STABLECOIN', tag: 'USD Coin Stablecoin' },
+  USDTUSDC: { sector: 'STABLECOIN', tag: 'Tether / USDC' },
+  USDGUSDT: { sector: 'STABLECOIN', tag: 'Global Dollar Stablecoin' },
+  USDTUSDG: { sector: 'STABLECOIN', tag: 'Tether / USDG' },
+  PYUSDUSDT: { sector: 'STABLECOIN', tag: 'PayPal USD Stablecoin' },
+  FDUSDUSDT: { sector: 'STABLECOIN', tag: 'First Digital USD' },
+  USDTFDUSD: { sector: 'STABLECOIN', tag: 'Tether / FDUSD' },
+  TUSDUSDT: { sector: 'STABLECOIN', tag: 'TrueUSD Stablecoin' },
+  BUSDUSDT: { sector: 'STABLECOIN', tag: 'Binance USD' },
+  USDPUSDT: { sector: 'STABLECOIN', tag: 'Pax Dollar' },
+  EURUSDT: { sector: 'TRADFI', tag: 'Euro / USDT Forex' },
+  AEURUSDT: { sector: 'TRADFI', tag: 'Anchored Euro' },
+  DAIUSDT: { sector: 'STABLECOIN', tag: 'MakerDAO DAI' },
+  USDEUSDT: { sector: 'STABLECOIN', tag: 'Ethena Synthetic Dollar' },
+  USTCUSDT: { sector: 'STABLECOIN', tag: 'TerraClassicUSD' },
+  WBTCUSDT: { sector: 'DEFI', tag: 'Wrapped Bitcoin' },
+  USDCTUSD: { sector: 'STABLECOIN', tag: 'USDC / TUSD Peg' },
+  EURSUSDT: { sector: 'TRADFI', tag: 'STASIS EURO' }
 };
 
 export class MarketScreenerService {
@@ -69,13 +92,24 @@ export class MarketScreenerService {
    */
   public getSectorInfo(symbol: string): { sector: MarketSector; tag: string } {
     if (SECTOR_MAP[symbol]) return SECTOR_MAP[symbol];
-    if (symbol.includes('PEPE') || symbol.includes('DOGE') || symbol.includes('MEME') || symbol.includes('SHIB') || symbol.includes('WIF') || symbol.includes('BONK')) {
+    const s = symbol.toUpperCase();
+    if (
+      s.includes('USDC') || s.includes('USDG') || s.includes('PYUSD') || 
+      s.includes('FDUSD') || s.includes('TUSD') || s.includes('BUSD') || 
+      s.includes('USDP') || s.includes('DAI') || s.includes('USDE') || s.includes('USTC')
+    ) {
+      return { sector: 'STABLECOIN', tag: 'Stablecoin / Pegged' };
+    }
+    if (s.includes('EUR') || s.includes('GBP') || s.includes('JPY') || s.includes('BRL')) {
+      return { sector: 'TRADFI', tag: 'Forex Fiat Peg' };
+    }
+    if (s.includes('PEPE') || s.includes('DOGE') || s.includes('MEME') || s.includes('SHIB') || s.includes('WIF') || s.includes('BONK')) {
       return { sector: 'MEME', tag: 'Meme Token' };
     }
-    if (symbol.includes('AI') || symbol.includes('GPT') || symbol.includes('FET') || symbol.includes('RNDR') || symbol.includes('RENDER') || symbol.includes('TAO')) {
+    if (s.includes('AI') || s.includes('GPT') || s.includes('FET') || s.includes('RNDR') || s.includes('RENDER') || s.includes('TAO')) {
       return { sector: 'AI', tag: 'Artificial Intelligence' };
     }
-    if (symbol.includes('SWAP') || symbol.includes('LEND') || symbol.includes('FINANCE') || symbol.includes('AAVE') || symbol.includes('UNI')) {
+    if (s.includes('SWAP') || s.includes('LEND') || s.includes('FINANCE') || s.includes('AAVE') || s.includes('UNI')) {
       return { sector: 'DEFI', tag: 'DeFi Protocol' };
     }
     return { sector: 'L1_L2', tag: 'Layer 1 / Layer 2' };
@@ -84,10 +118,10 @@ export class MarketScreenerService {
   /**
    * Main Dynamic Screener Algorithm:
    * 1. Fetches all 24h Futures tickers
-   * 2. Filters by survival liquidity criteria (min volume $25M)
+   * 2. Filters by survival liquidity criteria (min volume $25M) and exclusion list
    * 3. Calculates Institutional Composite Momentum Score
    * 4. Merges with user favorites and active trades (hysteresis protection)
-   * 5. Produces final active execution universe
+   * 5. Produces final active execution universe (completely omitting excluded assets)
    */
   public async runScreenerScan(force = false): Promise<{ assets: ScreenerAsset[]; summary: ScreenerScanSummary }> {
     if (this.isScanning) {
@@ -105,6 +139,13 @@ export class MarketScreenerService {
       const favorites = await getFavoriteSymbols();
       const activeSignals = await getActiveSignals();
       const symbolsWithActiveTrades = new Set(activeSignals.map(s => s.symbol));
+
+      // Excluded symbols set (case-insensitive normalized)
+      const rawExcluded = Array.isArray(settings.excludedSymbols) && settings.excludedSymbols.length > 0
+        ? settings.excludedSymbols
+        : DEFAULT_EXCLUDED_SYMBOLS;
+      const excludedNormalizedList = Array.from(new Set(rawExcluded.map(s => s.trim().toUpperCase().replace(/[\/\-_]/g, ''))));
+      const excludedSet = new Set<string>(excludedNormalizedList);
 
       // 1. Fetch 24hr tickers from Binance Futures
       const endpoints = [
@@ -135,6 +176,9 @@ export class MarketScreenerService {
       // 2. Compute RVOL, Volatility, and Composite Score
       const processed: ScreenerAsset[] = candidates.map(ticker => {
         const symbol = ticker.symbol;
+        const normalizedSymbol = symbol.trim().toUpperCase().replace(/[\/\-_]/g, '');
+        const isExcluded = excludedSet.has(normalizedSymbol);
+
         const price = parseFloat(ticker.lastPrice) || 1;
         const priceChangePercent24h = parseFloat(ticker.priceChangePercent) || 0;
         const volume24h = parseFloat(ticker.volume) || 0;
@@ -167,9 +211,11 @@ export class MarketScreenerService {
         const priceMomentumPoints = Math.min(100, Math.abs(priceChangePercent24h) * 5) * (settings.weights.priceMomentumWeight / 100);
         const fundingAnomalyPoints = Math.min(100, Math.abs(fundingRate * 10000) * 15) * (settings.weights.fundingAnomalyWeight / 100);
 
-        const compositeScore = Math.round(
-          Math.min(99, Math.max(15, rvolPoints + oiPoints + priceMomentumPoints + fundingAnomalyPoints))
-        );
+        const compositeScore = isExcluded
+          ? 5 // Strongly discount excluded assets
+          : Math.round(
+              Math.min(99, Math.max(15, rvolPoints + oiPoints + priceMomentumPoints + fundingAnomalyPoints))
+            );
 
         return {
           symbol,
@@ -191,15 +237,18 @@ export class MarketScreenerService {
           compositeScore,
           isFavorite,
           isMonitored: false,
+          isExcluded,
           monitoringReason: 'NONE',
-          sector,
+          sector: isExcluded ? 'EXCLUDED' : sector,
           categoryTag: tag,
           lastScannedAt: Date.now()
         };
       });
 
-      // 3. Filter for Screener Ranking based on Liquidity & Meme preferences
+      // 3. Filter for Screener Ranking based on Liquidity, Exclusion list & Meme preferences
       const filteredForRanking = processed.filter(a => {
+        // Excluded assets (e.g. stablecoins) are completely omitted from ranking and dynamic radar selection
+        if (a.isExcluded) return false;
         if (a.quoteVolume24h < settings.minVolume24hUsd && !a.isFavorite) return false;
         if (!settings.includeMemes && a.sector === 'MEME' && !a.isFavorite) return false;
         return true;
@@ -211,18 +260,21 @@ export class MarketScreenerService {
       // 4. Determine Active Monitored Universe
       const monitoredSet = new Set<string>();
 
-      // A. FAVORITES (Always Monitored)
+      // A. FAVORITES (Always Monitored UNLESS explicitly placed in exclusion list)
       processed.forEach(a => {
-        if (a.isFavorite) {
+        if (a.isFavorite && !a.isExcluded) {
           monitoredSet.add(a.symbol);
           a.isMonitored = true;
           a.monitoringReason = 'FAVORITE';
+        } else if (a.isExcluded) {
+          a.isMonitored = false;
+          a.monitoringReason = 'NONE';
         }
       });
 
-      // B. HYSTERESIS PROTECTION (Active signals never dropped)
+      // B. HYSTERESIS PROTECTION (Active signals never dropped, unless explicitly excluded)
       processed.forEach(a => {
-        if (symbolsWithActiveTrades.has(a.symbol)) {
+        if (symbolsWithActiveTrades.has(a.symbol) && !a.isExcluded) {
           monitoredSet.add(a.symbol);
           a.isMonitored = true;
           if (a.monitoringReason === 'NONE') {
@@ -231,14 +283,14 @@ export class MarketScreenerService {
         }
       });
 
-      // C. DYNAMIC SCREENER TOP SELECTION
+      // C. DYNAMIC SCREENER TOP SELECTION (candidates strictly from filteredForRanking)
       if (settings.mode !== 'FAVORITES_ONLY') {
         const quota = settings.maxMonitoredDynamicAssets || 8;
         let addedDynamic = 0;
 
         for (const candidate of filteredForRanking) {
           if (addedDynamic >= quota) break;
-          if (!monitoredSet.has(candidate.symbol)) {
+          if (!monitoredSet.has(candidate.symbol) && !candidate.isExcluded) {
             monitoredSet.add(candidate.symbol);
             candidate.isMonitored = true;
             candidate.monitoringReason = 'SCREENER_TOP';
@@ -247,16 +299,23 @@ export class MarketScreenerService {
         }
       }
 
-      // Ensure base large caps always present if set is too small
+      // Ensure base large caps always present if set is too small (unless user explicitly excluded them)
       if (monitoredSet.size < 6) {
         ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].forEach(s => {
-          monitoredSet.add(s);
-          const found = processed.find(p => p.symbol === s);
-          if (found) {
-            found.isMonitored = true;
-            found.monitoringReason = 'FAVORITE';
+          if (!excludedSet.has(s)) {
+            monitoredSet.add(s);
+            const found = processed.find(p => p.symbol === s);
+            if (found) {
+              found.isMonitored = true;
+              found.monitoringReason = 'FAVORITE';
+            }
           }
         });
+      }
+
+      // Absolute safety: remove any excluded symbols from monitoredSet
+      for (const exc of excludedSet) {
+        monitoredSet.delete(exc);
       }
 
       this.activeMonitoredSymbols = Array.from(monitoredSet);
@@ -271,16 +330,18 @@ export class MarketScreenerService {
 
       // Build Summary
       const scanDuration = Date.now() - scanStartTime;
-      const sortedByGain = [...processed].sort((a, b) => b.priceChangePercent24h - a.priceChangePercent24h);
-      const sortedByVol = [...processed].sort((a, b) => b.quoteVolume24h - a.quoteVolume24h);
-      const sortedByOi = [...processed].sort((a, b) => b.openInterestChange24h - a.openInterestChange24h);
-      const sortedByFunding = [...processed].sort((a, b) => Math.abs(b.fundingRate) - Math.abs(a.fundingRate));
+      const validAssets = processed.filter(p => !p.isExcluded);
+      const sortedByGain = [...validAssets].sort((a, b) => b.priceChangePercent24h - a.priceChangePercent24h);
+      const sortedByVol = [...validAssets].sort((a, b) => b.quoteVolume24h - a.quoteVolume24h);
+      const sortedByOi = [...validAssets].sort((a, b) => b.openInterestChange24h - a.openInterestChange24h);
+      const sortedByFunding = [...validAssets].sort((a, b) => Math.abs(b.fundingRate) - Math.abs(a.fundingRate));
 
       const summary: ScreenerScanSummary = {
         totalAssetsAvailable: processed.length,
         totalMonitored: this.activeMonitoredSymbols.length,
-        favoritesCount: processed.filter(p => p.isFavorite).length,
+        favoritesCount: processed.filter(p => p.isFavorite && !p.isExcluded).length,
         dynamicCount: processed.filter(p => p.monitoringReason === 'SCREENER_TOP').length,
+        excludedCount: processed.filter(p => p.isExcluded).length,
         topGainer: {
           symbol: sortedByGain[0]?.symbol || 'BTCUSDT',
           change: sortedByGain[0]?.priceChangePercent24h || 0
@@ -308,7 +369,7 @@ export class MarketScreenerService {
       addBinanceLog(
         'SUCCESS',
         'REST_API',
-        `Screener Dinâmico executado: ${this.activeMonitoredSymbols.length} ativos monitorados (${summary.favoritesCount} favoritos + ${summary.dynamicCount} radar dinâmico) em ${scanDuration}ms.`
+        `Screener Dinâmico executado: ${this.activeMonitoredSymbols.length} ativos monitorados (${summary.favoritesCount} favoritos + ${summary.dynamicCount} radar dinâmico, ${summary.excludedCount} excluídos) em ${scanDuration}ms.`
       );
 
       return { assets: processed, summary };
@@ -324,10 +385,11 @@ export class MarketScreenerService {
 
   private buildFallbackSummary(): ScreenerScanSummary {
     return {
-      totalAssetsAvailable: this.cachedScreenerAssets.length || 18,
+      totalAssetsAvailable: this.cachedScreenerAssets.length || 24,
       totalMonitored: this.activeMonitoredSymbols.length || 12,
       favoritesCount: 5,
       dynamicCount: 7,
+      excludedCount: 6,
       topGainer: { symbol: 'SUIUSDT', change: 12.4 },
       topVolume: { symbol: 'BTCUSDT', quoteVolume: 4200000000 },
       topOiSurge: { symbol: 'SOLUSDT', oiChange: 8.5 },
@@ -340,17 +402,24 @@ export class MarketScreenerService {
   private generateFallbackRawTickers(): any[] {
     const symbols = [
       ...DEFAULT_SYMBOLS,
-      'APTUSDT', 'RENDERUSDT', 'TAOUSDT', 'INJUSDT', 'TIAUSDT', 'SEIUSDT', 'ARBUSDT', 'OPUSDT', 'PENDLEUSDT'
+      'APTUSDT', 'RENDERUSDT', 'TAOUSDT', 'INJUSDT', 'TIAUSDT', 'SEIUSDT', 'ARBUSDT', 'OPUSDT', 'PENDLEUSDT',
+      // Stablecoin pairs in fallback dataset to demonstrate exclusion list
+      'USDCUSDT', 'USDGUSDT', 'PYUSDUSDT', 'FDUSDUSDT', 'EURUSDT'
     ];
-    return symbols.map(sym => ({
-      symbol: sym,
-      lastPrice: sym.includes('BTC') ? '92450' : sym.includes('ETH') ? '3420' : sym.includes('SOL') ? '188' : '15.5',
-      priceChangePercent: ((Math.sin(sym.length * 2.5) * 6.5)).toFixed(2),
-      volume: '150000',
-      quoteVolume: (50000000 + (sym.length * 15000000)).toString(),
-      highPrice: '100',
-      lowPrice: '90'
-    }));
+    return symbols.map(sym => {
+      const p = getBenchmarkPrice(sym);
+      const isLow = p < 1;
+      const decimals = isLow ? 6 : 2;
+      return {
+        symbol: sym,
+        lastPrice: p.toFixed(decimals),
+        priceChangePercent: ((Math.sin(sym.length * 2.5) * 4.5)).toFixed(2),
+        volume: '150000',
+        quoteVolume: (50000000 + (sym.length * 15000000)).toString(),
+        highPrice: (p * 1.025).toFixed(decimals),
+        lowPrice: (p * 0.975).toFixed(decimals)
+      };
+    });
   }
 }
 

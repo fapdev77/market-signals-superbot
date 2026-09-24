@@ -1,6 +1,7 @@
 import { TickerData, KlineCandle, OrderBookDepthData, OrderBookLevel, LongShortRatioData, TrappedTradersData, LiquidationSummary } from '../src/types.js';
 import { addBinanceLog, getLiveWSTickers, getLiquidationsSummary } from './binanceWebsocket.js';
 import { requestJson } from './utils/httpClient.js';
+import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 
 function formatPriceString(value: number | null | undefined): string {
   if (value === null || value === undefined || isNaN(value)) return '0.00';
@@ -32,6 +33,7 @@ export const DEFAULT_SYMBOLS = [
   'SOLUSDT',
   'BNBUSDT',
   'XRPUSDT',
+  'ADAUSDT',
   'DOGEUSDT',
   'SUIUSDT',
   'PEPEUSDT',
@@ -98,15 +100,21 @@ let lastFallbackNoticeLogged = 0;
 /**
  * Fetches 24h ticker data for Binance (combines WebSocket live cache + REST API fallback)
  */
-export async function fetchBinanceFuturesTickers(): Promise<any[]> {
+export async function fetchBinanceFuturesTickers(symbolsToFilter?: string[]): Promise<any[]> {
   // 1. First check if real-time WebSocket ticker cache has data
   const wsTickers = getLiveWSTickers();
   const wsKeys = Object.keys(wsTickers);
 
+  const targetSymbols = symbolsToFilter && symbolsToFilter.length > 0
+    ? Array.from(new Set([...DEFAULT_SYMBOLS, ...symbolsToFilter]))
+    : DEFAULT_SYMBOLS;
+
   if (wsKeys.length > 0) {
-    const matchedFromWS = DEFAULT_SYMBOLS.map(sym => wsTickers[sym]).filter(Boolean);
-    if (matchedFromWS.length >= DEFAULT_SYMBOLS.length * 0.5) {
-      return matchedFromWS;
+    const targetSet = new Set(targetSymbols);
+    const matchedFromWS = Object.values(wsTickers).filter((t: any) => targetSet.has(t.symbol));
+    if (matchedFromWS.length >= Math.min(3, targetSymbols.length * 0.3)) {
+      // Return all matched tickers plus all live tickers so callers find any active monitored pair
+      return Object.values(wsTickers);
     }
   }
 
@@ -114,7 +122,10 @@ export async function fetchBinanceFuturesTickers(): Promise<any[]> {
   try {
     const { data } = await fetchWithFallback((ep) => ep.tickerPath);
     if (Array.isArray(data)) {
-      return data.filter(item => DEFAULT_SYMBOLS.includes(item.symbol));
+      const targetSet = new Set(targetSymbols);
+      const filtered = data.filter(item => item.symbol && (targetSet.has(item.symbol) || item.symbol.endsWith('USDT')));
+      if (filtered.length > 0) return filtered;
+      return data;
     }
     return [];
   } catch (err: any) {
@@ -526,21 +537,7 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
  */
 export function generateFallbackKlines(symbol: string, limit: number = 50): KlineCandle[] {
   const candles: KlineCandle[] = [];
-  let basePrice = 15;
-  if (symbol.includes('BTC')) basePrice = 92000;
-  else if (symbol.includes('ETH')) basePrice = 3400;
-  else if (symbol.includes('SOL')) basePrice = 185;
-  else if (symbol.includes('BNB')) basePrice = 640;
-  else if (symbol.includes('XRP')) basePrice = 2.45;
-  else if (symbol.includes('DOGE')) basePrice = 0.22;
-  else if (symbol.includes('SUI')) basePrice = 3.25;
-  else if (symbol.includes('PEPE')) basePrice = 0.00001025;
-  else if (symbol.includes('SHIB')) basePrice = 0.00001450;
-  else if (symbol.includes('BONK')) basePrice = 0.00001850;
-  else if (symbol.includes('NEAR')) basePrice = 4.80;
-  else if (symbol.includes('AVAX')) basePrice = 28.5;
-  else if (symbol.includes('AAVE')) basePrice = 220;
-  else if (symbol.includes('LINK')) basePrice = 17.5;
+  let basePrice = getBenchmarkPrice(symbol);
   const now = Date.now();
   const intervalMs = 15 * 60 * 1000;
 

@@ -516,7 +516,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           <div className="bg-[#0A0A0A] p-2 rounded border border-white/5">
             <span className="text-[9px] text-neutral-500 uppercase block font-bold">Volume Surge</span>
             <strong className="text-cyan-400 text-sm">{weights.volumeSurgeWeight}%</strong>
@@ -544,6 +544,10 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           <div className="bg-[#0A0A0A] p-2 rounded border border-white/5">
             <span className="text-[9px] text-neutral-500 uppercase block font-bold">Suporte / Res.</span>
             <strong className="text-cyan-400 text-sm">{weights.supportResistanceWeight}%</strong>
+          </div>
+          <div className="bg-[#0A0A0A] p-2 rounded border border-white/5">
+            <span className="text-[9px] text-neutral-500 uppercase block font-bold">RSI Divergence</span>
+            <strong className="text-cyan-400 text-sm">{weights.rsiDivergenceWeight ?? 20}%</strong>
           </div>
         </div>
       </div>

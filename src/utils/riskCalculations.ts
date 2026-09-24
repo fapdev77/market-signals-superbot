@@ -7,7 +7,9 @@ export const SECTOR_METADATA: Record<MarketSector, { name: string; description: 
   DEFI: { name: 'DeFi & Lending', description: 'Protocolos de liquidez, DEXs, oráculos e RWAs', color: '#10b981', defaultBeta: 1.3 },
   AI: { name: 'Inteligência Artificial', description: 'Redes descentralizadas de GPU, agentes e computação', color: '#8b5cf6', defaultBeta: 1.65 },
   MEME: { name: 'Meme & High Beta', description: 'Ativos de alta volatilidade e especulação comunitária', color: '#f43f5e', defaultBeta: 2.1 },
-  TRADFI: { name: 'TradFi & Macro', description: 'Ouro, commodities, treasuries e índices globais', color: '#eab308', defaultBeta: 0.25 }
+  TRADFI: { name: 'TradFi & Macro', description: 'Ouro, commodities, treasuries e índices globais', color: '#eab308', defaultBeta: 0.25 },
+  STABLECOIN: { name: 'Stablecoins & Pegs', description: 'Moedas estáveis e derivativos lastreados', color: '#14b8a6', defaultBeta: 0.05 },
+  EXCLUDED: { name: 'Excluídos / Blacklist', description: 'Ativos fora do radar do robô', color: '#f43f5e', defaultBeta: 0.0 }
 };
 
 export const ASSET_SECTOR_MAP: Record<string, { sector: MarketSector; name: string; tag: string; beta: number }> = {
@@ -16,6 +18,9 @@ export const ASSET_SECTOR_MAP: Record<string, { sector: MarketSector; name: stri
   SOLUSDT: { sector: 'L1_L2', name: 'Solana', tag: 'High-Performance L1', beta: 1.4 },
   BNBUSDT: { sector: 'L1_L2', name: 'BNB Chain', tag: 'Exchange Ecosystem', beta: 0.95 },
   XRPUSDT: { sector: 'L1_L2', name: 'Ripple', tag: 'Payment Settlement', beta: 1.1 },
+  ADAUSDT: { sector: 'L1_L2', name: 'Cardano', tag: 'PoS Smart Contracts L1', beta: 1.25 },
+  BCHUSDT: { sector: 'L1_L2', name: 'Bitcoin Cash', tag: 'P2P Electronic Cash', beta: 1.2 },
+  LTCUSDT: { sector: 'L1_L2', name: 'Litecoin', tag: 'Scrypt PoW Payments', beta: 1.1 },
   AVAXUSDT: { sector: 'L1_L2', name: 'Avalanche', tag: 'Subnet L1', beta: 1.35 },
   SUIUSDT: { sector: 'L1_L2', name: 'Sui Network', tag: 'Move VM L1', beta: 1.45 },
   APTUSDT: { sector: 'L1_L2', name: 'Aptos', tag: 'Move VM L1', beta: 1.4 },
@@ -216,7 +221,9 @@ export function calculatePortfolioRisk(
     MEME: { sector: 'MEME', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 },
     TRADFI: { sector: 'TRADFI', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 },
     ALL: { sector: 'ALL', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 },
-    FAVORITES: { sector: 'FAVORITES', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 }
+    FAVORITES: { sector: 'FAVORITES', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 },
+    STABLECOIN: { sector: 'STABLECOIN', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 },
+    EXCLUDED: { sector: 'EXCLUDED', positionsCount: 0, grossNotionalUsd: 0, netDeltaUsd: 0, betaWeightedDeltaUsd: 0, unrealizedPnlUsd: 0, weightedBetaSum: 0, longNotionalUsd: 0, shortNotionalUsd: 0 }
   };
 
   positions.forEach(p => {

@@ -25,9 +25,16 @@ import {
   Server,
   CheckCheck,
   Target,
-  Compass
+  Compass,
+  Maximize2,
+  Minimize2,
+  Expand,
+  X,
+  Smartphone,
+  Monitor
 } from 'lucide-react';
 import { useToast } from './Toast';
+import { Tooltip } from './Tooltip';
 
 export type DashboardWidgetId = 
   | 'system_health'
@@ -53,42 +60,43 @@ export interface WidgetConfig {
 
 const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   lg: [
-    { i: 'system_health', x: 0, y: 0, w: 12, h: 5, minW: 6, minH: 4 },
-    { i: 'prime_banner', x: 0, y: 5, w: 12, h: 4, minW: 6, minH: 3 },
-    { i: 'trapped_radar', x: 0, y: 9, w: 12, h: 8, minW: 6, minH: 5 },
-    { i: 'rsi_divergence', x: 0, y: 17, w: 12, h: 8, minW: 6, minH: 5 },
-    { i: 'market_heatmap', x: 0, y: 25, w: 12, h: 9, minW: 6, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 34, w: 12, h: 8, minW: 6, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 42, w: 12, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 52, w: 12, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 59, w: 12, h: 14, minW: 6, minH: 6 }
+    { i: 'system_health', x: 0, y: 0, w: 12, h: 6, minW: 6, minH: 4 },
+    { i: 'prime_banner', x: 0, y: 6, w: 12, h: 4, minW: 6, minH: 3 },
+    { i: 'trapped_radar', x: 0, y: 10, w: 12, h: 14, minW: 6, minH: 6 },
+    { i: 'rsi_divergence', x: 0, y: 24, w: 12, h: 14, minW: 6, minH: 6 },
+    { i: 'market_heatmap', x: 0, y: 38, w: 12, h: 12, minW: 6, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 50, w: 12, h: 11, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 61, w: 12, h: 12, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 73, w: 12, h: 8, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 81, w: 12, h: 16, minW: 6, minH: 6 }
   ],
   md: [
-    { i: 'system_health', x: 0, y: 0, w: 10, h: 5, minW: 5, minH: 4 },
-    { i: 'prime_banner', x: 0, y: 5, w: 10, h: 4, minW: 5, minH: 3 },
-    { i: 'trapped_radar', x: 0, y: 9, w: 10, h: 8, minW: 5, minH: 5 },
-    { i: 'rsi_divergence', x: 0, y: 17, w: 10, h: 8, minW: 5, minH: 5 },
-    { i: 'market_heatmap', x: 0, y: 25, w: 10, h: 9, minW: 5, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 34, w: 10, h: 8, minW: 5, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 42, w: 10, h: 10, minW: 5, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 52, w: 10, h: 7, minW: 5, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 59, w: 10, h: 14, minW: 5, minH: 6 }
+    { i: 'system_health', x: 0, y: 0, w: 10, h: 6, minW: 5, minH: 4 },
+    { i: 'prime_banner', x: 0, y: 6, w: 10, h: 4, minW: 5, minH: 3 },
+    { i: 'trapped_radar', x: 0, y: 10, w: 10, h: 14, minW: 5, minH: 6 },
+    { i: 'rsi_divergence', x: 0, y: 24, w: 10, h: 14, minW: 5, minH: 6 },
+    { i: 'market_heatmap', x: 0, y: 38, w: 10, h: 12, minW: 5, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 50, w: 10, h: 11, minW: 5, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 61, w: 10, h: 12, minW: 5, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 73, w: 10, h: 8, minW: 5, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 81, w: 10, h: 16, minW: 5, minH: 6 }
   ],
   sm: [
-    { i: 'system_health', x: 0, y: 0, w: 6, h: 5, minW: 6, minH: 4 },
-    { i: 'prime_banner', x: 0, y: 5, w: 6, h: 4, minW: 6, minH: 3 },
-    { i: 'trapped_radar', x: 0, y: 9, w: 6, h: 8, minW: 6, minH: 5 },
-    { i: 'rsi_divergence', x: 0, y: 17, w: 6, h: 8, minW: 6, minH: 5 },
-    { i: 'market_heatmap', x: 0, y: 25, w: 6, h: 8, minW: 6, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 33, w: 6, h: 8, minW: 6, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 41, w: 6, h: 10, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 51, w: 6, h: 7, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 58, w: 6, h: 14, minW: 6, minH: 6 }
+    { i: 'system_health', x: 0, y: 0, w: 6, h: 6, minW: 6, minH: 4 },
+    { i: 'prime_banner', x: 0, y: 6, w: 6, h: 4, minW: 6, minH: 3 },
+    { i: 'trapped_radar', x: 0, y: 10, w: 6, h: 14, minW: 6, minH: 6 },
+    { i: 'rsi_divergence', x: 0, y: 24, w: 6, h: 14, minW: 6, minH: 6 },
+    { i: 'market_heatmap', x: 0, y: 38, w: 6, h: 12, minW: 6, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 50, w: 6, h: 11, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 61, w: 6, h: 12, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 73, w: 6, h: 8, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 81, w: 6, h: 16, minW: 6, minH: 6 }
   ]
 };
 
-const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v8';
-const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v8';
+const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v9';
+const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v9';
+const STORAGE_VIEW_MODE_KEY = 'superbot_dashboard_view_mode_v9';
 
 // Helper to sanitize and ensure all widgets are present with proper dimensions
 function sanitizeLayouts(
@@ -172,7 +180,7 @@ const INITIAL_WIDGETS: WidgetConfig[] = [
     icon: Target,
     visible: true,
     minW: 6,
-    minH: 5,
+    minH: 6,
     badge: 'ORDER FLOW'
   },
   {
@@ -182,7 +190,7 @@ const INITIAL_WIDGETS: WidgetConfig[] = [
     icon: Compass,
     visible: true,
     minW: 6,
-    minH: 5,
+    minH: 6,
     badge: 'REVERSÃO'
   },
   {
@@ -247,7 +255,22 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
   const { showToast } = useToast();
   const { width, containerRef, mounted } = useContainerWidth();
   const [isDraggable, setIsDraggable] = useState<boolean>(true);
+  const [isResizable, setIsResizable] = useState<boolean>(true);
   const [isCustomizing, setIsCustomizing] = useState<boolean>(false);
+  const [maximizedWidgetId, setMaximizedWidgetId] = useState<DashboardWidgetId | null>(null);
+  const [expandedAllMode, setExpandedAllMode] = useState<boolean>(false);
+  const [forceMobileStack, setForceMobileStack] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_VIEW_MODE_KEY);
+      return saved === 'stack';
+    } catch {
+      return false;
+    }
+  });
+
+  // Automatically detect small screen viewports (< 768px)
+  const isSmallScreen = width > 0 && width < 768;
+  const isStackView = forceMobileStack || isSmallScreen;
 
   // Widget definitions initialized with saved visibility if present
   const [widgets, setWidgets] = useState<WidgetConfig[]>(() => {
@@ -311,7 +334,7 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
               x: 0,
               y: 0,
               w: bp === 'sm' ? 6 : bp === 'md' ? 10 : 12,
-              h: 8,
+              h: 12,
               minW: bp === 'sm' ? 6 : 5,
               minH: 4
             };
@@ -377,20 +400,38 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
       return next;
     });
     setLayouts(sanitizeLayouts(DEFAULT_LAYOUTS));
-    showToast('success', 'Todos os Widgets Ativados', 'Os 7 módulos foram reabilitados na tela.');
+    showToast('success', 'Todos os Widgets Ativados', 'Todos os módulos foram reabilitados na tela.');
   };
 
   const handleResetLayout = () => {
     const cleanDefault = sanitizeLayouts(DEFAULT_LAYOUTS);
     setLayouts(cleanDefault);
     setWidgets(INITIAL_WIDGETS);
+    setExpandedAllMode(false);
     try {
       localStorage.removeItem(STORAGE_LAYOUT_KEY);
       localStorage.removeItem(STORAGE_VISIBILITY_KEY);
-      showToast('info', 'Layout Redefinido', 'Os 7 widgets foram restaurados com dimensões e posições padrão.');
+      showToast('info', 'Layout Redefinido', 'Os widgets foram restaurados com dimensões e posições padrão.');
     } catch {
       // ignore
     }
+  };
+
+  const toggleStackMode = () => {
+    const nextMode = !forceMobileStack;
+    setForceMobileStack(nextMode);
+    try {
+      localStorage.setItem(STORAGE_VIEW_MODE_KEY, nextMode ? 'stack' : 'grid');
+    } catch {
+      // ignore
+    }
+    showToast(
+      'info',
+      nextMode ? 'Visualização Fluida Ativada' : 'Visualização em Grade Ativada',
+      nextMode 
+        ? 'Os cards agora expandem sem limite de corte de altura vertical.' 
+        : 'Grade modular redimensionável e arrastável reativada.'
+    );
   };
 
   // Determine active visible widgets that have available content
@@ -402,7 +443,30 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
   const getLayoutItemConfig = (widgetId: string) => {
     const currentBpLayout = layouts['lg'] || DEFAULT_LAYOUTS['lg'];
     const found = currentBpLayout?.find(item => item.i === widgetId);
-    return found || DEFAULT_LAYOUTS['lg']?.find(item => item.i === widgetId) || { i: widgetId, x: 0, y: 0, w: 12, h: 8 };
+    return found || DEFAULT_LAYOUTS['lg']?.find(item => item.i === widgetId) || { i: widgetId, x: 0, y: 0, w: 12, h: 12 };
+  };
+
+  // Quick resize preset: Increase or reset widget heights by delta
+  const handleAdjustHeights = (multiplier: number) => {
+    setLayouts(prev => {
+      const bps: Array<'lg' | 'md' | 'sm'> = ['lg', 'md', 'sm'];
+      const updated: ResponsiveLayouts = { ...prev };
+      bps.forEach(bp => {
+        const list = (updated[bp] || []).map(item => {
+          const defaultH = DEFAULT_LAYOUTS[bp]?.find(d => d.i === item.i)?.h || 10;
+          const newH = Math.max(item.minH || 4, Math.round(defaultH * multiplier));
+          return { ...item, h: newH };
+        });
+        updated[bp] = list;
+      });
+      try {
+        localStorage.setItem(STORAGE_LAYOUT_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+    showToast('info', 'Dimensões dos Cards Calibradas', multiplier > 1 ? 'Cards verticalmente expandidos para exibir mais dados.' : 'Dimensões restauradas ao padrão de grade.');
   };
 
   return (
@@ -421,53 +485,194 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
               <span className="text-[9px] bg-orange-500/10 text-orange-400 px-1.5 py-0.5 rounded font-mono border border-orange-500/20">
                 {visibleWidgets.length} de {widgets.length} ATIVOS
               </span>
+              {isStackView && (
+                <span className="text-[9px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded font-mono border border-cyan-500/20">
+                  MODO FLUIDO (SEM CORTES)
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-neutral-400">
-              Arraste pelo cabeçalho para reordenar os cards ou use o botão de visibilidade para ocultar/ativar módulos.
+              Redimensione pelos cantos inferiores, use a barra de rolagem interna ou expanda em tela cheia para ver todos os dados.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Drag Lock Toggle */}
-          <button
-            onClick={() => {
-              setIsDraggable(prev => !prev);
-              showToast('info', !isDraggable ? 'Arrasto Habilitado' : 'Posições Travadas', !isDraggable ? 'Agora você pode mover os cards pelo cabeçalho.' : 'O layout foi fixado contra movimentações acidentais.');
-            }}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
-              isDraggable
-                ? 'bg-orange-500/15 text-orange-400 border-orange-500/30 hover:bg-orange-500/25'
-                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
-            }`}
-            title={isDraggable ? 'Travar posições dos widgets' : 'Habilitar arrasto dos widgets'}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Mode Switch: Grid vs Fluid Stack */}
+          <Tooltip
+            position="bottom"
+            title={isStackView ? 'Modo Fluido Ativo' : 'Modo Grade Ativo'}
+            badge={isStackView ? 'STACK' : 'GRID'}
+            badgeColor="cyan"
+            content={
+              isStackView 
+                ? 'Cards empilhados com altura dinâmica automática, eliminando cortes verticais. Clique para alternar para Grade modular.' 
+                : 'Grade modular redimensionável e arrastável. Clique para alternar para Modo Fluido contínuo.'
+            }
           >
-            {isDraggable ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-            <span>{isDraggable ? 'Arrasto Ativo' : 'Layout Travado'}</span>
-          </button>
+            <button
+              onClick={toggleStackMode}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
+                isStackView
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm shadow-cyan-500/10'
+                  : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+              }`}
+            >
+              {isStackView ? <Smartphone className="w-3.5 h-3.5 text-cyan-400" /> : <Monitor className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{isStackView ? 'Modo Fluido' : 'Modo Grade'}</span>
+            </button>
+          </Tooltip>
+
+          {/* Expand All / Auto Height Toggle */}
+          <Tooltip
+            position="bottom"
+            title={expandedAllMode ? 'Altura Total Liberada' : 'Scroll Interno Ativo'}
+            badge={expandedAllMode ? 'AUTO HEIGHT' : 'SCROLL'}
+            badgeColor="emerald"
+            content={
+              expandedAllMode 
+                ? 'Todos os cards expandem verticalmente para exibir tabelas e gráficos sem barras de rolagem internas.' 
+                : 'Cards operam com caixas compactas e barras de rolagem internas dedicadas.'
+            }
+          >
+            <button
+              onClick={() => {
+                setExpandedAllMode(prev => !prev);
+                showToast(
+                  'info',
+                  !expandedAllMode ? 'Cards Expandidos' : 'Scroll Interno Reativado',
+                  !expandedAllMode 
+                    ? 'Todos os cards foram liberados verticalmente para exibir todo o conteúdo.' 
+                    : 'Cards limitados com barras de rolagem independentes ativas.'
+                );
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
+                expandedAllMode
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+              }`}
+            >
+              <Expand className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">{expandedAllMode ? 'Exibindo Tudo' : 'Expandir Altura'}</span>
+            </button>
+          </Tooltip>
+
+          {!isStackView && (
+            <>
+              {/* Preset Height Buttons */}
+              <div className="hidden lg:flex items-center bg-black/40 border border-white/10 rounded-lg p-0.5">
+                <Tooltip
+                  position="bottom"
+                  title="Calibração Compacta"
+                  badge="0.85x"
+                  content="Reduz a altura padrão dos cards para caber mais dados na tela simultaneamente."
+                >
+                  <button
+                    onClick={() => handleAdjustHeights(0.85)}
+                    className="px-2 py-1 text-[10px] font-mono text-neutral-400 hover:text-white rounded transition"
+                  >
+                    Compacto
+                  </button>
+                </Tooltip>
+                <Tooltip
+                  position="bottom"
+                  title="Calibração Padrão"
+                  badge="1.0x"
+                  content="Restaura a escala padrão balanceada do layout institucional."
+                >
+                  <button
+                    onClick={() => handleAdjustHeights(1.0)}
+                    className="px-2 py-1 text-[10px] font-mono text-neutral-300 hover:text-white rounded transition"
+                  >
+                    Padrão
+                  </button>
+                </Tooltip>
+                <Tooltip
+                  position="bottom"
+                  title="Calibração Expandida"
+                  badge="+40%"
+                  badgeColor="orange"
+                  content="Aumenta em 40% a altura de todos os cards da grade para visualização aprofundada."
+                >
+                  <button
+                    onClick={() => handleAdjustHeights(1.4)}
+                    className="px-2 py-1 text-[10px] font-mono text-orange-400 hover:text-orange-300 rounded transition font-bold"
+                  >
+                    +Alto
+                  </button>
+                </Tooltip>
+              </div>
+
+              {/* Drag Lock Toggle */}
+              <Tooltip
+                position="bottom"
+                title={isDraggable ? 'Arrasto Habilitado' : 'Posições Fixadas'}
+                badge={isDraggable ? 'EDITÁVEL' : 'TRAVADO'}
+                badgeColor={isDraggable ? 'orange' : 'cyan'}
+                content={
+                  isDraggable
+                    ? 'Você pode mover qualquer card clicando e arrastando pela barra de título. Clique para travar contra cliques acidentais.'
+                    : 'O layout está travado. Os cards não mudarão de posição por arrasto até que você destrave.'
+                }
+              >
+                <button
+                  onClick={() => {
+                    setIsDraggable(prev => !prev);
+                    showToast(
+                      'info', 
+                      !isDraggable ? 'Arrasto Habilitado' : 'Posições Travadas', 
+                      !isDraggable ? 'Agora você pode mover os cards pelo cabeçalho.' : 'O layout foi fixado contra movimentações acidentais.'
+                    );
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
+                    isDraggable
+                      ? 'bg-orange-500/15 text-orange-400 border-orange-500/30 hover:bg-orange-500/25'
+                      : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+                  }`}
+                >
+                  {isDraggable ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span className="hidden sm:inline">{isDraggable ? 'Mover Ativo' : 'Mover Travado'}</span>
+                </button>
+              </Tooltip>
+            </>
+          )}
 
           {/* Visibility / Customize Dropdown Button */}
-          <button
-            onClick={() => setIsCustomizing(prev => !prev)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
-              isCustomizing
-                ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 shadow-md shadow-orange-500/10'
-                : 'bg-neutral-900 text-neutral-300 border-white/10 hover:text-white hover:border-white/20'
-            }`}
+          <Tooltip
+            position="bottom"
+            title="Gerenciar Módulos"
+            badge={`${visibleWidgets.length}/${widgets.length}`}
+            content="Abre o painel de seleção para ativar ou ocultar os módulos individuais do dashboard."
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Widgets ({visibleWidgets.length}/{widgets.length})</span>
-          </button>
+            <button
+              onClick={() => setIsCustomizing(prev => !prev)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 border transition ${
+                isCustomizing
+                  ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 shadow-md shadow-orange-500/10'
+                  : 'bg-neutral-900 text-neutral-300 border-white/10 hover:text-white hover:border-white/20'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Widgets ({visibleWidgets.length}/{widgets.length})</span>
+            </button>
+          </Tooltip>
 
           {/* Reset Layout */}
-          <button
-            onClick={handleResetLayout}
-            className="px-2.5 py-1.5 rounded-lg text-xs font-mono text-neutral-400 hover:text-white bg-neutral-900 border border-white/10 hover:border-white/20 transition flex items-center gap-1.5"
-            title="Restaurar layout inicial padrão"
+          <Tooltip
+            position="bottom-right"
+            title="Restaurar Layout Original"
+            badge="RESET"
+            badgeColor="rose"
+            content="Restaura as posições, dimensões e módulos visíveis para a configuração de fábrica recomendada."
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Restaurar</span>
-          </button>
+            <button
+              onClick={handleResetLayout}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-mono text-neutral-400 hover:text-white bg-neutral-900 border border-white/10 hover:border-white/20 transition flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Restaurar</span>
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -554,9 +759,9 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
         </div>
       )}
 
-      {/* Grid Canvas with Drag Handles */}
+      {/* Grid Canvas with Drag Handles & Resizing */}
       <div className="relative">
-        {mounted && width > 0 ? (
+        {!isStackView && mounted && width > 0 ? (
           <ResponsiveGridLayout
             width={width}
             className="layout"
@@ -569,7 +774,8 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
               handle: '.widget-drag-handle'
             }}
             resizeConfig={{
-              enabled: false
+              enabled: isResizable,
+              handles: ['se']
             }}
             onLayoutChange={handleLayoutChange}
             margin={[12, 12]}
@@ -584,47 +790,70 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
                 <div 
                   key={widget.id} 
                   data-grid={layoutConfig}
-                  className="group/widget flex flex-col h-full rounded-2xl transition-shadow focus-within:ring-1 focus-within:ring-orange-500/50 bg-[#060608] border border-white/5 overflow-hidden shadow-xl"
+                  className={`group/widget flex flex-col h-full rounded-2xl transition-shadow focus-within:ring-1 focus-within:ring-orange-500/50 bg-[#060608] border border-white/10 shadow-xl ${
+                    expandedAllMode ? 'overflow-visible' : 'overflow-hidden'
+                  }`}
                 >
                   {/* Visual Drag Handle Bar */}
                   <div 
-                    className={`widget-drag-handle flex items-center justify-between px-3.5 py-2 bg-[#09090b] border-b border-white/10 select-none transition-colors ${
+                    className={`widget-drag-handle flex items-center justify-between px-3.5 py-2 bg-[#09090b] border-b border-white/10 select-none transition-colors shrink-0 ${
                       isDraggable 
                         ? 'cursor-grab active:cursor-grabbing hover:bg-neutral-900 group-hover/widget:border-orange-500/30' 
                         : 'cursor-default'
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-400">
-                      <GripVertical className={`w-3.5 h-3.5 ${isDraggable ? 'text-orange-400 animate-pulse' : 'text-neutral-600'}`} />
-                      <span className="font-bold text-neutral-200 uppercase tracking-wider">{widget.title}</span>
+                    <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-400 min-w-0">
+                      <GripVertical className={`w-3.5 h-3.5 shrink-0 ${isDraggable ? 'text-orange-400 animate-pulse' : 'text-neutral-600'}`} />
+                      <span className="font-bold text-neutral-200 uppercase tracking-wider truncate">{widget.title}</span>
                       {widget.badge && (
-                        <span className="px-1.5 py-0.2 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20 text-[9px]">
+                        <span className="px-1.5 py-0.2 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20 text-[9px] shrink-0 hidden sm:inline">
                           {widget.badge}
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-500">
-                      {isDraggable ? (
-                        <span className="text-orange-400/80 text-[9px]">Arraste para mover</span>
-                      ) : (
-                        <span className="text-neutral-600 text-[9px]">Fixado</span>
-                      )}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleWidgetVisibility(widget.id);
-                        }}
-                        className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white transition"
-                        title="Ocultar este widget"
+                    <div className="flex items-center gap-1.5 text-[10px] font-mono text-neutral-500 shrink-0">
+                      {/* Maximize Button */}
+                      <Tooltip
+                        position="top"
+                        title="Modo Foco / Tela Cheia"
+                        badge="EXPANDIR"
+                        badgeColor="cyan"
+                        content="Abre este módulo em uma janela modal maximizada para análise detalhada com amplitude máxima."
                       >
-                        <EyeOff className="w-3 h-3" />
-                      </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMaximizedWidgetId(widget.id);
+                          }}
+                          className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-cyan-400 transition"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
+
+                      {/* Hide Widget */}
+                      <Tooltip
+                        position="top"
+                        title="Ocultar Módulo"
+                        badge="MINIMIZAR"
+                        content="Remove este módulo do layout ativo. Você pode reativá-lo a qualquer momento no botão Widgets."
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWidgetVisibility(widget.id);
+                          }}
+                          className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white transition"
+                        >
+                          <EyeOff className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
                     </div>
                   </div>
 
-                  {/* Widget Real Content */}
-                  <div className="flex-1 w-full overflow-hidden">
+                  {/* Widget Real Content with smart custom scrollbar */}
+                  <div className={`flex-1 w-full p-1 custom-scrollbar ${expandedAllMode ? 'overflow-visible' : 'overflow-y-auto overflow-x-hidden'}`}>
                     {content}
                   </div>
                 </div>
@@ -632,15 +861,115 @@ export const DashboardGridLayout: React.FC<DashboardGridLayoutProps> = ({
             })}
           </ResponsiveGridLayout>
         ) : (
+          /* Mobile or Fluid Stack View: Zero vertical cuts, natural page scrolling */
           <div className="space-y-4">
-            {visibleWidgets.map(widget => (
-              <div key={widget.id} className="rounded-2xl border border-white/10 overflow-hidden">
-                {childrenMap[widget.id]}
-              </div>
-            ))}
+            {visibleWidgets.map(widget => {
+              const content = childrenMap[widget.id];
+              if (!content) return null;
+
+              return (
+                <div 
+                  key={widget.id} 
+                  className="rounded-2xl border border-white/10 bg-[#060608] shadow-xl overflow-hidden"
+                >
+                  <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#09090b] border-b border-white/10">
+                    <div className="flex items-center gap-2 text-xs font-mono text-neutral-300">
+                      <widget.icon className="w-4 h-4 text-orange-400 shrink-0" />
+                      <span className="font-bold uppercase tracking-wider">{widget.title}</span>
+                      {widget.badge && (
+                        <span className="px-1.5 py-0.2 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20 text-[9px]">
+                          {widget.badge}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Tooltip
+                        position="top"
+                        title="Modo Foco / Tela Cheia"
+                        badge="EXPANDIR"
+                        badgeColor="cyan"
+                        content="Abre este módulo em uma janela modal maximizada para análise aprofundada."
+                      >
+                        <button
+                          onClick={() => setMaximizedWidgetId(widget.id)}
+                          className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-cyan-400 transition"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
+
+                      <Tooltip
+                        position="top"
+                        title="Ocultar Módulo"
+                        badge="MINIMIZAR"
+                        content="Oculta este widget. Reative quando desejar na lista de widgets."
+                      >
+                        <button
+                          onClick={() => toggleWidgetVisibility(widget.id)}
+                          className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white transition"
+                        >
+                          <EyeOff className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+                  <div className="p-2 overflow-x-auto">
+                    {content}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
+
+      {/* Fullscreen Focus Modal for any Widget */}
+      {maximizedWidgetId && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex flex-col p-2 sm:p-6 animate-fadeIn"
+          onClick={() => setMaximizedWidgetId(null)}
+        >
+          <div 
+            className="flex-1 w-full max-w-7xl mx-auto bg-[#08080a] border border-cyan-500/40 rounded-2xl shadow-2xl flex flex-col overflow-hidden ring-1 ring-cyan-500/30"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-[#0c0d10] border-b border-white/10 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                  <Maximize2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white font-mono flex items-center gap-2">
+                    {widgets.find(w => w.id === maximizedWidgetId)?.title}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                      MODO FOCO AMPLIADO
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-neutral-400 font-mono">
+                    Visualização expandida com todos os dados técnicos, filtros e métricas completas sem limite de altura.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMaximizedWidgetId(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-white/10 transition flex items-center gap-1.5"
+                >
+                  <Minimize2 className="w-3.5 h-3.5" />
+                  <span>Fechar Foco</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body: Complete Scrollable View */}
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              {childrenMap[maximizedWidgetId]}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

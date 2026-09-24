@@ -12,6 +12,7 @@ import { createMarketRouter } from './server/routes/marketRoutes.js';
 import { createAIRouter } from './server/routes/aiRoutes.js';
 import { createBacktestRouter } from './server/routes/backtestRoutes.js';
 import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
+import { getBenchmarkPrice, generateRealisticTicker } from './src/utils/benchmarkPrices.js';
 
 // Prevent unhandled internal runtime assertions (e.g. Node 24 undici socket parser ERR_ASSERTION: false == true) from crashing the server
 process.on('uncaughtException', (err: any) => {
@@ -114,7 +115,9 @@ async function startServer() {
     });
 
     DEFAULT_SYMBOLS.forEach(symbol => {
-      const basePrice = symbol.includes('BTC') ? 92450.5 : symbol.includes('ETH') ? 3420.1 : symbol.includes('SOL') ? 188.4 : symbol.includes('BNB') ? 640.0 : symbol.includes('XRP') ? 2.45 : symbol.includes('DOGE') ? 0.28 : symbol.includes('SUI') ? 3.42 : symbol.includes('PEPE') ? 0.000018 : symbol.includes('LINK') ? 18.5 : symbol.includes('AAVE') ? 245.0 : symbol.includes('AVAX') ? 35.2 : 6.8;
+      const basePrice = getBenchmarkPrice(symbol);
+      const isLowPrice = basePrice < 1;
+      const decimals = isLowPrice ? 6 : 2;
       tickerStateCache[symbol] = {
         symbol,
         baseAsset: symbol.replace('USDT', ''),
@@ -123,10 +126,10 @@ async function startServer() {
         marketType: 'crypto_futures',
         price: basePrice,
         priceChangePercent24h: 1.45,
-        high24h: parseFloat((basePrice * 1.03).toFixed(2)),
-        low24h: parseFloat((basePrice * 0.97).toFixed(2)),
+        high24h: parseFloat((basePrice * 1.03).toFixed(decimals)),
+        low24h: parseFloat((basePrice * 0.97).toFixed(decimals)),
         volume24h: 450000,
-        quoteVolume24h: 4100000000,
+        quoteVolume24h: basePrice * 450000,
         ma24h: basePrice * 0.995,
         ma24hDeviationPct: 0.50,
         openInterest: basePrice * 50000,
@@ -198,9 +201,9 @@ async function startServer() {
 
     try {
       // 1. Fetch live Binance Futures 24h Tickers
-      const rawFutures = await fetchBinanceFuturesTickers();
-      const weights = botState.weights;
       const activeSymbols = marketScreener.getMonitoredSymbols();
+      const rawFutures = await fetchBinanceFuturesTickers(activeSymbols);
+      const weights = botState.weights;
       botState.activeTickersCount = activeSymbols.length + TRADFI_ASSETS.length;
 
       // Process in batches of 4 to prevent socket burst congestion and avoid rate limits
@@ -209,15 +212,12 @@ async function startServer() {
         const batch = activeSymbols.slice(i, i + BATCH_SIZE);
         await Promise.allSettled(batch.map(async (symbol) => {
           try {
-            const raw = rawFutures.find((t: any) => t.symbol === symbol) || {
-              symbol,
-              lastPrice: symbol.includes('BTC') ? '92450.5' : symbol.includes('ETH') ? '3420.1' : symbol.includes('SOL') ? '188.4' : '12.5',
-              priceChangePercent: (Math.sin(Date.now() / 10000 + symbol.length) * 3.5).toFixed(2),
-              highPrice: '94000',
-              lowPrice: '90500',
-              volume: '450000',
-              quoteVolume: '4100000000'
-            };
+            const existingCache = tickerStateCache[symbol];
+            let raw = rawFutures.find((t: any) => t.symbol === symbol);
+
+            if (!raw) {
+              raw = generateRealisticTicker(symbol, existingCache?.price);
+            }
 
             // Fetch primary/baseline Kline, Open Interest, Funding Rate, Long/Short Positioning
             const primaryTf = weights.volumeProfileTimeframe || '30m';

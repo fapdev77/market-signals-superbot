@@ -530,13 +530,15 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
               className="bg-[#050505] border border-white/10 text-neutral-200 placeholder-neutral-500 pl-3 pr-7 py-1 rounded text-xs focus:outline-none focus:border-orange-500 w-full font-mono"
             />
             {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute inset-y-0 right-0 pr-2 flex items-center text-neutral-400 hover:text-white transition cursor-pointer"
-                title="Limpar busca"
-              >
-                <X className="h-3 w-3" />
-              </button>
+              <Tooltip position="top" content="Limpar termo de busca">
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute inset-y-0 right-0 pr-2 flex items-center text-neutral-400 hover:text-white transition cursor-pointer"
+                  aria-label="Limpar busca"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Tooltip>
             )}
           </div>
 
@@ -606,18 +608,23 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                   <div className="flex items-start justify-between mb-1.5">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={(e) => handleToggleFavoriteInGrid(t.symbol, e)}
-                          className={`p-0.5 rounded transition ${
-                            favoriteSymbols.has(t.symbol)
-                              ? 'text-amber-400 hover:text-amber-300'
-                              : 'text-neutral-600 hover:text-amber-400 opacity-60 group-hover:opacity-100'
-                          }`}
-                          title={favoriteSymbols.has(t.symbol) ? 'Remover dos favoritos' : 'Fixar como favorito'}
+                        <Tooltip
+                          position="top"
+                          content={favoriteSymbols.has(t.symbol) ? 'Remover dos favoritos' : 'Fixar nos favoritos'}
                         >
-                          <Star className={`h-3.5 w-3.5 ${favoriteSymbols.has(t.symbol) ? 'fill-amber-400' : ''}`} />
-                        </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleToggleFavoriteInGrid(t.symbol, e)}
+                            className={`p-0.5 rounded transition ${
+                              favoriteSymbols.has(t.symbol)
+                                ? 'text-amber-400 hover:text-amber-300'
+                                : 'text-neutral-600 hover:text-amber-400 opacity-60 group-hover:opacity-100'
+                            }`}
+                            aria-label={favoriteSymbols.has(t.symbol) ? 'Remover dos favoritos' : 'Fixar como favorito'}
+                          >
+                            <Star className={`h-3.5 w-3.5 ${favoriteSymbols.has(t.symbol) ? 'fill-amber-400' : ''}`} />
+                          </button>
+                        </Tooltip>
                         <h3 className="font-extrabold text-sm text-white group-hover:text-orange-400 transition flex items-center gap-1">
                           {t.symbol}
                         </h3>

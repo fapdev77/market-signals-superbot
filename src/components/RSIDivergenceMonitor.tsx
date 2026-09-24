@@ -22,6 +22,7 @@ import {
 import { formatCompactNumber, formatPrice } from '../utils/formatters';
 import { scanUniverseRSIDivergences, scanRSIDivergence } from '../utils/rsiDivergenceUtils';
 import { useToast } from './Toast';
+import { Tooltip } from './Tooltip';
 
 interface RSIDivergenceMonitorProps {
   tickers: TickerData[];
@@ -317,7 +318,7 @@ Confluência: ${item.confidence}%`;
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
         {/* Left/Main Column: Pairs List with Divergence Badges & RSI Gauges (7 cols) */}
-        <div className="lg:col-span-7 space-y-2 max-h-[460px] overflow-y-auto pr-1">
+        <div className="lg:col-span-7 space-y-2 max-h-[520px] overflow-y-auto pr-1 custom-scrollbar">
           {filteredItems.length === 0 ? (
             <div className="p-8 text-center rounded-xl bg-neutral-900/40 border border-neutral-800 text-neutral-500 font-mono text-xs">
               Nenhuma divergência encontrada para os filtros selecionados.
@@ -365,24 +366,56 @@ Confluência: ${item.confidence}%`;
                     {/* Divergence Type Badge */}
                     <div className="flex items-center gap-1.5">
                       {item.divergenceType === 'REGULAR_BULLISH' && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-                          <ArrowUpRight className="w-3 h-3" /> REGULAR BULL
-                        </span>
+                        <Tooltip
+                          position="top"
+                          title="Divergência Regular de Alta"
+                          content="Preço fez fundo mais baixo, mas o oscilador RSI fez fundo mais alto. Indica exaustão vendedora e reversão altista iminente."
+                          badge="REVERSÃO"
+                          badgeColor="emerald"
+                        >
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                            <ArrowUpRight className="w-3 h-3" /> REGULAR BULL
+                          </span>
+                        </Tooltip>
                       )}
                       {item.divergenceType === 'REGULAR_BEARISH' && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
-                          <ArrowDownRight className="w-3 h-3" /> REGULAR BEAR
-                        </span>
+                        <Tooltip
+                          position="top"
+                          title="Divergência Regular de Baixa"
+                          content="Preço fez topo mais alto, mas o RSI fez topo mais baixo. Indica exaustão compradora e provável correção baixista."
+                          badge="REVERSÃO"
+                          badgeColor="rose"
+                        >
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                            <ArrowDownRight className="w-3 h-3" /> REGULAR BEAR
+                          </span>
+                        </Tooltip>
                       )}
                       {item.divergenceType === 'HIDDEN_BULLISH' && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
-                          <TrendingUp className="w-3 h-3" /> HIDDEN BULL
-                        </span>
+                        <Tooltip
+                          position="top"
+                          title="Divergência Oculta de Alta"
+                          content="Preço fez fundo mais alto durante correção enquanto o RSI recuou mais fundo. Indica continuação da tendência altista principal."
+                          badge="CONTINUAÇÃO"
+                          badgeColor="cyan"
+                        >
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
+                            <TrendingUp className="w-3 h-3" /> HIDDEN BULL
+                          </span>
+                        </Tooltip>
                       )}
                       {item.divergenceType === 'HIDDEN_BEARISH' && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                          <TrendingDown className="w-3 h-3" /> HIDDEN BEAR
-                        </span>
+                        <Tooltip
+                          position="top"
+                          title="Divergência Oculta de Baixa"
+                          content="Preço fez topo mais baixo durante repique enquanto o RSI subiu a patamar superior. Indica continuação da tendência baixista."
+                          badge="CONTINUAÇÃO"
+                          badgeColor="amber"
+                        >
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                            <TrendingDown className="w-3 h-3" /> HIDDEN BEAR
+                          </span>
+                        </Tooltip>
                       )}
                       {item.divergenceType === 'NO_DIVERGENCE' && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-neutral-500 bg-neutral-900 border border-neutral-800">

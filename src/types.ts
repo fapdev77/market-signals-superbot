@@ -239,6 +239,7 @@ export interface StrategyConfigItem {
   supportResistanceWeight: number;
   volumeProfileRange: number;
   trappedTradersWeight?: number;
+  rsiDivergenceWeight?: number;
 }
 
 export interface IndicatorWeights {
@@ -255,6 +256,7 @@ export interface IndicatorWeights {
   rangePocWeight: number;           // default 10
   supportResistanceWeight: number; // default 10
   trappedTradersWeight?: number;    // default 25 (para contra-trade / fade de absorção)
+  rsiDivergenceWeight?: number;     // default 20 (para divergências de RSI)
   minRiskRewardRatio: number;       // default 2.5
   volumeProfileRange: number;       // default 50 (resolução em linhas/bins de preço)
   volumeProfileTimeframe?: string;  // default '30m'
@@ -473,7 +475,7 @@ export interface AutoTuneResult {
 // MARKET SCREENER & DYNAMIC UNIVERSE TYPES
 // ============================================
 
-export type MarketSector = 'ALL' | 'FAVORITES' | 'L1_L2' | 'DEFI' | 'MEME' | 'AI' | 'TRADFI';
+export type MarketSector = 'ALL' | 'FAVORITES' | 'L1_L2' | 'DEFI' | 'MEME' | 'AI' | 'TRADFI' | 'STABLECOIN' | 'EXCLUDED';
 
 export type ScreenerMode = 'HYBRID' | 'FAVORITES_ONLY' | 'TOP_SCREENER';
 
@@ -497,6 +499,7 @@ export interface ScreenerAsset {
   compositeScore: number;           // 0 to 100 ranking score
   isFavorite: boolean;              // User pinned/favorite
   isMonitored: boolean;             // Currently in the active 4s scan universe
+  isExcluded?: boolean;             // True if asset is in exclusion list (unmonitored/blacklisted)
   monitoringReason: 'FAVORITE' | 'SCREENER_TOP' | 'ACTIVE_TRADE' | 'TRADFI_MACRO' | 'NONE';
   sector: MarketSector;
   categoryTag?: string;
@@ -510,6 +513,7 @@ export interface ScreenerSettings {
   rescanIntervalMinutes: number;     // e.g. 15, 30, 60
   includeMemes: boolean;
   minPriceChangeFilter: number;      // e.g. 0% or 1.5%
+  excludedSymbols: string[];         // Symbols explicitly excluded from dynamic monitoring/screener (e.g. USDTUSDC, USDGUSDT, PYUSDUSDT)
   weights: {
     rvolWeight: number;              // 0 to 100
     oiChangeWeight: number;          // 0 to 100
@@ -524,6 +528,7 @@ export interface ScreenerScanSummary {
   totalMonitored: number;
   favoritesCount: number;
   dynamicCount: number;
+  excludedCount?: number;            // Total assets currently in the exclusion list
   topGainer: { symbol: string; change: number };
   topVolume: { symbol: string; quoteVolume: number };
   topOiSurge: { symbol: string; oiChange: number };
@@ -811,5 +816,135 @@ export interface AutoTuneRunResult {
   timestamp: number;
   recommendations: string[];
 }
+
+// ============================================
+// PAPER TRADING SANDBOX TYPES
+// ============================================
+
+export type PaperOrderType = 'MARKET' | 'LIMIT' | 'STOP_MARKET';
+export type PaperPositionSide = 'LONG' | 'SHORT';
+export type PaperTradeExitReason = 'TAKE_PROFIT' | 'STOP_LOSS' | 'MANUAL_CLOSE' | 'LIQUIDATION' | 'PARTIAL_CLOSE';
+export type PaperSourceType = 'MANUAL' | 'QUANT_SIGNAL' | 'AI_REVIEW';
+
+export interface PaperFeeTier {
+  id: string;
+  name: string;
+  makerFeePct: number; // e.g. 0.02 (%)
+  takerFeePct: number; // e.g. 0.05 (%)
+  description: string;
+}
+
+export interface PaperTradingSettings {
+  initialBalance: number;
+  feeTierId: string;
+  customMakerFeePct?: number;
+  customTakerFeePct?: number;
+  slippagePct: number; // e.g. 0.02 (%)
+  autoExecuteTpSl: boolean;
+  soundAlerts: boolean;
+}
+
+export interface PaperOrder {
+  id: string;
+  symbol: string;
+  baseAsset: string;
+  side: PaperPositionSide;
+  type: PaperOrderType;
+  quantity: number;
+  price?: number;        // Limit trigger or execution target price
+  stopPrice?: number;    // Stop trigger price
+  leverage: number;
+  marginUsd: number;
+  notionalUsd: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  status: 'PENDING' | 'FILLED' | 'CANCELLED';
+  createdAt: number;
+  sourceType: PaperSourceType;
+  sourceSignalId?: string;
+  notes?: string;
+}
+
+export interface PaperPosition {
+  id: string;
+  symbol: string;
+  baseAsset: string;
+  side: PaperPositionSide;
+  entryPrice: number;
+  currentPrice: number;
+  quantity: number;
+  notionalUsd: number;
+  marginUsd: number;
+  leverage: number;
+  liquidationPrice: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  
+  // Real-time PnL and Commission impact
+  unrealizedPnlGross: number;
+  unrealizedPnlNet: number;
+  unrealizedRoePct: number;
+  breakEvenPrice: number;
+  entryFeePaidUsd: number;
+  estimatedExitFeeUsd: number;
+  totalEstimatedFeesUsd: number;
+  
+  openedAt: number;
+  updatedAt: number;
+  sourceType: PaperSourceType;
+  sourceSignalId?: string;
+  notes?: string;
+}
+
+export interface PaperTradeRecord {
+  id: string;
+  symbol: string;
+  baseAsset: string;
+  side: PaperPositionSide;
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  notionalUsd: number;
+  marginUsd: number;
+  leverage: number;
+  grossPnl: number;
+  netPnl: number;
+  roePct: number;
+  feesPaid: number;
+  slippageImpactUsd: number;
+  exitReason: PaperTradeExitReason;
+  openedAt: number;
+  closedAt: number;
+  durationMinutes: number;
+  sourceType: PaperSourceType;
+  sourceSignalId?: string;
+  notes?: string;
+}
+
+export interface PaperAccountState {
+  initialBalance: number;
+  cashBalance: number;
+  marginInUse: number;
+  totalUnrealizedPnl: number;
+  totalRealizedPnl: number;
+  totalEquity: number;
+  totalFeesPaid: number;
+  netPnlPercentage: number;
+  peakEquity: number;
+  maxDrawdownPct: number;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRate: number;
+  profitFactor: number;
+  averageWin: number;
+  averageLoss: number;
+  positions: PaperPosition[];
+  pendingOrders: PaperOrder[];
+  tradeHistory: PaperTradeRecord[];
+  settings: PaperTradingSettings;
+  lastUpdatedAt: number;
+}
+
 
 

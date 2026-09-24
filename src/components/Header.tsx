@@ -3,7 +3,8 @@ import {
   Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, 
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
   ChevronDown, Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, 
-  Sparkles, Search, Sun, Moon, Check, Layers, BarChart3, Radio, Target
+  Sparkles, Search, Sun, Moon, Check, Layers, BarChart3, Radio, Target,
+  MoreVertical, SlidersHorizontal, PieChart
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { BotState, TickerData } from '../types';
@@ -55,11 +56,13 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [networkPing, setNetworkPing] = useState<number>(14);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const quickActionsRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToast();
   const { theme, toggleTheme } = useTheme();
 
@@ -82,11 +85,15 @@ export const Header: React.FC<HeaderProps> = ({
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setOpenDropdownId(null);
       }
+      if (quickActionsRef.current && !quickActionsRef.current.contains(e.target as Node)) {
+        setIsQuickActionsOpen(false);
+      }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpenDropdownId(null);
         setIsMobileMenuOpen(false);
+        setIsQuickActionsOpen(false);
       }
     };
 
@@ -183,6 +190,14 @@ export const Header: React.FC<HeaderProps> = ({
           badge: 'SPIKE',
           highlight: true,
           desc: 'Smart Volume Screener: Identifica picos anômalos de volume relativo (R-Vol) e fluxo taker institucional.'
+        },
+        {
+          id: 'sector_screener',
+          label: 'Screener de Setores & Rotação',
+          icon: PieChart,
+          badge: 'ALPHA',
+          highlight: true,
+          desc: 'Agregação setorial (L1/L2, DeFi, IA, Memes, DePIN, RWA) e fluxo de rotação de capital vs BTC.'
         },
         {
           id: 'screener',
@@ -456,7 +471,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main Navigation & Brand Header */}
-      <div className="max-w-[2400px] mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-4 relative" ref={dropdownRef}>
+      <div className="max-w-[2400px] mx-auto px-2 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-1.5 sm:gap-4 relative" ref={dropdownRef}>
         {/* Brand Logo & Name */}
         <Tooltip
           position="bottom"
@@ -464,20 +479,20 @@ export const Header: React.FC<HeaderProps> = ({
           badge="QUANT TRADING"
           content="Painel analítico e robô de confluência algorítmica para cripto futuros e ativos TradFi com Order Flow e IA."
         >
-          <div className="flex items-center gap-2.5 cursor-pointer min-w-0 shrink-0" onClick={() => handleSelectTab('dashboard')}>
-            <div className="h-9 w-9 shrink-0 rounded-lg bg-orange-500 flex items-center justify-center font-extrabold text-black font-mono text-sm tracking-tighter shadow-md shadow-orange-500/20 border border-orange-400">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 cursor-pointer min-w-0 shrink-0" onClick={() => handleSelectTab('dashboard')}>
+            <div className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-lg bg-orange-500 flex items-center justify-center font-extrabold text-black font-mono text-xs sm:text-sm tracking-tighter shadow-md shadow-orange-500/20 border border-orange-400">
               MS
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 sm:gap-1.5">
                 <h1 className="text-xs sm:text-base font-extrabold tracking-tight text-white font-mono uppercase truncate">
-                  Market Signals <span className="text-orange-500">SuperBot</span>
+                  <span className="hidden sm:inline">Market Signals </span><span className="text-orange-500">SuperBot</span>
                 </h1>
-                <span className="hidden xs:inline-block px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-black uppercase bg-orange-500/20 text-orange-400 border border-orange-500/30 font-mono shrink-0">
+                <span className="hidden lg:inline-block px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-black uppercase bg-orange-500/20 text-orange-400 border border-orange-500/30 font-mono shrink-0">
                   HIGH DENSITY
                 </span>
               </div>
-              <p className="text-[9px] sm:text-[10px] text-neutral-400 font-mono truncate hidden lg:block">Order Flow • Delta CVD • Open Interest • Fibo Golden Pocket</p>
+              <p className="text-[9px] sm:text-[10px] text-neutral-400 font-mono truncate hidden xl:block">Order Flow • Delta CVD • Open Interest • Fibo Golden Pocket</p>
             </div>
           </div>
         </Tooltip>
@@ -608,8 +623,8 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* Action Controls & Mobile Menu Toggle */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* Universal Command Palette Trigger (Ctrl + K) */}
+        <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2 shrink-0">
+          {/* Universal Command Palette Trigger (Ctrl + K) - Visible on lg+ */}
           <Tooltip
             position="bottom-right"
             title="Paleta de Comandos Rápidos (Ctrl + K)"
@@ -618,17 +633,17 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={onOpenCommandPalette}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0E12] border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 hover:text-white transition font-mono text-xs cursor-pointer shadow-xs shadow-cyan-500/20"
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0D0E12] border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 hover:text-white transition font-mono text-xs cursor-pointer shadow-xs shadow-cyan-500/20"
             >
               <Search className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden lg:inline font-bold">Comandos</span>
+              <span className="inline font-bold">Comandos</span>
               <kbd className="hidden sm:inline-block px-1 py-0.2 rounded bg-black/60 border border-white/10 text-[9px] text-neutral-400 font-bold">
                 ⌘K
               </kbd>
             </button>
           </Tooltip>
 
-          {/* Strategy Auto-Tuning Trigger Button */}
+          {/* Strategy Auto-Tuning Trigger Button - Visible on xl+ */}
           <Tooltip
             position="bottom-right"
             title="Strategy Auto-Tuning Quantitativo"
@@ -637,14 +652,14 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={onOpenAutoTune || (() => handleSelectTab('settings'))}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-cyan-500/20 border border-amber-500/40 text-amber-300 hover:from-amber-500/30 hover:to-cyan-500/30 transition font-mono text-xs cursor-pointer"
+              className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-cyan-500/20 border border-amber-500/40 text-amber-300 hover:from-amber-500/30 hover:to-cyan-500/30 transition font-mono text-xs cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span className="hidden xl:inline font-black">Auto-Tune</span>
+              <span className="inline font-black">Auto-Tune</span>
             </button>
           </Tooltip>
 
-          {/* Network Latency & WebSocket Health */}
+          {/* Network Latency & WebSocket Health - Visible on 2xl+ */}
           <Tooltip
             position="bottom-right"
             title="Latência do WebSocket Binance"
@@ -657,7 +672,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </Tooltip>
 
-          {/* Bot Monitoring Toggle */}
+          {/* Bot Monitoring Toggle - Always Visible, Ultra-compact on mobile */}
           <Tooltip
             position="bottom-right"
             title={`Robô de Monitoramento: ${botState.isMonitoring ? 'ATIVO' : 'PAUSADO'}`}
@@ -670,19 +685,19 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={onToggleBot}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all border font-mono ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all border font-mono shrink-0 ${
                 botState.isMonitoring
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
               }`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${botState.isMonitoring ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span className="hidden xs:inline">{botState.isMonitoring ? 'ROBÔ ATIVO' : 'PAUSADO'}</span>
-              <span className="xs:hidden">{botState.isMonitoring ? 'ON' : 'OFF'}</span>
+              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${botState.isMonitoring ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="hidden sm:inline">{botState.isMonitoring ? 'ROBÔ ATIVO' : 'PAUSADO'}</span>
+              <span className="sm:hidden text-[10.5px]">{botState.isMonitoring ? 'ON' : 'OFF'}</span>
             </button>
           </Tooltip>
 
-          {/* Refresh Action */}
+          {/* Refresh Action - Always Visible */}
           <Tooltip
             position="bottom-right"
             title="Sincronizar Dados do Mercado"
@@ -692,13 +707,14 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={handleRefreshClick}
               disabled={isRefreshing}
-              className="p-2 rounded-lg bg-neutral-900 border border-white/10 text-neutral-300 hover:bg-neutral-800 hover:text-white transition disabled:opacity-60"
+              className="p-1.5 sm:p-2 rounded-lg bg-neutral-900 border border-white/10 text-neutral-300 hover:bg-neutral-800 hover:text-white transition disabled:opacity-60 shrink-0"
+              aria-label="Sincronizar Dados"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-orange-400' : ''}`} />
             </button>
           </Tooltip>
 
-          {/* Sound Tone Toggle */}
+          {/* Sound Tone Toggle - Visible on sm+ */}
           <Tooltip
             position="bottom-right"
             title={`Alertas Sonoros: ${soundOn ? 'LIGADOS' : 'DESLIGADOS'}`}
@@ -711,7 +727,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={handleToggleSound}
-              className={`p-2 rounded-lg border transition ${
+              className={`p-2 rounded-lg border transition hidden sm:flex items-center justify-center shrink-0 ${
                 soundOn 
                   ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20' 
                   : 'bg-neutral-900 border-white/10 text-neutral-500 hover:text-neutral-300'
@@ -721,7 +737,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </Tooltip>
 
-          {/* Push Notification Toggle */}
+          {/* Push Notification Toggle - Visible on sm+ */}
           <Tooltip
             position="bottom-right"
             title={`Notificações Desktop: ${notifEnabled ? 'ATIVADAS' : 'DESATIVADAS'}`}
@@ -734,7 +750,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={handleToggleNotif}
-              className={`p-2 rounded-lg border transition hidden sm:flex items-center justify-center ${
+              className={`p-2 rounded-lg border transition hidden sm:flex items-center justify-center shrink-0 ${
                 notifEnabled
                   ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
                   : 'bg-neutral-900 border-white/10 text-neutral-500 hover:text-neutral-300'
@@ -744,7 +760,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </Tooltip>
 
-          {/* Theme Engine Switcher (Institutional Dark vs Pro Light) */}
+          {/* Theme Engine Switcher - Visible on sm+ */}
           <Tooltip
             position="bottom-right"
             title={`Tema do Terminal: ${theme === 'dark' ? 'INSTITUTIONAL DARK' : 'PRO LIGHT'}`}
@@ -757,7 +773,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={toggleTheme}
-              className={`p-2 rounded-lg border transition flex items-center justify-center ${
+              className={`p-2 rounded-lg border transition hidden sm:flex items-center justify-center shrink-0 ${
                 theme === 'light'
                   ? 'bg-amber-500/20 border-amber-500/50 text-amber-600 hover:bg-amber-500/30'
                   : 'bg-neutral-900 border-white/10 text-neutral-300 hover:text-white hover:bg-neutral-800'
@@ -772,10 +788,149 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </Tooltip>
 
+          {/* Mobile Quick Actions Dropdown / Popover - Only on Mobile (< sm) */}
+          <div className="sm:hidden relative" ref={quickActionsRef}>
+            <Tooltip
+              position="bottom-right"
+              title="Ações Rápidas & Configurações"
+              badge="CONTROLES"
+              content="Abre o menu compacto de ferramentas: tema, áudio, notificações, comandos e auto-tune."
+            >
+              <button
+                onClick={() => setIsQuickActionsOpen(prev => !prev)}
+                className={`p-1.5 rounded-lg border transition flex items-center justify-center shrink-0 ${
+                  isQuickActionsOpen
+                    ? 'bg-orange-500/20 border-orange-500/50 text-orange-400 shadow-sm shadow-orange-500/20'
+                    : 'bg-neutral-900 border-white/10 text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
+                aria-label="Ações Rápidas e Configurações"
+                aria-expanded={isQuickActionsOpen}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+            </Tooltip>
+
+            {/* Floating Dropdown Popover */}
+            {isQuickActionsOpen && (
+              <div 
+                className={`absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl shadow-2xl p-3 z-50 text-xs font-mono space-y-2.5 border transition-all animate-in fade-in slide-in-from-top-2 duration-150 ${
+                  theme === 'light'
+                    ? 'bg-white border-slate-300 text-slate-900 shadow-slate-900/20'
+                    : 'bg-[#0d1017] border-white/15 text-slate-100 shadow-black/80'
+                }`}
+              >
+                {/* Popover Header */}
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <span className="text-[11px] font-black uppercase text-orange-400 tracking-wider flex items-center gap-1.5">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-orange-400" />
+                    Ações Rápidas
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">
+                    {networkPing}ms FEED
+                  </span>
+                </div>
+
+                {/* Theme Switcher in Mobile Popover */}
+                <button
+                  onClick={() => {
+                    toggleTheme();
+                  }}
+                  className={`w-full flex items-center justify-between p-2 rounded-xl border transition ${
+                    theme === 'light'
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 hover:bg-amber-500/20'
+                      : 'bg-neutral-900/80 border-white/10 text-neutral-200 hover:bg-neutral-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {theme === 'light' ? (
+                      <Sun className="w-4 h-4 text-amber-500" />
+                    ) : (
+                      <Moon className="w-4 h-4 text-cyan-400" />
+                    )}
+                    <span className="font-bold">Tema da Interface</span>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase bg-black/20">
+                    {theme === 'light' ? 'Diurno' : 'Dark OLED'}
+                  </span>
+                </button>
+
+                {/* Audio & Notifications in 2 columns */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleToggleSound}
+                    className={`flex items-center justify-center gap-1.5 p-2 rounded-xl border transition ${
+                      soundOn
+                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 font-bold'
+                        : 'bg-neutral-900/80 border-white/10 text-neutral-400'
+                    }`}
+                  >
+                    {soundOn ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                    <span>{soundOn ? 'Sons: ON' : 'Mudo'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleToggleNotif}
+                    className={`flex items-center justify-center gap-1.5 p-2 rounded-xl border transition ${
+                      notifEnabled
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 font-bold'
+                        : 'bg-neutral-900/80 border-white/10 text-neutral-400'
+                    }`}
+                  >
+                    {notifEnabled ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+                    <span>{notifEnabled ? 'Notif: ON' : 'Silencioso'}</span>
+                  </button>
+                </div>
+
+                {/* Command Palette Trigger */}
+                {onOpenCommandPalette && (
+                  <button
+                    onClick={() => {
+                      setIsQuickActionsOpen(false);
+                      onOpenCommandPalette();
+                    }}
+                    className="w-full flex items-center justify-between p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 transition font-bold"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Search className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Paleta de Comandos</span>
+                    </div>
+                    <span className="text-[9px] px-1 py-0.2 rounded bg-black/40 border border-cyan-500/20 text-cyan-300">
+                      ⌘K
+                    </span>
+                  </button>
+                )}
+
+                {/* Auto Tune Trigger */}
+                <button
+                  onClick={() => {
+                    setIsQuickActionsOpen(false);
+                    if (onOpenAutoTune) {
+                      onOpenAutoTune();
+                    } else {
+                      handleSelectTab('settings');
+                    }
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl bg-gradient-to-r from-amber-500/15 to-cyan-500/15 border border-amber-500/30 text-amber-300 hover:opacity-90 transition font-bold"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Auto-Tuning Sharpe</span>
+                  </div>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">
+                    OTIMIZAR
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Mobile Menu Hamburger Button */}
           <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 transition ml-1"
+            onClick={() => {
+              setIsMobileMenuOpen(!isMobileMenuOpen);
+              setIsQuickActionsOpen(false);
+            }}
+            className="md:hidden p-1.5 sm:p-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 hover:bg-orange-500/20 transition shrink-0"
             aria-label="Abrir Menu Principal"
           >
             {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}

@@ -279,7 +279,8 @@ export const StrategyAutoTuner: React.FC<StrategyAutoTunerProps> = ({
                   { label: 'Fibonacci Zone / Golden Pocket', cur: currentWeights.fibonacciZoneWeight, nxt: activeCandidate.weights.fibonacciZoneWeight, color: 'bg-indigo-400' },
                   { label: 'Suporte & Resistência', cur: currentWeights.supportResistanceWeight, nxt: activeCandidate.weights.supportResistanceWeight, color: 'bg-purple-400' },
                   { label: 'Range POC (Point of Control)', cur: currentWeights.rangePocWeight, nxt: activeCandidate.weights.rangePocWeight, color: 'bg-blue-400' },
-                  { label: 'Funding Rate', cur: currentWeights.fundingRateWeight, nxt: activeCandidate.weights.fundingRateWeight, color: 'bg-rose-400' }
+                  { label: 'Funding Rate', cur: currentWeights.fundingRateWeight, nxt: activeCandidate.weights.fundingRateWeight, color: 'bg-rose-400' },
+                  { label: 'RSI Divergências', cur: currentWeights.rsiDivergenceWeight, nxt: activeCandidate.weights.rsiDivergenceWeight, color: 'bg-teal-400' }
                 ].map(item => (
                   <div key={item.label} className="p-2 rounded-lg bg-black/40 border border-white/5 space-y-1">
                     <div className="flex items-center justify-between text-[10px]">

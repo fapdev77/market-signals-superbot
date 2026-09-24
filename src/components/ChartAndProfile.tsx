@@ -18,6 +18,8 @@ import { PriceAlertManager } from './PriceAlertManager';
 import { BulkAlertManager } from './BulkAlertManager';
 import { AlertSoundSettingsMenu } from './AlertSoundSettingsMenu';
 import { PositionSizerCalculator } from './PositionSizerCalculator';
+import { PaperTradingSandbox } from './PaperTradingSandbox';
+import { usePaperTrading } from '../hooks/usePaperTrading';
 import { UserPriceAlert } from '../types';
 import { getTopDetectedPattern } from '../utils/aiPatternScanner';
 import { PatternBadge } from './PatternBadge';
@@ -122,6 +124,9 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     if (!ticker?.symbol) return [];
     return userAlerts.filter(a => a.symbol === ticker.symbol && a.active && !a.triggered);
   }, [userAlerts, ticker?.symbol]);
+
+  // Paper Trading Sandbox active positions & pending orders for on-chart visualization
+  const { currentTickerPositions: activePaperPositions, currentTickerPendingOrders: activePaperOrders } = usePaperTrading(allTickers, ticker?.symbol);
 
   const enabledModels = activeModels.filter(m => m.isActive);
 
@@ -1414,6 +1419,17 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             aiReview={aiReview}
           />
         )}
+
+        {/* Paper Trading Sandbox: Live risk-free simulated trading widget with commission impact */}
+        {ticker && (
+          <PaperTradingSandbox
+            ticker={ticker}
+            allTickers={allTickers}
+            activeSignal={activeSignal}
+            aiReview={aiReview}
+            onSelectTickerBySymbol={onSelectTickerBySymbol}
+          />
+        )}
       </div>
 
       {/* Main Full-Width Chart Section & Order Flow Sub-Charts */}
@@ -1812,6 +1828,65 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                     }}
                   />
                 ))}
+                {/* Paper Trading Active Virtual Positions & Orders */}
+                {activePaperPositions.map(pos => (
+                  <React.Fragment key={pos.id}>
+                    <ReferenceLine
+                      y={pos.entryPrice}
+                      stroke={pos.side === 'LONG' ? '#10b981' : '#f43f5e'}
+                      strokeDasharray="4 2"
+                      strokeWidth={1.5}
+                      label={{
+                        value: `📦 Paper ${pos.side} (${formatPrice(pos.entryPrice)})`,
+                        fill: pos.side === 'LONG' ? '#34d399' : '#fb7185',
+                        fontSize: 9,
+                        position: 'insideLeft'
+                      }}
+                    />
+                    {pos.takeProfit && (
+                      <ReferenceLine
+                        y={pos.takeProfit}
+                        stroke="#059669"
+                        strokeDasharray="3 3"
+                        strokeWidth={1}
+                        label={{
+                          value: `🎯 Paper TP (${formatPrice(pos.takeProfit)})`,
+                          fill: '#34d399',
+                          fontSize: 9,
+                          position: 'insideRight'
+                        }}
+                      />
+                    )}
+                    {pos.stopLoss && (
+                      <ReferenceLine
+                        y={pos.stopLoss}
+                        stroke="#e11d48"
+                        strokeDasharray="3 3"
+                        strokeWidth={1}
+                        label={{
+                          value: `🛑 Paper SL (${formatPrice(pos.stopLoss)})`,
+                          fill: '#fb7185',
+                          fontSize: 9,
+                          position: 'insideRight'
+                        }}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+                {activePaperOrders.map(ord => (
+                  <ReferenceLine
+                    key={ord.id}
+                    y={ord.price || ord.stopPrice}
+                    stroke="#a855f7"
+                    strokeDasharray="2 2"
+                    label={{
+                      value: `⏳ Paper ${ord.type} (${formatPrice(ord.price || ord.stopPrice)})`,
+                      fill: '#c084fc',
+                      fontSize: 9,
+                      position: 'insideLeft'
+                    }}
+                  />
+                ))}
                 <Area type="monotone" dataKey="price" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#priceGradient)" activeDot={{ r: 4, fill: '#f97316', stroke: '#ffffff', strokeWidth: 1.5 }} />
               </AreaChart>
             </ResponsiveContainer>
@@ -1849,6 +1924,65 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                       fill: '#fbbf24',
                       fontSize: 9,
                       position: 'insideTopLeft'
+                    }}
+                  />
+                ))}
+                {/* Paper Trading Active Virtual Positions & Orders */}
+                {activePaperPositions.map(pos => (
+                  <React.Fragment key={pos.id}>
+                    <ReferenceLine
+                      y={pos.entryPrice}
+                      stroke={pos.side === 'LONG' ? '#10b981' : '#f43f5e'}
+                      strokeDasharray="4 2"
+                      strokeWidth={1.5}
+                      label={{
+                        value: `📦 Paper ${pos.side} (${formatPrice(pos.entryPrice)})`,
+                        fill: pos.side === 'LONG' ? '#34d399' : '#fb7185',
+                        fontSize: 9,
+                        position: 'insideLeft'
+                      }}
+                    />
+                    {pos.takeProfit && (
+                      <ReferenceLine
+                        y={pos.takeProfit}
+                        stroke="#059669"
+                        strokeDasharray="3 3"
+                        strokeWidth={1}
+                        label={{
+                          value: `🎯 Paper TP (${formatPrice(pos.takeProfit)})`,
+                          fill: '#34d399',
+                          fontSize: 9,
+                          position: 'insideRight'
+                        }}
+                      />
+                    )}
+                    {pos.stopLoss && (
+                      <ReferenceLine
+                        y={pos.stopLoss}
+                        stroke="#e11d48"
+                        strokeDasharray="3 3"
+                        strokeWidth={1}
+                        label={{
+                          value: `🛑 Paper SL (${formatPrice(pos.stopLoss)})`,
+                          fill: '#fb7185',
+                          fontSize: 9,
+                          position: 'insideRight'
+                        }}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+                {activePaperOrders.map(ord => (
+                  <ReferenceLine
+                    key={ord.id}
+                    y={ord.price || ord.stopPrice}
+                    stroke="#a855f7"
+                    strokeDasharray="2 2"
+                    label={{
+                      value: `⏳ Paper ${ord.type} (${formatPrice(ord.price || ord.stopPrice)})`,
+                      fill: '#c084fc',
+                      fontSize: 9,
+                      position: 'insideLeft'
                     }}
                   />
                 ))}

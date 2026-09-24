@@ -11,6 +11,7 @@ import { AIModelsConfigDashboard } from './components/AIModelsConfigDashboard';
 import { BacktestDashboard } from './components/BacktestDashboard';
 import { ScreenerDashboard } from './components/ScreenerDashboard';
 import { SmartVolumeScreener } from './components/SmartVolumeScreener';
+import { SectorPerformanceScreener } from './components/SectorPerformanceScreener';
 import { TickerTape } from './components/TickerTape';
 import { CommandPalette } from './components/CommandPalette';
 import { useTerminalKeybinds } from './hooks/useTerminalKeybinds';
@@ -102,6 +103,7 @@ export default function App() {
       fibonacciZoneWeight: 15,
       rangePocWeight: 10,
       supportResistanceWeight: 10,
+      rsiDivergenceWeight: 20,
       minRiskRewardRatio: 1.5,
       volumeProfileRange: 50,
       volumeProfileTimeframe: '30m',
@@ -371,7 +373,7 @@ export default function App() {
   }, [topGoldenPocketTicker, signals]);
 
   return (
-    <div className="min-h-screen bg-[var(--bg-app,#050508)] text-[var(--text-primary,#f3f4f6)] flex flex-col font-sans selection:bg-cyan-500 selection:text-white transition-colors duration-200">
+    <div className="min-h-screen bg-[var(--bg-app,#050508)] text-[var(--text-primary,#f3f4f6)] flex flex-col font-sans selection:bg-cyan-500 selection:text-white transition-colors duration-200 overflow-x-hidden w-full max-w-full">
       {/* Header */}
       <Header
         botState={botState}
@@ -563,6 +565,19 @@ export default function App() {
         {/* Dynamic Tab Views */}
         {activeTab === 'volume_screener' && (
           <SmartVolumeScreener
+            tickers={tickers}
+            onSelectTicker={(t) => {
+              setSelectedTicker(t);
+              setSelectedSignal(null);
+              setAutoTriggerAIReview(false);
+              setActiveTab('chart');
+            }}
+            onNavigateToTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+
+        {activeTab === 'sector_screener' && (
+          <SectorPerformanceScreener
             tickers={tickers}
             onSelectTicker={(t) => {
               setSelectedTicker(t);

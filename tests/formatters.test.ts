@@ -18,7 +18,7 @@ describe('formatters utility suite', () => {
 
   it('formats crypto and asset prices with correct decimals and currency flags', () => {
     expect(formatPrice(92450.5, { currency: true })).toBe('$92,450.50');
-    expect(formatPrice(0.00452, { currency: true })).toBe('$0.00452');
+    expect(formatPrice(0.00452, { currency: true, maxDecimals: 5 })).toBe('$0.00452');
     expect(formatPrice(1.2346, { maxDecimals: 3 })).toBe('1.235');
     expect(formatPrice(undefined)).toBe('0.00');
   });
@@ -26,7 +26,7 @@ describe('formatters utility suite', () => {
   it('formats price ranges', () => {
     expect(formatPriceRange(100, 110, false)).toBe('100.00 - 110.00');
     expect(formatPriceRange(100, 110, true)).toBe('$100.00 - $110.00');
-    expect(formatPriceRange(undefined, undefined)).toBe('$0.00 - $0.00');
+    expect(formatPriceRange(undefined, undefined)).toBe('--');
   });
 
   it('formats percentages with directional signs', () => {

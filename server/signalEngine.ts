@@ -1,5 +1,7 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData } from '../src/types.js';
 import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis } from './binanceService.js';
+import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
+import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 
 export function normalizePricePrecision(value: number | null | undefined): number {
   if (value === null || value === undefined || isNaN(value)) return 0;
@@ -35,7 +37,9 @@ export function processTickerState(
   trappedTradersData?: TrappedTradersData
 ): TickerData {
   const symbol = rawTicker.symbol || 'BTCUSDT';
-  const price = parseFloat(rawTicker.lastPrice || rawTicker.price || '90000');
+  const benchmark = getBenchmarkPrice(symbol);
+  const parsedPrice = parseFloat(rawTicker.lastPrice || rawTicker.price);
+  const price = !isNaN(parsedPrice) && parsedPrice > 0 ? parsedPrice : benchmark;
   const priceChangePercent24h = parseFloat(rawTicker.priceChangePercent || '0');
   const high24h = parseFloat(rawTicker.highPrice || normalizePricePrecision(price * 1.02));
   const low24h = parseFloat(rawTicker.lowPrice || normalizePricePrecision(price * 0.98));
@@ -273,6 +277,48 @@ export function processTickerState(
     confluenceFactors.push(
       `⚡ Contra-Trade (Short Squeeze): Net Shorts (${fallbackLsData.shortAccountPct}%) com TTI ${trappedTraders.trappedIndex}/100 e ${trappedTraders.absorptionRatio}% absorção na faixa $${formatPriceString(trappedTraders.trappedPriceZone[0])} - $${formatPriceString(trappedTraders.trappedPriceZone[1])}`
     );
+  }
+
+  // 8. RSI Divergence Monitor Integration
+  const partialTickerForDivergence: any = {
+    symbol,
+    price,
+    priceChangePercent24h,
+    fibonacci,
+    keyLevels: {
+      support1,
+      support2,
+      resistance1,
+      resistance2,
+      structureBreak,
+      hasSinglePrintFVG: fvg.hasSinglePrintFVG,
+      fvgZone: fvg.fvgZone
+    },
+    cvdDirection,
+    trappedTraders,
+    ma24hDeviationPct
+  };
+
+  let divTimeframe = '1h';
+  if (weights.volumeProfileTimeframe === '15m') divTimeframe = '15m';
+  else if (weights.volumeProfileTimeframe === '4h') divTimeframe = '4h';
+  else if (weights.volumeProfileTimeframe === '1d' || weights.volumeProfileTimeframe === '1D') divTimeframe = '1D';
+
+  const rsiDivItem = scanRSIDivergence(partialTickerForDivergence, divTimeframe);
+  const rsiDivWeight = weights.rsiDivergenceWeight ?? 20;
+
+  if (rsiDivItem && rsiDivItem.divergenceType !== 'NO_DIVERGENCE') {
+    if (rsiDivItem.bias === 'BULLISH') {
+      bullishPoints += rsiDivWeight;
+      confluenceFactors.push(
+        `🎯 RSI Divergência Altista (${rsiDivItem.divergenceType.replace('_', ' ')} · ${divTimeframe}): RSI Atual ${rsiDivItem.rsiCurrent} vs Swing ${rsiDivItem.rsiPrevSwing} (Exaustão Vendedora)`
+      );
+    } else if (rsiDivItem.bias === 'BEARISH') {
+      bearishPoints += rsiDivWeight;
+      confluenceFactors.push(
+        `🎯 RSI Divergência Baixista (${rsiDivItem.divergenceType.replace('_', ' ')} · ${divTimeframe}): RSI Atual ${rsiDivItem.rsiCurrent} vs Swing ${rsiDivItem.rsiPrevSwing} (Exaustão Compradora)`
+      );
+    }
   }
 
   // Determine Signal Type & Confluence Score

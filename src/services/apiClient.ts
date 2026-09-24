@@ -254,4 +254,17 @@ export const apiClient = {
       method: 'POST',
     });
   },
+
+  toggleExcludeSymbol: (symbol: string, isExcluded?: boolean): Promise<{ success: boolean; symbol: string; excludedSymbols: string[]; summary: import('../types').ScreenerScanSummary }> => {
+    return request('/api/screener/exclude/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, isExcluded }),
+    });
+  },
+
+  resetExcludedSymbols: (): Promise<{ success: boolean; excludedSymbols: string[]; summary: import('../types').ScreenerScanSummary }> => {
+    return request('/api/screener/exclude/reset', {
+      method: 'POST',
+    });
+  },
 };

@@ -312,7 +312,8 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
                       (formWeights.cvdImbalanceWeight || 0) + 
                       (formWeights.fibonacciZoneWeight || 0) + 
                       (formWeights.rangePocWeight || 0) + 
-                      (formWeights.supportResistanceWeight || 0);
+                      (formWeights.supportResistanceWeight || 0) +
+                      (formWeights.rsiDivergenceWeight || 0);
 
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto font-mono">
@@ -646,6 +647,23 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
               className="w-full accent-orange-500"
             />
             <p className="text-[10px] text-neutral-400">Identifica armadilhas institucionais e contra-trade com Net Longs/Shorts e TTI.</p>
+          </div>
+
+          {/* RSI Divergence Monitor */}
+          <div className="space-y-1 bg-[#050505] p-3 rounded border border-white/5">
+            <div className="flex justify-between text-xs">
+              <span className="text-neutral-200 font-bold">RSI Divergence Monitor</span>
+              <span className="text-orange-400 font-extrabold">{formWeights.rsiDivergenceWeight || 0} pts</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="40"
+              value={formWeights.rsiDivergenceWeight || 0}
+              onChange={(e) => handleSliderChange('rsiDivergenceWeight', parseInt(e.target.value))}
+              className="w-full accent-orange-500"
+            />
+            <p className="text-[10px] text-neutral-400">Peso para as divergências regulares e ocultas do RSI (14) na reversão e continuação.</p>
           </div>
         </div>
 

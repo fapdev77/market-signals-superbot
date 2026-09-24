@@ -23,7 +23,8 @@ import {
   Sun,
   Moon,
   Palette,
-  Target
+  Target,
+  PieChart
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -64,6 +65,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     { id: 'dashboard', label: 'Grid de Tickers & Cotações', icon: Activity, tab: 'dashboard', shortcut: '1' },
     { id: 'heatmap', label: 'Heatmap de Mercado (D3)', icon: Flame, tab: 'heatmap', shortcut: '2' },
     { id: 'volume_screener', label: 'Smart Volume Screener (1h/4h/1d)', icon: Flame, tab: 'volume_screener', shortcut: '3' },
+    { id: 'sector_screener', label: 'Screener de Setores & Rotação de Capital', icon: PieChart, tab: 'sector_screener' },
     { id: 'screener', label: 'Radar Screener & Momentum', icon: Radar, tab: 'screener', shortcut: '4' },
     { id: 'signals', label: 'Matriz de Sinais & Order Flow', icon: Zap, tab: 'signals', shortcut: '5' },
     { id: 'risk', label: 'Exposição de Risco, Gregas & VaR', icon: ShieldAlert, tab: 'risk', shortcut: '6' },

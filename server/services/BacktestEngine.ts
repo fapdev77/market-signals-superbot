@@ -140,7 +140,8 @@ export class BacktestEngine {
         const isGreen = prev.close > prev.open;
 
         const totalWeight = weights.volumeSurgeWeight + weights.openInterestWeight + weights.fundingRateWeight +
-                           weights.cvdImbalanceWeight + weights.fibonacciZoneWeight + weights.rangePocWeight + weights.supportResistanceWeight;
+                           weights.cvdImbalanceWeight + weights.fibonacciZoneWeight + weights.rangePocWeight +
+                           weights.supportResistanceWeight + (weights.rsiDivergenceWeight || 20);
 
         let scorePoints = 0;
         if (volumeSurge > 0.8) scorePoints += weights.volumeSurgeWeight;
@@ -152,6 +153,7 @@ export class BacktestEngine {
         scorePoints += weights.fibonacciZoneWeight * 0.75;
         scorePoints += weights.rangePocWeight * 0.7;
         scorePoints += weights.fundingRateWeight * 0.65;
+        scorePoints += (weights.rsiDivergenceWeight || 20) * 0.75;
 
         const confluenceScore = Math.min(100, Math.round((scorePoints / (totalWeight || 1)) * 100));
 
@@ -456,7 +458,8 @@ export class BacktestEngine {
       'cvdImbalanceWeight',
       'fibonacciZoneWeight',
       'rangePocWeight',
-      'supportResistanceWeight'
+      'supportResistanceWeight',
+      'rsiDivergenceWeight'
     ];
 
     keys.forEach(k => {

@@ -7,6 +7,7 @@ import {
   AutoTuneRunResult,
   TickerData
 } from '../types';
+import { getBenchmarkPrice } from './benchmarkPrices';
 
 /**
  * Strategy Auto-Tuning Engine (Institutional Sharpe Ratio Optimizer)
@@ -27,8 +28,9 @@ export function normalizeWeights(weights: Partial<IndicatorWeights>): IndicatorW
   const fib = Math.max(0, weights.fibonacciZoneWeight ?? 15);
   const poc = Math.max(0, weights.rangePocWeight ?? 10);
   const sr = Math.max(0, weights.supportResistanceWeight ?? 10);
+  const rsi = Math.max(0, weights.rsiDivergenceWeight ?? 20);
 
-  const sum = v + oi + fr + cvd + fib + poc + sr;
+  const sum = v + oi + fr + cvd + fib + poc + sr + rsi;
   const factor = sum > 0 ? 100 / sum : 1;
 
   return {
@@ -40,6 +42,7 @@ export function normalizeWeights(weights: Partial<IndicatorWeights>): IndicatorW
     fibonacciZoneWeight: Math.round(fib * factor),
     rangePocWeight: Math.round(poc * factor),
     supportResistanceWeight: Math.round(sr * factor),
+    rsiDivergenceWeight: Math.round(rsi * factor),
     minRiskRewardRatio: Math.max(1.2, Math.min(4.5, weights.minRiskRewardRatio ?? 2.0)),
     volumeProfileRange: weights.volumeProfileRange ?? 50,
     volumeProfileTimeframe: weights.volumeProfileTimeframe ?? '30m',
@@ -165,7 +168,7 @@ function generateSyntheticHistoricalSignals(): TradeSignal[] {
   for (let i = 0; i < 60; i++) {
     const sym = symbols[i % symbols.length];
     const isLong = (i * 7) % 2 === 0;
-    const basePrice = sym === 'BTCUSDT' ? 68000 : sym === 'ETHUSDT' ? 3500 : sym === 'SOLUSDT' ? 175 : 30;
+    const basePrice = getBenchmarkPrice(sym);
     const price = basePrice * (1 + (Math.sin(i) * 0.05));
     const score = 55 + ((i * 13) % 40);
 
@@ -217,6 +220,7 @@ function computeKeyChanges(current: IndicatorWeights, next: IndicatorWeights): s
   checkDelta('Suporte & Resistência', current.supportResistanceWeight, next.supportResistanceWeight);
   checkDelta('Range POC', current.rangePocWeight, next.rangePocWeight);
   checkDelta('Funding Rate', current.fundingRateWeight, next.fundingRateWeight);
+  checkDelta('RSI Divergências', current.rsiDivergenceWeight, next.rsiDivergenceWeight);
 
   if (Math.abs(next.minRiskRewardRatio - current.minRiskRewardRatio) >= 0.2) {
     changes.push(`Ajustou Risco/Retorno Mínimo: ${current.minRiskRewardRatio}x ➔ ${next.minRiskRewardRatio}x`);
@@ -245,6 +249,7 @@ export function runStrategyAutoTuning(
     fibonacciZoneWeight: 14,
     rangePocWeight: 7,
     supportResistanceWeight: 5,
+    rsiDivergenceWeight: 15,
     minRiskRewardRatio: 2.4
   });
   const maxSharpeMetrics = simulateWeightsPerformance(maxSharpeWeights, historicalSignals, tickers);
@@ -258,6 +263,7 @@ export function runStrategyAutoTuning(
     fibonacciZoneWeight: 22,
     rangePocWeight: 8,
     supportResistanceWeight: 6,
+    rsiDivergenceWeight: 20,
     minRiskRewardRatio: 1.8
   });
   const maxWinRateMetrics = simulateWeightsPerformance(maxWinRateWeights, historicalSignals, tickers);
@@ -271,6 +277,7 @@ export function runStrategyAutoTuning(
     fibonacciZoneWeight: 10,
     rangePocWeight: 6,
     supportResistanceWeight: 6,
+    rsiDivergenceWeight: 15,
     minRiskRewardRatio: 3.2
   });
   const maxProfitFactorMetrics = simulateWeightsPerformance(maxProfitFactorWeights, historicalSignals, tickers);
@@ -284,6 +291,7 @@ export function runStrategyAutoTuning(
     fibonacciZoneWeight: 18,
     rangePocWeight: 11,
     supportResistanceWeight: 10,
+    rsiDivergenceWeight: 20,
     minRiskRewardRatio: 2.0
   });
   const minDrawdownMetrics = simulateWeightsPerformance(minDrawdownWeights, historicalSignals, tickers);

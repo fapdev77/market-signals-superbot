@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { TradeSignal, IndicatorWeights, AIAuditReport, AIModelConfig, ScreenerSettings } from '../src/types.js';
 import { getDefaultStrategyConfigs } from '../src/constants/strategyPresets.js';
+import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 
 let db: Database | null = null;
 const dbFilePath = path.join(process.cwd(), 'data', 'superbot.sqlite');
@@ -445,6 +446,7 @@ export async function getIndicatorWeights(): Promise<IndicatorWeights> {
     fibonacciZoneWeight: 15,
     rangePocWeight: 10,
     supportResistanceWeight: 10,
+    rsiDivergenceWeight: 20,
     minRiskRewardRatio: 2.5,
     volumeProfileRange: 50,
     volumeProfileTimeframe: '30m',
@@ -630,6 +632,27 @@ export async function removeNonFavoriteWatchedSymbol(symbol: string) {
   saveDbToDisk();
 }
 
+export const DEFAULT_EXCLUDED_SYMBOLS: string[] = [
+  'USDCUSDT',
+  'USDTUSDC',
+  'USDGUSDT',
+  'USDTUSDG',
+  'PYUSDUSDT',
+  'FDUSDUSDT',
+  'USDTFDUSD',
+  'TUSDUSDT',
+  'BUSDUSDT',
+  'USDPUSDT',
+  'EURUSDT',
+  'AEURUSDT',
+  'DAIUSDT',
+  'USDEUSDT',
+  'USTCUSDT',
+  'WBTCUSDT',
+  'USDCTUSD',
+  'EURSUSDT'
+];
+
 export const defaultScreenerSettings: ScreenerSettings = {
   mode: 'HYBRID',
   maxMonitoredDynamicAssets: 8,
@@ -637,6 +660,7 @@ export const defaultScreenerSettings: ScreenerSettings = {
   rescanIntervalMinutes: 15,
   includeMemes: true,
   minPriceChangeFilter: 0,
+  excludedSymbols: [...DEFAULT_EXCLUDED_SYMBOLS],
   weights: {
     rvolWeight: 35,
     oiChangeWeight: 30,
@@ -650,23 +674,57 @@ export async function getScreenerSettings(): Promise<ScreenerSettings> {
   const database = await getDb();
   const res = database.exec(`SELECT settings FROM screener_settings WHERE id = 1`);
   if (!res.length || !res[0].values.length) {
-    return defaultScreenerSettings;
+    return { ...defaultScreenerSettings, excludedSymbols: [...DEFAULT_EXCLUDED_SYMBOLS] };
   }
   try {
     const parsed = JSON.parse(res[0].values[0][0] as string);
-    return { ...defaultScreenerSettings, ...parsed };
+    const excluded = Array.isArray(parsed.excludedSymbols) && parsed.excludedSymbols.length > 0
+      ? Array.from(new Set(parsed.excludedSymbols.map((s: string) => s.trim().toUpperCase().replace(/[\/\-_]/g, ''))))
+      : [...DEFAULT_EXCLUDED_SYMBOLS];
+    return { ...defaultScreenerSettings, ...parsed, excludedSymbols: excluded };
   } catch {
-    return defaultScreenerSettings;
+    return { ...defaultScreenerSettings, excludedSymbols: [...DEFAULT_EXCLUDED_SYMBOLS] };
   }
 }
 
 export async function saveScreenerSettings(settings: ScreenerSettings) {
   const database = await getDb();
+  const cleanExcluded = Array.isArray(settings.excludedSymbols)
+    ? Array.from(new Set(settings.excludedSymbols.map(s => s.trim().toUpperCase().replace(/[\/\-_]/g, ''))))
+    : [...DEFAULT_EXCLUDED_SYMBOLS];
+  const settingsToSave: ScreenerSettings = {
+    ...settings,
+    excludedSymbols: cleanExcluded
+  };
   database.run(
     `INSERT OR REPLACE INTO screener_settings (id, settings, updated_at) VALUES (1, ?, ?)`,
-    [JSON.stringify(settings), Date.now()]
+    [JSON.stringify(settingsToSave), Date.now()]
   );
   saveDbToDisk();
+}
+
+export async function toggleExcludedSymbol(symbol: string, shouldExclude?: boolean): Promise<string[]> {
+  const current = await getScreenerSettings();
+  const normalized = symbol.trim().toUpperCase().replace(/[\/\-_]/g, '');
+  const set = new Set(current.excludedSymbols || []);
+  
+  const targetState = typeof shouldExclude === 'boolean' ? shouldExclude : !set.has(normalized);
+  if (targetState) {
+    set.add(normalized);
+  } else {
+    set.delete(normalized);
+  }
+
+  current.excludedSymbols = Array.from(set);
+  await saveScreenerSettings(current);
+  return current.excludedSymbols;
+}
+
+export async function resetExcludedSymbols(): Promise<string[]> {
+  const current = await getScreenerSettings();
+  current.excludedSymbols = [...DEFAULT_EXCLUDED_SYMBOLS];
+  await saveScreenerSettings(current);
+  return current.excludedSymbols;
 }
 
 /**
@@ -730,10 +788,10 @@ export async function seedHistoricalSignalsIfEmpty() {
   }
 
   console.log('🌱 Seeding 30-day historical signal audit dataset for D3 hit-rate performance tracking...');
-  const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'SUIUSDT', 'AVAXUSDT', 'LINKUSDT', 'PEPEUSDT'];
+  const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'SUIUSDT', 'AVAXUSDT', 'LINKUSDT', 'PEPEUSDT'];
   const basePrices: Record<string, number> = {
     BTCUSDT: 91500, ETHUSDT: 3380, SOLUSDT: 185, BNBUSDT: 645,
-    XRPUSDT: 2.35, DOGEUSDT: 0.24, SUIUSDT: 3.45, AVAXUSDT: 32.5,
+    XRPUSDT: 2.35, ADAUSDT: 0.785, DOGEUSDT: 0.24, SUIUSDT: 3.45, AVAXUSDT: 32.5,
     LINKUSDT: 18.2, PEPEUSDT: 0.0000185
   };
 
@@ -744,7 +802,7 @@ export async function seedHistoricalSignalsIfEmpty() {
 
     for (let s = 0; s < signalsPerDay; s++) {
       const symbol = symbols[(dayOffset + s * 3) % symbols.length];
-      const basePrice = basePrices[symbol] || 100;
+      const basePrice = basePrices[symbol] || getBenchmarkPrice(symbol);
       // Slight price drift simulation across 30 days
       const dayFactor = 1 + (Math.sin(dayOffset / 5) * 0.06);
       const entryPrice = basePrice * dayFactor * (1 + (Math.random() * 0.01 - 0.005));
