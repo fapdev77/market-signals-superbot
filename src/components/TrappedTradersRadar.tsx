@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TickerData, TradeSignal } from '../types';
 import { 
   Users, 
@@ -11,7 +11,9 @@ import {
   BrainCircuit, 
   LineChart, 
   BarChart2, 
-  CheckCircle2
+  CheckCircle2,
+  Radio,
+  Coins
 } from 'lucide-react';
 import { formatCompactNumber, formatPrice } from '../utils/formatters';
 
@@ -37,6 +39,13 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
     : (cryptoTickers[0] || tickers[0]);
 
   const [activeSymbol, setActiveSymbol] = useState<string>(activeTicker?.symbol || 'BTCUSDT');
+
+  // Sync state if selectedTicker changes externally
+  useEffect(() => {
+    if (selectedTicker && selectedTicker.symbol) {
+      setActiveSymbol(selectedTicker.symbol);
+    }
+  }, [selectedTicker?.symbol]);
 
   const currentTicker = cryptoTickers.find(t => t.symbol === activeSymbol) || activeTicker;
 
@@ -121,6 +130,9 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
   const rewardDist = Math.abs(contraTarget2 - currentTicker.price);
   const contraRR = riskDist > 0 ? (rewardDist / riskDist).toFixed(1) : '2.8';
 
+  const priceChange = currentTicker.priceChangePercent24h ?? 0;
+  const isPositiveChange = priceChange >= 0;
+
   return (
     <div className="bg-neutral-950/90 backdrop-blur-xl border border-neutral-800/80 rounded-2xl p-4 sm:p-5 shadow-2xl relative overflow-hidden transition-all duration-300">
       {/* Subtle background ambient glow */}
@@ -131,7 +143,7 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
       />
 
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-800/80 pb-3.5 mb-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-neutral-800/80 pb-3.5 mb-4">
         <div className="flex items-center gap-2.5">
           <div className="p-2 rounded-xl bg-neutral-900 border border-neutral-700/60 text-cyan-400 shadow-inner">
             <Target className="w-5 h-5" />
@@ -140,7 +152,7 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
                 Trapped Traders & Squeeze Radar
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold">
                   INSTITUTIONAL
                 </span>
               </h3>
@@ -151,34 +163,60 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
           </div>
         </div>
 
-        {/* Quick Asset Selector Buttons */}
-        <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
-          {cryptoTickers.slice(0, 6).map((t) => {
-            const isSelected = t.symbol === currentTicker.symbol;
-            const tStatus = t.trappedTraders?.status;
-            return (
-              <button
-                key={t.symbol}
-                onClick={() => {
-                  setActiveSymbol(t.symbol);
-                  if (onSelectTicker) onSelectTicker(t);
-                }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition flex items-center gap-1 border ${
-                  isSelected
-                    ? 'bg-neutral-800 text-white border-cyan-500/60 shadow-sm'
-                    : 'bg-neutral-900/60 text-neutral-400 border-neutral-800 hover:border-neutral-700 hover:text-neutral-200'
-                }`}
-              >
-                <span>{t.symbol.replace('USDT', '')}</span>
-                {tStatus === 'TRAPPED_LONGS' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                )}
-                {tStatus === 'TRAPPED_SHORTS' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                )}
-              </button>
-            );
-          })}
+        {/* Prominent Active Asset Banner & Selector */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Active Asset Info Pill */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cyan-950/40 border border-cyan-500/40 shadow-sm shadow-cyan-950/50">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+              </span>
+              <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-semibold">
+                Ativo Monitorado:
+              </span>
+            </div>
+            <div className="flex items-baseline gap-1.5 font-mono">
+              <span className="font-bold text-white text-xs">{currentTicker.symbol}</span>
+              <span className="text-[11px] font-semibold text-neutral-200">
+                ${formatPrice(currentTicker.price)}
+              </span>
+              <span className={`text-[10px] font-bold ${isPositiveChange ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {isPositiveChange ? '+' : ''}{priceChange.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Asset Selector Buttons */}
+          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
+            {cryptoTickers.slice(0, 7).map((t) => {
+              const isSelected = t.symbol === currentTicker.symbol;
+              const tStatus = t.trappedTraders?.status;
+              return (
+                <button
+                  key={t.symbol}
+                  onClick={() => {
+                    setActiveSymbol(t.symbol);
+                    if (onSelectTicker) onSelectTicker(t);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1 border ${
+                    isSelected
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400 shadow-md shadow-cyan-950/50 ring-1 ring-cyan-500/40'
+                      : 'bg-neutral-900/70 text-neutral-400 border-neutral-800 hover:border-neutral-700 hover:text-neutral-200'
+                  }`}
+                  title={`Monitorar ${t.symbol}`}
+                >
+                  <span>{t.symbol.replace('USDT', '')}</span>
+                  {tStatus === 'TRAPPED_LONGS' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" title="Trapped Longs" />
+                  )}
+                  {tStatus === 'TRAPPED_SHORTS' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Trapped Shorts" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -190,7 +228,7 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-cyan-400" />
-              Posicionamento de Mercado
+              Posicionamento ({currentTicker.symbol.replace('USDT', '')})
             </span>
             <span className="text-[10px] font-mono text-neutral-500">15m Window</span>
           </div>
@@ -274,7 +312,7 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
               <Flame className="w-3.5 h-3.5 text-amber-400" />
-              Índice de Traders Presos (TTI)
+              Índice TTI ({currentTicker.symbol.replace('USDT', '')})
             </span>
             <span className={`px-2 py-0.5 rounded text-[10px] font-bold border font-mono ${badgeBg}`}>
               {trapped.status === 'TRAPPED_LONGS'
@@ -346,7 +384,7 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
                 <BrainCircuit className="w-3.5 h-3.5 text-emerald-400" />
-                Execução de Contra-Trade
+                Setup Contra-Trade ({currentTicker.symbol.replace('USDT', '')})
               </span>
               <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-950/40 border border-emerald-500/30 px-1.5 py-0.5 rounded">
                 R:R {contraRR}
