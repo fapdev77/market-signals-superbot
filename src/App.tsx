@@ -32,6 +32,7 @@ import { RiskExposureDashboard } from './components/RiskExposureDashboard';
 import { SystemHealthWidget } from './components/SystemHealthWidget';
 import { TrappedTradersRadar } from './components/TrappedTradersRadar';
 import { RSIDivergenceMonitor } from './components/RSIDivergenceMonitor';
+import { SystemDatabaseSettings } from './components/SystemDatabaseSettings';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -605,8 +606,10 @@ export default function App() {
           <SignalsMatrix
             signals={signals}
             tickers={tickers}
+            weights={botState.weights}
             onRequestAIReview={handleRequestAIReviewFromGrid}
             onSelectSignal={handleSelectSignal}
+            onNavigateToSettings={() => setActiveTab('settings')}
           />
         )}
 
@@ -669,6 +672,16 @@ export default function App() {
             onSaveWeights={handleSaveWeights}
             signals={signals}
             tickers={tickers}
+            onNavigateToTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+
+        {activeTab === 'system_db' && (
+          <SystemDatabaseSettings
+            onFactoryResetComplete={async () => {
+              await fetchData();
+              setActiveTab('dashboard');
+            }}
           />
         )}
 

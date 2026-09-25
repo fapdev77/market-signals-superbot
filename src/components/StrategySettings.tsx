@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { IndicatorWeights, StrategyCategory, StrategyKey, StrategyConfigItem, TradeSignal, TickerData } from '../types';
+import { IndicatorWeights, StrategyCategory, StrategyKey, StrategyConfigItem, TradeSignal, TickerData, SignalTtlSettings, MarketRegimeType } from '../types.js';
 import { StrategyAutoTuner } from './StrategyAutoTuner';
 import { 
   ALL_STRATEGY_KEYS, 
   STRATEGY_PRESETS, 
   getDefaultStrategyConfigs, 
   configToWeights 
-} from '../constants/strategyPresets';
+} from '../constants/strategyPresets.js';
+import { 
+  DEFAULT_SIGNAL_TTL_SETTINGS, 
+  REGIME_PRESETS, 
+  calculateEffectiveTtlMinutes, 
+  formatTtlDuration 
+} from '../utils/signalTtlUtils.js';
 import { 
   Sliders, 
   Save, 
@@ -25,7 +31,15 @@ import {
   ToggleLeft,
   ToggleRight,
   Sparkles,
-  Info
+  Info,
+  Database,
+  Timer,
+  Gauge,
+  ShieldAlert,
+  Shield,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
@@ -34,6 +48,7 @@ interface StrategySettingsProps {
   onSaveWeights: (newWeights: IndicatorWeights, scope?: 'ALL_FUTURE' | 'RESET_AND_RESCAN' | 'RESET_ALL_AND_RESCAN') => void;
   signals?: TradeSignal[];
   tickers?: TickerData[];
+  onNavigateToTab?: (tab: string) => void;
 }
 
 const PRESET_METRICS: Record<StrategyKey, {
@@ -114,7 +129,8 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
   weights,
   onSaveWeights,
   signals = [],
-  tickers = []
+  tickers = [],
+  onNavigateToTab
 }) => {
   const [formWeights, setFormWeights] = useState<IndicatorWeights>(weights);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -134,6 +150,11 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
   );
   const [strategyConfigs, setStrategyConfigs] = useState<Record<string, StrategyConfigItem>>(
     weights.strategyConfigs || getDefaultStrategyConfigs()
+  );
+
+  // Institutional Signal TTL & Invalidation Settings state
+  const [ttlSettings, setTtlSettings] = useState<SignalTtlSettings>(
+    weights.signalTtlSettings || DEFAULT_SIGNAL_TTL_SETTINGS
   );
 
   // Confirmation modal state
@@ -159,10 +180,50 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       if (weights.strategyConfigs && Object.keys(weights.strategyConfigs).length > 0) {
         setStrategyConfigs(weights.strategyConfigs);
       }
+      if (weights.signalTtlSettings) {
+        setTtlSettings(weights.signalTtlSettings);
+      }
       setFormWeights(weights);
       hasInitializedRef.current = true;
     }
   }, [weights]);
+
+  // TTL Management Handlers
+  const handleSelectRegime = (regime: MarketRegimeType) => {
+    const meta = REGIME_PRESETS[regime];
+    setTtlSettings(prev => ({
+      ...prev,
+      marketRegime: regime,
+      regimeMultiplier: meta.multiplier
+    }));
+  };
+
+  const handleMultiplierChange = (val: number) => {
+    const rounded = parseFloat(val.toFixed(2));
+    setTtlSettings(prev => {
+      let matchedRegime: MarketRegimeType = prev.marketRegime;
+      if (Math.abs(rounded - 1.5) < 0.05) matchedRegime = 'CALM';
+      else if (Math.abs(rounded - 1.0) < 0.05) matchedRegime = 'NORMAL';
+      else if (Math.abs(rounded - 0.6) < 0.05) matchedRegime = 'VOLATILE';
+      else if (Math.abs(rounded - 0.4) < 0.05) matchedRegime = 'EXTREME';
+      return {
+        ...prev,
+        regimeMultiplier: rounded,
+        marketRegime: matchedRegime
+      };
+    });
+  };
+
+  const handleTtlSliderChange = (field: keyof SignalTtlSettings, val: any) => {
+    setTtlSettings(prev => ({
+      ...prev,
+      [field]: val
+    }));
+  };
+
+  const handleResetTtlDefaults = () => {
+    setTtlSettings(DEFAULT_SIGNAL_TTL_SETTINGS);
+  };
 
   // Handle toggling strategy in multi-strategy execution pool with immediate persistence
   const handleToggleStrategy = async (key: StrategyKey) => {
@@ -196,7 +257,8 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       strategyLabel: PRESET_METRICS[activePreset]?.label || 'Personalizado',
       multiStrategyMode,
       enabledStrategies: nextEnabled,
-      strategyConfigs: nextConfigs
+      strategyConfigs: nextConfigs,
+      signalTtlSettings: ttlSettings
     };
 
     try {
@@ -217,7 +279,8 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       strategyLabel: PRESET_METRICS[activePreset]?.label || 'Personalizado',
       multiStrategyMode: nextMode,
       enabledStrategies,
-      strategyConfigs
+      strategyConfigs,
+      signalTtlSettings: ttlSettings
     };
 
     try {
@@ -287,7 +350,8 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       strategyLabel: PRESET_METRICS[activePreset]?.label || 'Personalizado',
       multiStrategyMode,
       enabledStrategies,
-      strategyConfigs
+      strategyConfigs,
+      signalTtlSettings: ttlSettings
     };
 
     try {
@@ -784,15 +848,412 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
           </div>
         </div>
 
+        {/* INSTITUTIONAL SIGNAL TTL & INVALIDATION MANAGEMENT */}
+        <div className="pt-5 border-t border-white/10 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-orange-500/10 via-amber-500/5 to-transparent p-3.5 rounded-lg border border-orange-500/20">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-orange-500/15 text-orange-400 rounded-lg border border-orange-500/30 shrink-0">
+                <Timer className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                    Gestão Institucional de TTL & Validade dos Sinais (Alpha Half-Life)
+                  </h4>
+                  <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                    BLACKROCK QUANT MODEL
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-400 mt-0.5">
+                  Modelagem matemática de decaimento temporal: se a ordem não for preenchida ou o alvo não for atingido na janela estatística ideal, o setup perde alpha e expira automaticamente.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase border flex items-center gap-1.5 ${REGIME_PRESETS[ttlSettings.marketRegime]?.badgeColor || 'bg-blue-500/10'} ${REGIME_PRESETS[ttlSettings.marketRegime]?.textColor || 'text-blue-400'} ${REGIME_PRESETS[ttlSettings.marketRegime]?.borderColor || 'border-blue-500/30'}`}>
+                <span>{REGIME_PRESETS[ttlSettings.marketRegime]?.icon || '🔵'}</span>
+                <span>REGIME: {REGIME_PRESETS[ttlSettings.marketRegime]?.shortLabel || 'PADRÃO'} ({ttlSettings.regimeMultiplier.toFixed(2)}x)</span>
+              </span>
+            </div>
+          </div>
+
+          {/* 1. Market Regime & Fine-Tuning Multiplier */}
+          <div className="bg-[#050505] p-3.5 rounded-lg border border-white/5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/5 pb-2">
+              <div>
+                <span className="text-xs font-bold text-neutral-200 flex items-center gap-1.5">
+                  <Gauge className="h-3.5 w-3.5 text-amber-400" />
+                  Regime de Volatilidade de Mercado & Fine-Tuning de TTL
+                </span>
+                <span className="text-[10px] text-neutral-400 block mt-0.5">
+                  Ajuste a sensibilidade temporal do robô para dias mais calmos (mercado lento em consolidação) ou dias de tempestade (alta volatilidade e notícias).
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-extrabold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/20 font-mono">
+                  Multiplicador Ativo: {ttlSettings.regimeMultiplier.toFixed(2)}x
+                </span>
+              </div>
+            </div>
+
+            {/* Presets Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {(Object.keys(REGIME_PRESETS) as MarketRegimeType[]).map((regime) => {
+                const info = REGIME_PRESETS[regime];
+                const isSelected = ttlSettings.marketRegime === regime && Math.abs(ttlSettings.regimeMultiplier - info.multiplier) < 0.05;
+
+                return (
+                  <button
+                    key={regime}
+                    type="button"
+                    onClick={() => handleSelectRegime(regime)}
+                    className={`p-3 rounded-lg border text-left transition flex flex-col justify-between gap-2 cursor-pointer ${
+                      isSelected
+                        ? `${info.badgeColor} ${info.borderColor} shadow-md ring-1 ring-white/10`
+                        : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold flex items-center gap-1.5 text-white">
+                        <span>{info.icon}</span>
+                        <span>{info.shortLabel}</span>
+                      </span>
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${info.badgeColor} ${info.textColor} ${info.borderColor}`}>
+                        {info.multiplier.toFixed(1)}x TTL
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-neutral-400 leading-tight">
+                      {info.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Continuous Fine-Tuning Slider */}
+            <div className="pt-2 border-t border-white/5 space-y-1.5">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-neutral-300 font-bold flex items-center gap-1.5">
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-cyan-400" />
+                  Ajuste Fino Contínuo do Multiplicador Manual (Fine-Tuning):
+                </span>
+                <span className="text-cyan-400 font-black text-sm font-mono">
+                  {ttlSettings.regimeMultiplier.toFixed(2)}x
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-rose-400 font-mono shrink-0">0.30x (Alta Agressão)</span>
+                <input
+                  type="range"
+                  min="0.30"
+                  max="2.50"
+                  step="0.05"
+                  value={ttlSettings.regimeMultiplier}
+                  onChange={(e) => handleMultiplierChange(parseFloat(e.target.value))}
+                  className="flex-1 accent-cyan-500 cursor-pointer"
+                />
+                <span className="text-[10px] text-emerald-400 font-mono shrink-0">2.50x (Mercado Calmo)</span>
+              </div>
+              <p className="text-[9.5px] text-neutral-400">
+                O fine-tuning permite calibrar o decaimento de forma cirúrgica (ex: 1.25x para dias moderadamente lentos, 0.70x para abertura de NY).
+              </p>
+            </div>
+          </div>
+
+          {/* 2. Base TTL Sliders with Real-Time Effective Calculation */}
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+              <h5 className="text-xs font-bold text-neutral-200 uppercase flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-orange-400" />
+                Validade Base por Categoria & TTL Efetivo Calculado
+              </h5>
+              <span className="text-[10px] text-neutral-400 font-mono">
+                Cálculo: <strong className="text-orange-400">TTL Efetivo = TTL Base × Multiplicador ({ttlSettings.regimeMultiplier.toFixed(2)}x)</strong>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {/* Scalp 5m */}
+              <div className="space-y-1.5 bg-[#050505] p-3 rounded-lg border border-white/5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-200 font-bold flex items-center gap-1">
+                    ⚡ Scalp (5m)
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                    <span className="text-neutral-400">Base: {ttlSettings.scalpTtlMinutes}m</span>
+                    <span className="text-purple-400 font-extrabold bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">
+                      Efetivo: {calculateEffectiveTtlMinutes('SCALP', ttlSettings)} min
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="60"
+                  step="5"
+                  value={ttlSettings.scalpTtlMinutes}
+                  onChange={(e) => handleTtlSliderChange('scalpTtlMinutes', parseInt(e.target.value))}
+                  className="w-full accent-purple-500 cursor-pointer"
+                />
+                <span className="text-[9.5px] text-neutral-400 block">
+                  Padrão: 25 min (~5 velas de 5m). Setup de micro-ordens expira rápido se não houver agressão.
+                </span>
+              </div>
+
+              {/* Day Trade 15m */}
+              <div className="space-y-1.5 bg-[#050505] p-3 rounded-lg border border-white/5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-200 font-bold flex items-center gap-1">
+                    🎯 Day Trade (15m)
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                    <span className="text-neutral-400">Base: {formatTtlDuration(ttlSettings.dayTradeTtlMinutes)}</span>
+                    <span className="text-blue-400 font-extrabold bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                      Efetivo: {formatTtlDuration(calculateEffectiveTtlMinutes('DAY_TRADE', ttlSettings))}
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="30"
+                  max="240"
+                  step="15"
+                  value={ttlSettings.dayTradeTtlMinutes}
+                  onChange={(e) => handleTtlSliderChange('dayTradeTtlMinutes', parseInt(e.target.value))}
+                  className="w-full accent-blue-500 cursor-pointer"
+                />
+                <span className="text-[9.5px] text-neutral-400 block">
+                  Padrão: 90 min (1h30 · 6 velas de 15m). Ideal para POIs intradiários e Fair Value Gaps.
+                </span>
+              </div>
+
+              {/* Intraday 30m */}
+              <div className="space-y-1.5 bg-[#050505] p-3 rounded-lg border border-white/5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-200 font-bold flex items-center gap-1">
+                    ⏱️ Intraday (30m)
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                    <span className="text-neutral-400">Base: {formatTtlDuration(ttlSettings.intradayTtlMinutes)}</span>
+                    <span className="text-emerald-400 font-extrabold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                      Efetivo: {formatTtlDuration(calculateEffectiveTtlMinutes('INTRADAY', ttlSettings))}
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="60"
+                  max="480"
+                  step="30"
+                  value={ttlSettings.intradayTtlMinutes}
+                  onChange={(e) => handleTtlSliderChange('intradayTtlMinutes', parseInt(e.target.value))}
+                  className="w-full accent-emerald-500 cursor-pointer"
+                />
+                <span className="text-[9.5px] text-neutral-400 block">
+                  Padrão: 240 min (4h · 8 velas de 30m). Equilíbrio institucional entre maturação e corte.
+                </span>
+              </div>
+
+              {/* Swing Trade 1h/4h */}
+              <div className="space-y-1.5 bg-[#050505] p-3 rounded-lg border border-white/5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-200 font-bold flex items-center gap-1">
+                    🌊 Swing Trade (1h/4h)
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                    <span className="text-neutral-400">Base: {formatTtlDuration(ttlSettings.swingTtlMinutes)}</span>
+                    <span className="text-amber-400 font-extrabold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                      Efetivo: {formatTtlDuration(calculateEffectiveTtlMinutes('SWING', ttlSettings))}
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="360"
+                  max="2880"
+                  step="60"
+                  value={ttlSettings.swingTtlMinutes}
+                  onChange={(e) => handleTtlSliderChange('swingTtlMinutes', parseInt(e.target.value))}
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
+                <span className="text-[9.5px] text-neutral-400 block">
+                  Padrão: 1440 min (24h · 1 dia). Permite tempo hábil para rompimentos da POC semanal.
+                </span>
+              </div>
+
+              {/* Position Macro 4h/1d */}
+              <div className="space-y-1.5 bg-[#050505] p-3 rounded-lg border border-white/5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-200 font-bold flex items-center gap-1">
+                    🏛️ Position Macro (4h/1d)
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                    <span className="text-neutral-400">Base: {formatTtlDuration(ttlSettings.positionTtlMinutes)}</span>
+                    <span className="text-indigo-400 font-extrabold bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                      Efetivo: {formatTtlDuration(calculateEffectiveTtlMinutes('POSITION', ttlSettings))}
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="1440"
+                  max="10080"
+                  step="240"
+                  value={ttlSettings.positionTtlMinutes}
+                  onChange={(e) => handleTtlSliderChange('positionTtlMinutes', parseInt(e.target.value))}
+                  className="w-full accent-indigo-500 cursor-pointer"
+                />
+                <span className="text-[9.5px] text-neutral-400 block">
+                  Padrão: 4320 min (72h · 3 dias). Setups macro fundamentados em desbalanços de ciclo de OI.
+                </span>
+              </div>
+
+              {/* Contra-Trade TTI 15m */}
+              <div className="space-y-1.5 bg-[#050505] p-3 rounded-lg border border-white/5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-200 font-bold flex items-center gap-1">
+                    🎯 Contra-Trade (TTI / Squeeze)
+                  </span>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                    <span className="text-neutral-400">Base: {formatTtlDuration(ttlSettings.counterTradeTtlMinutes)}</span>
+                    <span className="text-rose-400 font-extrabold bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">
+                      Efetivo: {formatTtlDuration(calculateEffectiveTtlMinutes('COUNTER_TRADE', ttlSettings))}
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="15"
+                  max="180"
+                  step="15"
+                  value={ttlSettings.counterTradeTtlMinutes}
+                  onChange={(e) => handleTtlSliderChange('counterTradeTtlMinutes', parseInt(e.target.value))}
+                  className="w-full accent-rose-500 cursor-pointer"
+                />
+                <span className="text-[9.5px] text-neutral-400 block">
+                  Padrão: 60 min (1h). Absorções institucionais dissipam rápido; se não houver squeeze, cancela.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Invalidation Rules & Capital Protection */}
+          <div className="bg-[#050505] p-3.5 rounded-lg border border-white/5 space-y-3">
+            <h5 className="text-xs font-bold text-neutral-200 uppercase flex items-center gap-1.5 border-b border-white/5 pb-2">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              Regras Institucionais de Invalidação e Proteção de Capital
+            </h5>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Auto Expire Switch */}
+              <div className="p-3 bg-neutral-900/40 rounded-lg border border-white/5 flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Timer className="h-3.5 w-3.5 text-orange-400" />
+                    Auto-Expirar por TTL
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleTtlSliderChange('autoExpireEnabled', !ttlSettings.autoExpireEnabled)}
+                    className="cursor-pointer"
+                  >
+                    {ttlSettings.autoExpireEnabled ? (
+                      <ToggleRight className="h-5 w-5 text-emerald-400" />
+                    ) : (
+                      <ToggleLeft className="h-5 w-5 text-neutral-500" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-[10px] text-neutral-400">
+                  Transita o status para <strong className="text-rose-400">EXPIRED</strong> assim que o tempo de vida esgotar, liberando a margem e limpando ordens obsoletas.
+                </p>
+              </div>
+
+              {/* Adverse Invalidation */}
+              <div className="p-3 bg-neutral-900/40 rounded-lg border border-white/5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+                    Invalidação Antecipada
+                  </span>
+                  <span className="text-amber-400 font-extrabold text-xs font-mono">
+                    {ttlSettings.adverseMoveInvalidationPct.toFixed(1)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="3.0"
+                  step="0.1"
+                  value={ttlSettings.adverseMoveInvalidationPct}
+                  onChange={(e) => handleTtlSliderChange('adverseMoveInvalidationPct', parseFloat(e.target.value))}
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
+                <p className="text-[10px] text-neutral-400">
+                  Descarta o sinal se o preço romper na direção contrária antes de preencher a ordem limite na zona de entrada.
+                </p>
+              </div>
+
+              {/* Breakeven on Target 1 */}
+              <div className="p-3 bg-neutral-900/40 rounded-lg border border-white/5 flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5 text-cyan-400" />
+                    Trailing Breakeven (Alvo 1)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleTtlSliderChange('breakevenOnTarget1', !ttlSettings.breakevenOnTarget1)}
+                    className="cursor-pointer"
+                  >
+                    {ttlSettings.breakevenOnTarget1 ? (
+                      <ToggleRight className="h-5 w-5 text-emerald-400" />
+                    ) : (
+                      <ToggleLeft className="h-5 w-5 text-neutral-500" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-[10px] text-neutral-400">
+                  Ao bater o Alvo 1, move o Stop Loss para o preço de entrada (Breakeven), garantindo uma operação institucional 100% sem risco de perda.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={handleResetTtlDefaults}
+                className="px-3 py-1 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded text-[11px] font-bold transition flex items-center gap-1.5 border border-white/10 cursor-pointer"
+              >
+                <RotateCcw className="h-3 w-3 text-orange-400" />
+                Restaurar Padrões Institucionais de TTL
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Buttons Bar */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-white/10">
-          <button
-            onClick={handleResetDefaults}
-            className="px-3 py-2 bg-neutral-900 hover:bg-neutral-850 text-neutral-300 rounded text-xs font-bold transition flex items-center gap-1.5 border border-white/5 w-full sm:w-auto justify-center cursor-pointer"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Restaurar Padrões de Fábrica
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+            <button
+              onClick={handleResetDefaults}
+              className="px-3 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded text-xs font-bold transition flex items-center gap-1.5 border border-white/10 w-full sm:w-auto justify-center cursor-pointer"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Restaurar Padrões Desta Estratégia
+            </button>
+            {onNavigateToTab && (
+              <button
+                type="button"
+                onClick={() => onNavigateToTab('system_db')}
+                className="px-3 py-2 bg-rose-950/30 hover:bg-rose-900/40 text-rose-300 rounded text-xs font-bold transition flex items-center gap-1.5 border border-rose-500/30 w-full sm:w-auto justify-center cursor-pointer"
+              >
+                <Database className="h-3.5 w-3.5 text-rose-400" />
+                Database & Reset Global
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             {savedSuccess && (

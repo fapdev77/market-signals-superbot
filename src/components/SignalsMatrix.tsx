@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { TradeSignal, TickerData, AIReviewResponse, MarketType } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { TradeSignal, TickerData, AIReviewResponse, MarketType, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
+import { calculateTtlProgress, formatTtlDuration, DEFAULT_SIGNAL_TTL_SETTINGS, REGIME_PRESETS } from '../utils/signalTtlUtils';
 import { 
   Zap, 
   TrendingUp, 
@@ -21,7 +22,16 @@ import {
   Sliders,
   Sparkles,
   RotateCcw,
-  LineChart
+  LineChart,
+  Timer,
+  Shield,
+  Hourglass,
+  Gauge,
+  Target,
+  Flame,
+  Settings,
+  ShieldCheck,
+  CheckCheck
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
@@ -30,11 +40,14 @@ export type SortOption =
   | 'confidence_asc'
   | 'winrate_desc'
   | 'rr_desc'
+  | 'ttl_asc'
+  | 'ttl_desc'
   | 'newest'
   | 'oldest';
 
 export type AssetClassFilter = 'ALL' | 'crypto_futures' | 'crypto_spot' | 'tradfi';
 export type CategoryFilter = 'ALL' | 'SCALP' | 'DAY_TRADE' | 'INTRADAY' | 'SWING' | 'POSITION';
+export type LifecycleFilter = 'ALL' | 'ACTIVE' | 'NEAR_EXPIRY' | 'BREAKEVEN' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
 
 export type TriggerFilter = 
   | 'ALL'
@@ -50,22 +63,39 @@ export type TriggerFilter =
 interface SignalsMatrixProps {
   signals: TradeSignal[];
   tickers: TickerData[];
+  weights?: IndicatorWeights;
   onRequestAIReview?: (ticker: TickerData, signal?: TradeSignal) => void;
   onSelectSignal?: (signal: TradeSignal, autoRunAI?: boolean) => void;
+  onNavigateToSettings?: () => void;
 }
 
 export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
   signals = [],
   tickers = [],
+  weights,
   onRequestAIReview,
-  onSelectSignal
+  onSelectSignal,
+  onNavigateToSettings
 }) => {
   // Existing validation & direction filters
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
   const [validationFilter, setValidationFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING' | 'REJECTED'>('ALL');
   
-  // Strategy Category filter
+  // Strategy Category & Lifecycle filters
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('ALL');
+  const [lifecycleFilter, setLifecycleFilter] = useState<LifecycleFilter>('ALL');
+
+  // Real-time second clock for live TTL ticking
+  const [now, setNow] = useState<number>(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const ttlSettings = weights?.signalTtlSettings || DEFAULT_SIGNAL_TTL_SETTINGS;
+  const currentRegimeInfo = REGIME_PRESETS[ttlSettings.marketRegime] || REGIME_PRESETS.NORMAL;
 
   // New search, sort, asset class & indicator trigger filters
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -161,12 +191,60 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     return counts;
   }, [signals]);
 
+  // Institutional Lifecycle & TTL status counts
+  const lifecycleCounts = useMemo(() => {
+    const counts = {
+      ALL: (signals || []).length,
+      ACTIVE: 0,
+      NEAR_EXPIRY: 0,
+      BREAKEVEN: 0,
+      TARGET_REACHED: 0,
+      STOPPED_OUT: 0,
+      EXPIRED: 0
+    };
+    (signals || []).forEach(s => {
+      if (s.status === 'ACTIVE') counts.ACTIVE++;
+      if (s.status === 'TARGET_REACHED') counts.TARGET_REACHED++;
+      if (s.status === 'STOPPED_OUT') counts.STOPPED_OUT++;
+      if (s.status === 'EXPIRED') counts.EXPIRED++;
+      if (s.isBreakevenActive) counts.BREAKEVEN++;
+
+      const prog = calculateTtlProgress(s, ttlSettings, now);
+      if (s.status === 'ACTIVE' && prog.isNearExpiry) {
+        counts.NEAR_EXPIRY++;
+      }
+    });
+    return counts;
+  }, [signals, ttlSettings, now]);
+
+  // Institutional HUD Header Metrics
+  const hudMetrics = useMemo(() => {
+    const active = (signals || []).filter(s => s.status === 'ACTIVE');
+    const totalConf = (signals || []).reduce((acc, s) => acc + (s.confluenceScore || 0), 0);
+    const avgConf = signals.length > 0 ? Math.round(totalConf / signals.length) : 0;
+    const totalWinRate = (signals || []).reduce((acc, s) => acc + (s.backtestWinRate || 0), 0);
+    const avgWinRate = signals.length > 0 ? (totalWinRate / signals.length).toFixed(1) : '0.0';
+
+    return {
+      total: signals.length,
+      active: active.length,
+      avgConfluence: avgConf,
+      avgWinRate,
+      breakevenCount: lifecycleCounts.BREAKEVEN,
+      nearExpiryCount: lifecycleCounts.NEAR_EXPIRY,
+      targetReachedCount: lifecycleCounts.TARGET_REACHED,
+      regime: currentRegimeInfo,
+      multiplier: ttlSettings.regimeMultiplier
+    };
+  }, [signals, lifecycleCounts, currentRegimeInfo, ttlSettings]);
+
   // Has any active custom filter?
   const hasActiveFilters = 
     searchQuery.trim() !== '' ||
     sortBy !== 'confidence_desc' ||
     assetClassFilter !== 'ALL' ||
     categoryFilter !== 'ALL' ||
+    lifecycleFilter !== 'ALL' ||
     triggerFilter !== 'ALL' ||
     directionFilter !== 'ALL' ||
     validationFilter !== 'ALL';
@@ -176,6 +254,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     setSortBy('confidence_desc');
     setAssetClassFilter('ALL');
     setCategoryFilter('ALL');
+    setLifecycleFilter('ALL');
     setTriggerFilter('ALL');
     setDirectionFilter('ALL');
     setValidationFilter('ALL');
@@ -190,6 +269,19 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
       if (categoryFilter !== 'ALL') {
         const cat = s.strategyCategory || 'INTRADAY';
         if (cat !== categoryFilter) return false;
+      }
+
+      // Lifecycle / Status Filter
+      if (lifecycleFilter !== 'ALL') {
+        if (lifecycleFilter === 'ACTIVE' && s.status !== 'ACTIVE') return false;
+        if (lifecycleFilter === 'TARGET_REACHED' && s.status !== 'TARGET_REACHED') return false;
+        if (lifecycleFilter === 'STOPPED_OUT' && s.status !== 'STOPPED_OUT') return false;
+        if (lifecycleFilter === 'EXPIRED' && s.status !== 'EXPIRED') return false;
+        if (lifecycleFilter === 'BREAKEVEN' && !s.isBreakevenActive) return false;
+        if (lifecycleFilter === 'NEAR_EXPIRY') {
+          const prog = calculateTtlProgress(s, ttlSettings, now);
+          if (s.status !== 'ACTIVE' || !prog.isNearExpiry) return false;
+        }
       }
 
       // Direction Filter
@@ -220,7 +312,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
         const baseAssetMatch = ticker?.baseAsset?.toLowerCase().includes(q);
         const dirMatch = s.direction.toLowerCase().includes(q) || (s.direction === 'LONG' ? 'compra'.includes(q) : 'venda'.includes(q));
         const factorsMatch = (s.confluenceFactors || []).some(f => f.toLowerCase().includes(q));
-        const reasonMatch = (ticker?.signalReason || '').toLowerCase().includes(q) || (s.validationStage || '').toLowerCase().includes(q);
+        const reasonMatch = (ticker?.signalReason || '').toLowerCase().includes(q) || (s.validationStage || '').toLowerCase().includes(q) || (s.expirationReason || '').toLowerCase().includes(q);
 
         if (!symbolMatch && !nameMatch && !baseAssetMatch && !dirMatch && !factorsMatch && !reasonMatch) {
           return false;
@@ -244,6 +336,16 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
       if (sortBy === 'rr_desc') {
         return (b.riskRewardRatio || 0) - (a.riskRewardRatio || 0);
       }
+      if (sortBy === 'ttl_asc') {
+        const aTtl = calculateTtlProgress(a, ttlSettings, now).remainingMs;
+        const bTtl = calculateTtlProgress(b, ttlSettings, now).remainingMs;
+        return aTtl - bTtl;
+      }
+      if (sortBy === 'ttl_desc') {
+        const aTtl = calculateTtlProgress(a, ttlSettings, now).remainingMs;
+        const bTtl = calculateTtlProgress(b, ttlSettings, now).remainingMs;
+        return bTtl - aTtl;
+      }
       if (sortBy === 'newest') {
         return (b.createdAt || 0) - (a.createdAt || 0);
       }
@@ -252,7 +354,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
       }
       return 0;
     });
-  }, [signals, tickers, directionFilter, validationFilter, assetClassFilter, triggerFilter, searchQuery, sortBy]);
+  }, [signals, tickers, directionFilter, validationFilter, lifecycleFilter, assetClassFilter, triggerFilter, searchQuery, sortBy, ttlSettings, now]);
 
   const handleOpenSignalChart = async (signal: TradeSignal, autoRunAI: boolean = false) => {
     if (onSelectSignal) {
@@ -495,6 +597,171 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             🌐 Position ({categoryCounts.POSITION})
           </button>
         </div>
+
+        {/* Institutional Lifecycle & TTL Status Filter Bar */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-white/5 w-full">
+          <span className="text-[9px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+            <Timer className="h-3 w-3 text-orange-400" />
+            Ciclo de Vida:
+          </span>
+          <button
+            onClick={() => setLifecycleFilter('ALL')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'ALL'
+                ? 'bg-neutral-200 text-black font-extrabold shadow'
+                : 'bg-[#050505] text-neutral-400 hover:text-white border border-white/5'
+            }`}
+          >
+            Todas ({lifecycleCounts.ALL})
+          </button>
+          <button
+            onClick={() => setLifecycleFilter('ACTIVE')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'ACTIVE'
+                ? 'bg-emerald-500 text-black font-extrabold shadow'
+                : 'bg-[#050505] text-emerald-400 hover:text-emerald-300 border border-emerald-500/20'
+            }`}
+          >
+            🟢 Ativos ({lifecycleCounts.ACTIVE})
+          </button>
+          <button
+            onClick={() => setLifecycleFilter('NEAR_EXPIRY')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'NEAR_EXPIRY'
+                ? 'bg-amber-500 text-black font-extrabold shadow animate-pulse'
+                : 'bg-[#050505] text-amber-400 hover:text-amber-300 border border-amber-500/20'
+            }`}
+          >
+            ⏳ Expirando em Breve ({lifecycleCounts.NEAR_EXPIRY})
+          </button>
+          <button
+            onClick={() => setLifecycleFilter('BREAKEVEN')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'BREAKEVEN'
+                ? 'bg-cyan-500 text-black font-extrabold shadow'
+                : 'bg-[#050505] text-cyan-400 hover:text-cyan-300 border border-cyan-500/20'
+            }`}
+          >
+            🛡️ Breakeven Protegido ({lifecycleCounts.BREAKEVEN})
+          </button>
+          <button
+            onClick={() => setLifecycleFilter('TARGET_REACHED')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'TARGET_REACHED'
+                ? 'bg-teal-500 text-black font-extrabold shadow'
+                : 'bg-[#050505] text-teal-400 hover:text-teal-300 border border-teal-500/20'
+            }`}
+          >
+            🎯 Alvo Atingido ({lifecycleCounts.TARGET_REACHED})
+          </button>
+          <button
+            onClick={() => setLifecycleFilter('STOPPED_OUT')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'STOPPED_OUT'
+                ? 'bg-rose-500 text-white font-extrabold shadow'
+                : 'bg-[#050505] text-rose-400 hover:text-rose-300 border border-rose-500/20'
+            }`}
+          >
+            🛑 Stop Loss ({lifecycleCounts.STOPPED_OUT})
+          </button>
+          <button
+            onClick={() => setLifecycleFilter('EXPIRED')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'EXPIRED'
+                ? 'bg-neutral-500 text-white font-extrabold shadow'
+                : 'bg-[#050505] text-neutral-400 hover:text-neutral-300 border border-white/10'
+            }`}
+          >
+            ⌛ TTL Expirado ({lifecycleCounts.EXPIRED})
+          </button>
+        </div>
+      </div>
+
+      {/* Institutional Quantitative Signal HUD Ribbon */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 bg-[#080808] p-2.5 rounded-lg border border-white/10 shadow-lg text-xs">
+        <div className="bg-[#050505] p-2 rounded border border-white/5 flex flex-col justify-between">
+          <span className="text-[9px] text-neutral-500 uppercase font-bold flex items-center gap-1">
+            <Activity className="h-3 w-3 text-cyan-400" />
+            Sinais no Book
+          </span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="text-sm font-black text-white">{hudMetrics.active}</span>
+            <span className="text-[10px] text-neutral-400">/ {hudMetrics.total} tot</span>
+          </div>
+        </div>
+
+        <div className="bg-[#050505] p-2 rounded border border-white/5 flex flex-col justify-between">
+          <span className="text-[9px] text-neutral-500 uppercase font-bold flex items-center gap-1">
+            <Sparkles className="h-3 w-3 text-orange-400" />
+            Confluência Média
+          </span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="text-sm font-black text-orange-400">{hudMetrics.avgConfluence}%</span>
+            <span className="text-[9px] text-neutral-500">score</span>
+          </div>
+        </div>
+
+        <div className="bg-[#050505] p-2 rounded border border-white/5 flex flex-col justify-between">
+          <span className="text-[9px] text-neutral-500 uppercase font-bold flex items-center gap-1">
+            <ShieldCheck className="h-3 w-3 text-emerald-400" />
+            Breakeven Ativo
+          </span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="text-sm font-black text-emerald-400">{hudMetrics.breakevenCount}</span>
+            <span className="text-[9px] text-emerald-500/80 font-semibold">risco zero</span>
+          </div>
+        </div>
+
+        <div className="bg-[#050505] p-2 rounded border border-white/5 flex flex-col justify-between">
+          <span className="text-[9px] text-neutral-500 uppercase font-bold flex items-center gap-1">
+            <Timer className="h-3 w-3 text-amber-400" />
+            Expiração Próxima
+          </span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className={`text-sm font-black ${hudMetrics.nearExpiryCount > 0 ? 'text-amber-400 animate-pulse' : 'text-neutral-400'}`}>
+              {hudMetrics.nearExpiryCount}
+            </span>
+            <span className="text-[9px] text-neutral-500">&lt;20% TTL</span>
+          </div>
+        </div>
+
+        <div className="bg-[#050505] p-2 rounded border border-white/5 flex flex-col justify-between">
+          <span className="text-[9px] text-neutral-500 uppercase font-bold flex items-center gap-1">
+            <Target className="h-3 w-3 text-emerald-400" />
+            Alvos Concluídos
+          </span>
+          <div className="flex items-baseline gap-1 mt-0.5">
+            <span className="text-sm font-black text-emerald-400">{hudMetrics.targetReachedCount}</span>
+            <span className="text-[9px] text-neutral-500">histórico</span>
+          </div>
+        </div>
+
+        <div className="bg-[#050505] p-2 rounded border border-white/5 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] text-neutral-500 uppercase font-bold flex items-center gap-1">
+              <Gauge className="h-3 w-3 text-cyan-400" />
+              Regime TTL
+            </span>
+            {onNavigateToSettings && (
+              <button
+                onClick={onNavigateToSettings}
+                className="text-[8.5px] text-orange-400 hover:text-orange-300 flex items-center gap-0.5 transition cursor-pointer"
+                title="Configurar TTL em Ajustes"
+              >
+                <Settings className="h-2.5 w-2.5" />
+                Ajustar
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-1 mt-0.5">
+            <span className="text-[11px] font-black text-white truncate">
+              {hudMetrics.regime.icon} {hudMetrics.regime.shortLabel}
+            </span>
+            <span className="text-[9px] text-cyan-400 font-bold bg-cyan-500/10 px-1 rounded border border-cyan-500/20">
+              {hudMetrics.multiplier.toFixed(1)}x
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Enhanced Search & Advanced Filter Bar */}
@@ -535,6 +802,8 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             >
               <option value="confidence_desc" className="bg-[#0A0A0A] text-white">Score de Confluência (Maior → Menor)</option>
               <option value="confidence_asc" className="bg-[#0A0A0A] text-white">Score de Confluência (Menor → Maior)</option>
+              <option value="ttl_asc" className="bg-[#0A0A0A] text-white">⏳ Validade TTL (Expirando Primeiro)</option>
+              <option value="ttl_desc" className="bg-[#0A0A0A] text-white">⏳ Validade TTL (Maior Tempo Restante)</option>
               <option value="winrate_desc" className="bg-[#0A0A0A] text-white">Win Rate Backtest (Maior → Menor)</option>
               <option value="rr_desc" className="bg-[#0A0A0A] text-white">Ratio Risco:Retorno (Melhor R:R)</option>
               <option value="newest" className="bg-[#0A0A0A] text-white">Mais Recentes</option>
@@ -743,17 +1012,76 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
               </span>
             );
 
+            const ttl = calculateTtlProgress(s, ttlSettings, now);
+
             return (
               <div
                 key={s.id}
-                className={`bg-[#0A0A0A] rounded-lg border p-3 hover:border-neutral-700 transition shadow-md relative ${
-                  s.validationStatus === 'CONFIRMED'
-                    ? 'border-emerald-500/30'
+                className={`rounded-lg border p-3 hover:border-neutral-700 transition shadow-md relative ${
+                  s.status === 'TARGET_REACHED'
+                    ? 'border-emerald-500/50 bg-[#06120a]'
+                    : s.status === 'STOPPED_OUT'
+                    ? 'border-rose-500/40 bg-[#140808]'
+                    : s.status === 'EXPIRED'
+                    ? 'border-neutral-800 bg-[#080808] opacity-85'
+                    : s.isBreakevenActive
+                    ? 'border-cyan-500/40 bg-[#060d14] shadow-cyan-950/20'
+                    : s.validationStatus === 'CONFIRMED'
+                    ? 'border-emerald-500/30 bg-[#0A0A0A]'
                     : s.validationStatus === 'REJECTED_SPIKE'
-                    ? 'border-rose-500/30 opacity-75'
-                    : 'border-amber-500/30'
+                    ? 'border-rose-500/30 bg-[#0A0A0A] opacity-75'
+                    : 'border-amber-500/30 bg-[#0A0A0A]'
                 }`}
               >
+                {/* Institutional Lifecycle Status Banner */}
+                {s.status === 'TARGET_REACHED' && (
+                  <div className="mb-2 px-2.5 py-1 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-between text-[10px] font-extrabold shadow-sm">
+                    <span className="flex items-center gap-1.5">
+                      <Target className="h-3.5 w-3.5 text-emerald-400" />
+                      ALVO 2 ATINGIDO (+100% EXPANSÃO DE LUCRO) · TRADE CONCLUÍDO
+                    </span>
+                    <span className="text-[9px] text-emerald-300 font-mono">
+                      {s.expirationReason || 'Meta técnica cumprida'}
+                    </span>
+                  </div>
+                )}
+
+                {s.status === 'STOPPED_OUT' && (
+                  <div className="mb-2 px-2.5 py-1 rounded bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-between text-[10px] font-extrabold shadow-sm">
+                    <span className="flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />
+                      {s.isBreakevenActive ? 'STOP LOSS NO BREAKEVEN EXECUTADO (CAPITAL PRESERVADO)' : 'STOP LOSS EXECUTADO (INVALIDAÇÃO TÉCNICA)'}
+                    </span>
+                    <span className="text-[9px] text-rose-300 font-mono">
+                      {s.expirationReason || 'Invalidação técnica da estrutura'}
+                    </span>
+                  </div>
+                )}
+
+                {s.status === 'EXPIRED' && (
+                  <div className="mb-2 px-2.5 py-1 rounded bg-neutral-800/70 border border-neutral-700 text-neutral-300 flex items-center justify-between text-[10px] font-extrabold shadow-sm">
+                    <span className="flex items-center gap-1.5">
+                      <Hourglass className="h-3.5 w-3.5 text-amber-400" />
+                      SINAL EXPIRADO (DECAIMENTO TEMPORAL DE ALPHA / TTL)
+                    </span>
+                    <span className="text-[9px] text-neutral-400 font-mono">
+                      {s.expirationReason || 'Tempo de vida útil esgotado'}
+                    </span>
+                  </div>
+                )}
+
+                {s.status === 'ACTIVE' && s.isBreakevenActive && (
+                  <div className="mb-2 px-2.5 py-1 rounded bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center justify-between text-[10px] font-extrabold shadow-sm">
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5 text-cyan-400" />
+                      BREAKEVEN ATIVO: Alvo 1 Realizado (+50%) · Stop movido para a entrada
+                    </span>
+                    <span className="text-[9px] text-cyan-400 font-bold bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                      RISCO ZERO
+                    </span>
+                  </div>
+                )}
+
                 <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
                   {/* Left Info Column */}
                   <div className="space-y-1.5 w-full lg:w-1/3">
@@ -978,6 +1306,53 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                           </div>
                         </Tooltip>
                       )}
+
+                      {/* Institutional TTL Lifespan Widget */}
+                      <div className="border-t border-white/5 pt-1.5 space-y-1">
+                        <div className="flex items-center justify-between text-[9px]">
+                          <span className="text-neutral-400 flex items-center gap-1">
+                            <Timer className={`h-3 w-3 ${ttl.isExpired ? 'text-neutral-500' : ttl.isNearExpiry ? 'text-rose-400 animate-pulse' : 'text-amber-400'}`} />
+                            <strong className="text-neutral-400 uppercase text-[8.5px]">Validade (TTL):</strong>
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className={`font-black ${
+                              ttl.isExpired
+                                ? 'text-neutral-500'
+                                : ttl.isNearExpiry
+                                ? 'text-rose-400 animate-pulse'
+                                : ttl.percentRemaining > 50
+                                ? 'text-emerald-400'
+                                : 'text-amber-400'
+                            }`}>
+                              {ttl.isExpired ? 'EXPIRADO' : ttl.formattedRemaining}
+                            </span>
+                            <span className="text-[8px] text-neutral-500">
+                              ({ttl.percentRemaining}% alpha)
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Lifespan Gauge Bar */}
+                        <div className="w-full bg-neutral-900 h-1.5 rounded-full overflow-hidden border border-white/5">
+                          <div
+                            className={`h-full transition-all duration-300 rounded-full ${
+                              ttl.isExpired
+                                ? 'bg-neutral-700'
+                                : ttl.percentRemaining > 50
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                                : ttl.percentRemaining > 20
+                                ? 'bg-gradient-to-r from-amber-500 to-orange-400'
+                                : 'bg-gradient-to-r from-rose-500 to-red-500 animate-pulse'
+                            }`}
+                            style={{ width: `${ttl.percentRemaining}%` }}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between text-[8px] text-neutral-500">
+                          <span>Base: {formatTtlDuration(ttl.effectiveTtlMinutes)}</span>
+                          <span>Regime: {currentRegimeInfo.shortLabel} ({ttlSettings.regimeMultiplier.toFixed(1)}x)</span>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Confluence Factors with dynamic trigger highlight */}
@@ -1029,16 +1404,30 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
 
                         <Tooltip
                           position="top"
-                          title="Stop Loss & Risco Máximo"
-                          badge="STOP"
-                          content="Ponto de invalidação técnica da tese, posicionado além do suporte/resistência ou extremidade do Order Block."
+                          title={s.isBreakevenActive ? "Stop Loss no Breakeven (Risco Zero)" : "Stop Loss & Risco Máximo"}
+                          badge={s.isBreakevenActive ? "BREAKEVEN" : "STOP"}
+                          content={
+                            s.isBreakevenActive
+                              ? "O Stop Loss foi elevado automaticamente para o preço de entrada após atingir o Alvo 1. O trade não tem mais risco de perda de capital."
+                              : "Ponto de invalidação técnica da tese, posicionado além do suporte/resistência ou extremidade do Order Block."
+                          }
                         >
                           <div className="cursor-help">
-                            <span className="text-[9px] text-rose-400 uppercase block font-bold">Stop Loss (% Risco)</span>
-                            <span className="font-extrabold text-rose-400 block">{formatPrice(stop, { currency: true })}</span>
-                            <span className="text-[9px] font-bold text-rose-400 bg-rose-500/10 px-1 rounded border border-rose-500/20 inline-block mt-0.5">
-                              -{metrics.riskPct.toFixed(2)}%
+                            <span className={`text-[9px] uppercase block font-bold ${s.isBreakevenActive ? 'text-cyan-400' : 'text-rose-400'}`}>
+                              {s.isBreakevenActive ? '🛡️ Stop Breakeven' : 'Stop Loss (% Risco)'}
                             </span>
+                            <span className={`font-extrabold block ${s.isBreakevenActive ? 'text-cyan-300' : 'text-rose-400'}`}>
+                              {formatPrice(stop, { currency: true })}
+                            </span>
+                            {s.isBreakevenActive ? (
+                              <span className="text-[9px] font-bold text-cyan-300 bg-cyan-500/20 px-1 rounded border border-cyan-500/30 inline-block mt-0.5">
+                                0.00% RISCO
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-bold text-rose-400 bg-rose-500/10 px-1 rounded border border-rose-500/20 inline-block mt-0.5">
+                                -{metrics.riskPct.toFixed(2)}%
+                              </span>
+                            )}
                           </div>
                         </Tooltip>
 

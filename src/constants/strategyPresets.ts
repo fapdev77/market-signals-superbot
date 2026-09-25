@@ -1,4 +1,5 @@
-import { StrategyKey, StrategyConfigItem, IndicatorWeights, StrategyCategory } from '../types';
+import { StrategyKey, StrategyConfigItem, IndicatorWeights, StrategyCategory } from '../types.js';
+import { DEFAULT_SIGNAL_TTL_SETTINGS } from '../utils/signalTtlUtils.js';
 
 export const ALL_STRATEGY_KEYS: StrategyKey[] = ['scalp', 'daytrade', 'intraday', 'swing', 'position', 'counter'];
 
@@ -136,6 +137,7 @@ export function getDefaultIndicatorWeights(): IndicatorWeights {
     multiStrategyMode: true,
     enabledStrategies: ['scalp', 'daytrade', 'intraday', 'swing', 'position', 'counter'],
     strategyConfigs: getDefaultStrategyConfigs(),
+    signalTtlSettings: DEFAULT_SIGNAL_TTL_SETTINGS,
     volumeSurgeWeight: 15,
     openInterestWeight: 20,
     fundingRateWeight: 10,

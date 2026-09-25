@@ -273,3 +273,93 @@ Painel centralizado e tabela unificada que expande o sistema de alarmes de preç
    - Avalia continuamente as cotações em tempo real de todos os ativos da carteira (`allTickers`).
    - Dispara tons sonoros sintetizados via Web Audio API (`playSignalTone`) e notificações na Área de Trabalho (`Notification API`) mesmo quando o usuário estiver analisando outro gráfico.
 
+---
+
+## 13. Matriz de Sinais Institucional & HUD de Métricas em Tempo Real (`SignalsMatrix.tsx`)
+
+### O que é?
+A **Matriz de Sinais** é o centro nervoso da aplicação, onde todas as oportunidades geradas pelas estratégias concorrentes (*Scalp, Day Trade, Intraday, Swing Trade, Position Trade e Contra-Trade*) são organizadas em formato de cartões de alta densidade informativa com padrão visual de terminais institucionais.
+
+### Principais Recursos
+1. **HUD Superior Institucional:**
+   * **Sinais no Book:** Contagem em tempo real de sinais ativos vs. total histórico.
+   * **Confluência Média:** Score ponderado médio de todas as oportunidades.
+   * **Breakeven Ativo:** Total de trades protegidos com risco zero.
+   * **Expiração Próxima:** Alarme visual de sinais com menos de 20% de TTL restante.
+   * **Alvos Concluídos:** Histórico de metas de Take Profit alcançadas com sucesso.
+   * **Regime TTL Ativo:** Indicador visual do regime de volatilidade atual (*Calmo, Padrão, Agitado, Extremo*) com botão direto para a aba de Ajustes.
+2. **Barra de Filtros por Ciclo de Vida:**
+   * `Todas as Fases` | `🟢 Ativos` | `⏳ Expirando em Breve` | `🛡️ Breakeven Protegido` | `🎯 Alvo Atingido` | `🛑 Stop Loss` | `⌛ TTL Expirado`
+3. **Gauges de Decaimento de Alpha (TTL) nos Cards:**
+   * Relógio ao vivo com contagem regressiva segundo a segundo (`⏳ 14m 20s restando`).
+   * Barra de progresso visual gradiente com transição de cores (Verde $\rightarrow$ Âmbar $\rightarrow$ Vermelho pulsante).
+   * Exibição do multiplicador ativo e regime de mercado aplicado.
+4. **Banners de Status & Invalidação:**
+   * Banners destacados em verde para **Alvo 2 Atingido (+100% de Lucro)**, vermelho para **Stop Loss Acionado**, cinza para **TTL Expirado** e ciano para **Stop no Breakeven Protegido (0.00% de Risco)**.
+
+---
+
+## 14. Radar de Traders Presos (*Trapped Traders Radar*) (`TrappedTradersRadar.tsx`)
+
+### O que é?
+Módulo quantitativo que analisa o cruzamento de **CVD de agressão** com **quebra de máximas/mínimas** e **Open Interest** para identificar zonas onde traders de varejo foram induzidos a entrar e ficaram presos (*trapped longs / trapped shorts*).
+
+### Mecânica Operacional
+* **Trapped Longs (Compradores Presos no Topo):** Ocorre quando há forte agressão compradora no topo, mas o preço rejeita e cai, forçando esses compradores a stoparem ou serem liquidados na descida.
+* **Trapped Shorts (Vendedores Presos no Fundo):** Ocorre quando há forte agressão vendedora no rompimento de suporte, mas o preço absorve e sobe, gerando combustível para um *short squeeze*.
+
+---
+
+## 15. Monitor de Divergências RSI Automatizado (`RSIDivergenceMonitor.tsx`)
+
+### O que é?
+Scanner em tempo real que monitora simultaneamente todos os ativos em busca de:
+1. **Divergência de Alta Regular (Bullish Regular):** Preço faz fundos mais baixos enquanto o RSI faz fundos mais altos (sinal de esgotamento vendedor).
+2. **Divergência de Baixa Regular (Bearish Regular):** Preço faz topos mais altos enquanto o RSI faz topos mais baixos (sinal de esgotamento comprador).
+3. **Divergências Ocultas (Hidden Divergences):** Sinais de continuação da tendência estrutural primária.
+
+---
+
+## 16. Painel de Gestão e Exposição de Risco (`RiskExposureDashboard.tsx`)
+
+### O que é?
+Ferramenta de nível institucional para mensurar o risco global da carteira consolidada de trades:
+* **Value at Risk (VaR 95% e VaR 99% Paramétrico / Histórico):** Perda máxima estimada dentro de um horizonte temporal de 24h.
+* **Concentração Setorial de Risco:** Gráfico de pizza/rosca mapeando a alocação entre Layer 1, DeFi, IA, Memecoins e TradFi.
+* **Stress Test Macro:** Simulações de choque de mercado (-10% no BTC, alta de juros, flash crash).
+
+---
+
+## 17. Dimensionamento de Posição & Critério de Kelly (`PositionSizerCalculator.tsx`)
+
+### O que é?
+Calculadora institucional para determinação do lote exato a ser aberto em cada operação com base na fórmula de gerenciamento de banca:
+$$\text{Tamanho do Lote} = \frac{\text{Capital da Conta} \times \text{Risco Desejado (\%)}}{|\text{Preço de Entrada} - \text{Preço de Stop Loss}|}$$
+
+Fornece ainda o cálculo pelo **Critério de Kelly Fracionário (Half Kelly / Quarter Kelly)** para otimizar a curva de crescimento de capital.
+
+---
+
+## 18. Auto-Tuner Quantitativo de Estratégias (`StrategyAutoTuner.tsx`)
+
+### O que é?
+Otimizador baseado em **Algoritmos Genéticos** e **Backtest Walk-Forward** que simula milhares de combinações de pesos de indicadores para encontrar a calibração com maior *Sharpe Ratio*, menor *Drawdown* e maior *Taxa de Acerto (Win Rate)* para o histórico recente de mercado.
+
+---
+
+## 19. Simulador de Paper Trading & Sandbox (`PaperTradingSandbox.tsx`)
+
+### O que é?
+Ambiente de simulação em tempo real onde o operador pode testar as estratégias do robô com saldo virtual fictício ($100.000 USD), executando ordens a mercado ou limites e monitorando o PnL não-realizado, taxa de acerto e curva de equidade ao vivo.
+
+---
+
+## 20. Diagnóstico do Sistema, Banco de Dados & Factory Reset (`SystemDatabaseSettings.tsx`)
+
+### O que é?
+Painel integrado na aba **Ajustes** que fornece métricas transparentes sobre a persistência no SQLite:
+* Contagem de linhas das tabelas `trade_signals`, `market_snapshots`, `ai_audit_reports` e `indicator_weights`.
+* Exibição do tamanho do arquivo `.sqlite` em KB e MB.
+* Botão de desfragmentação **VACUUM** para liberação de espaço em disco.
+* Botão de **Reset Global / Padrão de Fábrica** com 3 níveis de confirmação de segurança.
+

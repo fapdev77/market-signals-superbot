@@ -310,6 +310,14 @@ export const Header: React.FC<HeaderProps> = ({
           desc: 'Ajuste de pesos para confluência de Delta CVD, Open Interest, Funding Rate e Otimizador Genético.'
         },
         {
+          id: 'system_db',
+          label: 'Database & Reset Global',
+          icon: Database,
+          badge: 'SQLITE',
+          highlight: true,
+          desc: 'Telemetria do banco SQLite, contagem de registros, compactação VACUUM e restauração de fábrica.'
+        },
+        {
           id: 'binance_logs',
           label: 'Logs API & WebSocket',
           icon: Wifi,

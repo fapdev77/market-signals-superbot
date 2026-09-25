@@ -77,11 +77,26 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     { id: 'chart', label: 'Análise Técnica & Volume Profile', icon: LineChart, tab: 'chart', shortcut: '8' },
     { id: 'backtest', label: 'Backtest Estatístico', icon: Database, tab: 'backtest', shortcut: '9' },
     { id: 'counter_radar', label: 'Contra-Trade Radar (TTI) — Net Longs/Shorts & Trapped Traders', icon: Target, tab: 'counter_radar', shortcut: '0' },
-    { id: 'settings', label: 'Pesos de Confluência & Estratégias', icon: SlidersHorizontal, tab: 'settings' }
+    { id: 'settings', label: 'Pesos de Confluência & Estratégias', icon: SlidersHorizontal, tab: 'settings' },
+    { id: 'system_db', label: 'Central de Database & Reset Global (Padrão de Fábrica)', icon: Database, tab: 'system_db' }
   ];
 
   // Action Commands
   const actionCommands = [
+    {
+      id: 'action_database_inspect',
+      label: 'Inspecionar Tabelas e Armazenamento SQLite / LocalStorage',
+      icon: Database,
+      action: () => onNavigateToTab('system_db'),
+      tag: 'DATABASE'
+    },
+    {
+      id: 'action_factory_reset',
+      label: 'Restaurar Sistema para Padrão de Fábrica (Reset Global)',
+      icon: Database,
+      action: () => onNavigateToTab('system_db'),
+      tag: 'RESET'
+    },
     {
       id: 'action_autotune',
       label: 'Executar Auto-Tuning de Estratégia (Max Sharpe Ratio)',

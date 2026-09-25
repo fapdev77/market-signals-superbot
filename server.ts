@@ -5,12 +5,13 @@ import { createServer as createViteServer } from 'vite';
 import { DEFAULT_SYMBOLS, TRADFI_ASSETS, fetchBinanceFuturesTickers, fetchOpenInterest, fetchFundingRate, fetchKlines, fetchLongShortRatio } from './server/binanceService.js';
 import { initBinanceWebSocket, getWebSocketStatus } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
-import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels } from './server/db.js';
+import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels, expireStaleSignals } from './server/db.js';
 import { marketScreener } from './server/services/MarketScreenerService.js';
 import { TickerData, BotState, IndicatorWeights, StrategyCategory } from './src/types.js';
 import { createMarketRouter } from './server/routes/marketRoutes.js';
 import { createAIRouter } from './server/routes/aiRoutes.js';
 import { createBacktestRouter } from './server/routes/backtestRoutes.js';
+import { createSystemRouter } from './server/routes/systemRoutes.js';
 import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
 import { getBenchmarkPrice, generateRealisticTicker } from './src/utils/benchmarkPrices.js';
 
@@ -200,6 +201,9 @@ async function startServer() {
     isMarketTickRunning = true;
 
     try {
+      // Periodic institutional TTL sweep across all active signals
+      await expireStaleSignals();
+
       // 1. Fetch live Binance Futures 24h Tickers
       const activeSymbols = marketScreener.getMonitoredSymbols();
       const rawFutures = await fetchBinanceFuturesTickers(activeSymbols);
@@ -243,25 +247,77 @@ async function startServer() {
 
             tickerStateCache[symbol] = processed;
 
-            // Target / Stop Loss tracker for existing active signals of this symbol across all categories
+            // Target, Stop Loss & Institutional TTL Tracker for existing active signals
             const allActiveForSymbol = await getActiveSignalsBySymbol(symbol);
+            const now = Date.now();
+            const ttlSettings = weights.signalTtlSettings;
+            const autoExpire = ttlSettings?.autoExpireEnabled !== false;
+            const adverseInvalidationPct = ttlSettings?.adverseMoveInvalidationPct || 1.2;
+            const breakevenEnabled = ttlSettings?.breakevenOnTarget1 !== false;
+
             for (const active of allActiveForSymbol) {
               const currentPrice = processed.price;
               active.currentPrice = currentPrice;
+
+              // 1. Time-To-Live (TTL) Check
+              if (active.expiresAt && now > active.expiresAt && autoExpire) {
+                active.status = 'EXPIRED';
+                active.expirationReason = 'TTL Expirado (Tempo Limite Atingido)';
+                await updateSignal(active);
+                continue;
+              }
+
+              // 2. Technical Invalidation: Adverse movement before fill / entry
+              const entryLow = Math.min(active.entryZone[0], active.entryZone[1]);
+              const entryHigh = Math.max(active.entryZone[0], active.entryZone[1]);
+
               if (active.direction === 'LONG') {
+                const maxAdverseDrop = entryLow * (1 - (adverseInvalidationPct / 100));
+                if (currentPrice < maxAdverseDrop && currentPrice > active.stopLoss) {
+                  active.status = 'EXPIRED';
+                  active.expirationReason = `Invalidação Técnica Antecipada (Movimento Adverso -${adverseInvalidationPct}%)`;
+                  await updateSignal(active);
+                  continue;
+                }
+
+                // 3. Targets and Stop Loss
                 if (currentPrice >= active.target2) {
                   active.status = 'TARGET_REACHED';
+                  active.expirationReason = 'Alvo 2 Atingido (+100% Expansão)';
                   await updateSignal(active);
                 } else if (currentPrice <= active.stopLoss) {
                   active.status = 'STOPPED_OUT';
+                  active.expirationReason = active.isBreakevenActive ? 'Stop no Breakeven Atingido (Trade Protegido)' : 'Stop Loss Atingido';
+                  await updateSignal(active);
+                } else if (currentPrice >= active.target1 && !active.isBreakevenActive && breakevenEnabled) {
+                  // Institutional partial profit taking + trailing stop to entry
+                  active.isBreakevenActive = true;
+                  active.stopLoss = entryLow;
+                  active.validationStage = 'Alvo 1 Atingido (+50% Realizado) · Stop em Breakeven Protegido';
                   await updateSignal(active);
                 }
-              } else {
+              } else { // SHORT
+                const maxAdverseRally = entryHigh * (1 + (adverseInvalidationPct / 100));
+                if (currentPrice > maxAdverseRally && currentPrice < active.stopLoss) {
+                  active.status = 'EXPIRED';
+                  active.expirationReason = `Invalidação Técnica Antecipada (Movimento Adverso +${adverseInvalidationPct}%)`;
+                  await updateSignal(active);
+                  continue;
+                }
+
                 if (currentPrice <= active.target2) {
                   active.status = 'TARGET_REACHED';
+                  active.expirationReason = 'Alvo 2 Atingido (+100% Expansão)';
                   await updateSignal(active);
                 } else if (currentPrice >= active.stopLoss) {
                   active.status = 'STOPPED_OUT';
+                  active.expirationReason = active.isBreakevenActive ? 'Stop no Breakeven Atingido (Trade Protegido)' : 'Stop Loss Atingido';
+                  await updateSignal(active);
+                } else if (currentPrice <= active.target1 && !active.isBreakevenActive && breakevenEnabled) {
+                  // Institutional partial profit taking + trailing stop to entry
+                  active.isBreakevenActive = true;
+                  active.stopLoss = entryHigh;
+                  active.validationStage = 'Alvo 1 Atingido (+50% Realizado) · Stop em Breakeven Protegido';
                   await updateSignal(active);
                 }
               }
@@ -293,7 +349,8 @@ async function startServer() {
                   stratKlines,
                   strat.minRiskRewardRatio,
                   strat.category,
-                  strat.timeframe
+                  strat.timeframe,
+                  weights.signalTtlSettings
                 );
 
                 if (potentialSignal) {
@@ -318,12 +375,13 @@ async function startServer() {
                         } else if (active.validationStatus === 'REJECTED_SPIKE' || active.validationStatus === 'REJECTED_BACKTEST') {
                           active.rejectedAt = Date.now();
                           active.status = 'EXPIRED';
+                          active.expirationReason = 'Spike Rejeitado no Filtro 1m/5m';
                         }
                         await updateSignal(active);
                       }
                     } else {
                       // Direction changed within this category! The old signal of this category is expired
-                      await updateSignalStatus(active.id, 'EXPIRED');
+                      await updateSignalStatus(active.id, 'EXPIRED', 'Inversão Direcional de Mercado');
                     }
                   }
 
@@ -443,6 +501,7 @@ async function startServer() {
   app.use('/api', createMarketRouter(getBotState, getTickerCache, triggerMarketScan));
   app.use('/api/ai', createAIRouter(getBotState, getTickerCache));
   app.use('/api/backtest', createBacktestRouter(getBotState));
+  app.use('/api/system', createSystemRouter(getBotState, triggerMarketScan));
 
   // VITE MIDDLEWARE (Dev) / STATIC FILES (Prod)
   if (process.env.NODE_ENV !== 'production') {

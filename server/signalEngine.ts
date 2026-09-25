@@ -1,7 +1,8 @@
-import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData } from '../src/types.js';
+import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData, SignalTtlSettings } from '../src/types.js';
 import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis } from './binanceService.js';
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
+import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
 
 export function normalizePricePrecision(value: number | null | undefined): number {
   if (value === null || value === undefined || isNaN(value)) return 0;
@@ -403,7 +404,8 @@ export function buildTradeSignal(
   klines: KlineCandle[] = [],
   minRiskRewardRatio: number = 2.5,
   strategyCategory: StrategyCategory = 'INTRADAY',
-  customTimeframe?: string
+  customTimeframe?: string,
+  ttlSettings?: SignalTtlSettings
 ): TradeSignal | null {
   if (ticker.signalType === 'NEUTRAL' || ticker.confluenceScore < 50) {
     return null;
@@ -571,8 +573,12 @@ export function buildTradeSignal(
     validationStage = 'VALIDADO: Confluência Direct-Market';
   }
 
+  const now = Date.now();
+  const effectiveTtl = calculateEffectiveTtlMinutes(strategyCategory, ttlSettings || DEFAULT_SIGNAL_TTL_SETTINGS);
+  const expiresAt = now + (effectiveTtl * 60 * 1000);
+
   return {
-    id: `${ticker.symbol}-${categoryPrefix}-${ticker.signalType}-${Date.now().toString(36)}`,
+    id: `${ticker.symbol}-${categoryPrefix}-${ticker.signalType}-${now.toString(36)}`,
     symbol: ticker.symbol,
     marketType: ticker.marketType,
     signalType: ticker.signalType,
@@ -599,9 +605,12 @@ export function buildTradeSignal(
       rejectionReason
     },
 
-    createdAt: Date.now(),
-    validatedAt: validationStatus === 'CONFIRMED' ? Date.now() : undefined,
-    rejectedAt: validationStatus === 'REJECTED_SPIKE' ? Date.now() : undefined,
+    createdAt: now,
+    validatedAt: validationStatus === 'CONFIRMED' ? now : undefined,
+    rejectedAt: validationStatus === 'REJECTED_SPIKE' ? now : undefined,
+    ttlMinutes: effectiveTtl,
+    expiresAt,
+    isBreakevenActive: false,
     status: 'ACTIVE'
   };
 }

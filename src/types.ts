@@ -217,7 +217,29 @@ export interface TradeSignal {
   createdAt: number;                // Data e hora de identificação do sinal
   validatedAt?: number;             // Data e hora de validação/confirmação
   rejectedAt?: number;              // Data e hora de rejeição/descarte
+  ttlMinutes?: number;              // Duração do TTL configurada em minutos
+  expiresAt?: number;               // Timestamp exato em que o sinal perde validade (createdAt + ttl)
+  expirationReason?: string;        // Razão de encerramento (ex: "TTL Expirado", "Stop Loss", "Alvo 2", "Invalidação Técnica")
+  isBreakevenActive?: boolean;      // True se atingiu Alvo 1 e o Stop Loss foi movido para o preço de entrada
   status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
+}
+
+export type MarketRegimeType = 'CALM' | 'NORMAL' | 'VOLATILE' | 'EXTREME';
+
+export interface SignalTtlSettings {
+  scalpTtlMinutes: number;         // default 25 min (Scalp 5m)
+  dayTradeTtlMinutes: number;      // default 90 min (Day Trade 15m)
+  intradayTtlMinutes: number;      // default 240 min / 4h (Intraday 30m)
+  swingTtlMinutes: number;         // default 1440 min / 24h (Swing 1h/4h)
+  positionTtlMinutes: number;      // default 4320 min / 72h (Position 4h/1d)
+  counterTradeTtlMinutes: number;  // default 60 min / 1h (Contra-Trade TTI)
+  customTtlMinutes: number;        // default 120 min
+
+  marketRegime: MarketRegimeType;  // CALM (1.5x), NORMAL (1.0x), VOLATILE (0.6x), EXTREME (0.4x)
+  regimeMultiplier: number;        // Multiplicador contínuo de fine-tuning (0.3x a 2.5x)
+  autoExpireEnabled: boolean;      // Se true, o motor expira automaticamente sinais que ultrapassam o TTL
+  adverseMoveInvalidationPct: number; // Invalidação prévia se o preço se afastar adversamente (ex: 1.2%)
+  breakevenOnTarget1: boolean;     // Se true, move Stop Loss para Breakeven ao atingir Alvo 1
 }
 
 export type StrategyKey = 'scalp' | 'daytrade' | 'intraday' | 'swing' | 'position' | 'counter' | 'custom';
@@ -248,6 +270,7 @@ export interface IndicatorWeights {
   multiStrategyMode?: boolean;       // Se true, roda todas as estratégias habilitadas concorrentemente
   enabledStrategies?: StrategyKey[];  // Lista de estratégias ativas em paralelo no motor
   strategyConfigs?: Partial<Record<StrategyKey, StrategyConfigItem>>;
+  signalTtlSettings?: SignalTtlSettings; // Configuração e fine-tuning institucional de TTL
   volumeSurgeWeight: number;        // default 15
   openInterestWeight: number;       // default 20
   fundingRateWeight: number;        // default 10
@@ -945,6 +968,51 @@ export interface PaperAccountState {
   settings: PaperTradingSettings;
   lastUpdatedAt: number;
 }
+
+// ============================================
+// SYSTEM & DATABASE INSPECTOR TYPES
+// ============================================
+
+export interface SystemTableInfo {
+  name: string;
+  rowCount: number;
+  description: string;
+  columns: string[];
+  estimatedSizeBytes: number;
+  isClearable: boolean;
+}
+
+export interface SystemDatabaseStats {
+  filePath: string;
+  fileName: string;
+  fileSizeBytes: number;
+  fileSizeFormatted: string;
+  sqliteVersion: string;
+  pageCount: number;
+  pageSize: number;
+  integrity: string;
+  tables: SystemTableInfo[];
+  totalRows: number;
+  system: {
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    rssBytes: number;
+    uptimeSeconds: number;
+    nodeVersion: string;
+  };
+  timestamp: number;
+}
+
+export interface ClientStorageItem {
+  key: string;
+  label: string;
+  category: 'paper_trading' | 'alerts' | 'layout' | 'preferences' | 'cache' | 'other';
+  sizeBytes: number;
+  sizeFormatted: string;
+  itemCount?: number;
+  previewSummary: string;
+}
+
 
 
 

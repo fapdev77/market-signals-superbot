@@ -207,7 +207,7 @@ export function createAIRouter(
     if (!targetSignal) {
       const weights = await getIndicatorWeights();
       const isShort = ticker.signalType.includes('SHORT');
-      targetSignal = buildTradeSignal(ticker, [], weights.minRiskRewardRatio) || {
+      targetSignal = buildTradeSignal(ticker, [], weights.minRiskRewardRatio, 'INTRADAY', '30m', weights.signalTtlSettings) || {
         id: `${symbol}-CUSTOM-${Date.now()}`,
         symbol,
         marketType: ticker.marketType,
