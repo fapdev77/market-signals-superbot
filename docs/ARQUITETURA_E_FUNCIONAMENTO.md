@@ -236,7 +236,7 @@ Ao solicitar auditoria de sinal (`/api/ai/review`):
 O frontend foi construído utilizando **React 19**, **TypeScript** e **Tailwind CSS**, organizado de forma modular:
 
 * **`SignalsMatrix.tsx`:** Renderização da matriz institucional de sinais, HUD de métricas, controles de filtro por ciclo de vida e gauges de decaimento de TTL.
-* **`ChartAndProfile.tsx`:** Gráfico interativo de velas com camadas de POC, VAH, VAL, FVGs e níveis operacionais.
+* **`ChartAndProfile.tsx`:** Gráfico interativo com seletor multi-timeframe dinâmico (1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d, 1w), recálculo automático em tempo real de Retração de Fibonacci + Golden Pocket e camadas de Market Profile (VAH, VAL, POC e Área de Valor de 70%), além de Order Flow, Volume Delta e Depth.
 * **`StrategySettings.tsx`:** Painel de configuração de pesos, ativador multi-estratégia, sliders de TTL, seleção de regimes de volatilidade e ferramentas de diagnóstico do SQLite.
 * **`RiskExposureDashboard.tsx`:** Métricas de VaR, concentração de portfólio e matriz de correlação cruzada.
 * **`PositionSizerCalculator.tsx`:** Calculadora de dimensionamento de lote baseada em risco financeiro e Critério de Kelly.

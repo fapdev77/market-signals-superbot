@@ -69,6 +69,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [volumeProfileSide, setVolumeProfileSide] = useState<'right' | 'left'>('right');
   const [showDetailedVolumeProfile, setShowDetailedVolumeProfile] = useState<boolean>(false);
   const [showVolumeDeltaGauge, setShowVolumeDeltaGauge] = useState<boolean>(true);
+  const [fibOverlayEnabled, setFibOverlayEnabled] = useState<boolean>(true);
+  const [valueAreaOverlayEnabled, setValueAreaOverlayEnabled] = useState<boolean>(true);
   const [activeFibLevels, setActiveFibLevels] = useState<{
     fib0?: number;
     fib236: number;
@@ -627,6 +629,31 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     );
   };
 
+  const { domainMin, domainMax, priceRange } = useMemo(() => {
+    const target = slicedData.length > 0 ? slicedData : chartData;
+    if (!target.length) return { domainMin: 0, domainMax: 1, priceRange: 1 };
+    const rawMin = Math.min(...target.map(d => d.low));
+    const rawMax = Math.max(...target.map(d => d.high));
+    const pad = (rawMax - rawMin) * 0.03 || 1;
+    const min = rawMin - pad;
+    const max = rawMax + pad;
+    return { domainMin: min, domainMax: max, priceRange: max - min || 1 };
+  }, [slicedData, chartData]);
+
+  const heatmapData = useMemo(() => {
+    const target = slicedData.length > 0 ? slicedData : chartData;
+    if (!target.length || !ticker) {
+      return { buckets: [], pocBucket: null, topSupplyCluster: null, topDemandCluster: null, maxBucketVolume: 0 };
+    }
+    return calculateLiquidityHeatmap(target, ticker.price, heatmapBucketCount);
+  }, [slicedData, chartData, ticker?.price, heatmapBucketCount]);
+
+  const volumeProfileData = useMemo(() => {
+    const target = slicedData.length > 0 ? slicedData : chartData;
+    if (!target.length || !ticker) return null;
+    return calculateVolumeProfile(target, volumeProfileBins, 0.70);
+  }, [slicedData, chartData, ticker?.symbol, volumeProfileBins]);
+
   const defaultFib = ticker.fibonacci || {
     fib0: 0,
     fib236: 0,
@@ -652,7 +679,91 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const price = ticker.price ?? 0;
   const changePct = ticker.priceChangePercent24h ?? 0;
 
+  // Dynamic Volume Profile (VAH, VAL, POC) synchronized to the active timeframe
+  const dynamicVolumeProfile = volumeProfileData;
+  const dynamicVah = dynamicVolumeProfile?.vah ?? range.vah;
+  const dynamicVal = dynamicVolumeProfile?.val ?? range.val;
+  const dynamicPoc = dynamicVolumeProfile?.poc ?? range.poc;
+  const isInsideValueArea = dynamicVal > 0 && dynamicVah > 0 && price >= dynamicVal && price <= dynamicVah;
+  const isAboveVah = dynamicVah > 0 && price > dynamicVah;
+  const isBelowVal = dynamicVal > 0 && price < dynamicVal;
+
+  const renderMarketProfileOverlay = () => {
+    if (!valueAreaOverlayEnabled || (!dynamicPoc && !dynamicVah && !dynamicVal)) return null;
+
+    return (
+      <React.Fragment key="market-profile-overlay">
+        {/* Shaded 70% Value Area Range for Selected Timeframe */}
+        {dynamicVal > 0 && dynamicVah > 0 && dynamicVah > dynamicVal && (
+          <ReferenceArea
+            y1={dynamicVal}
+            y2={dynamicVah}
+            {...({
+              fill: "#06b6d4",
+              fillOpacity: 0.04,
+              stroke: "#06b6d4",
+              strokeOpacity: 0.25,
+              strokeDasharray: "2 2"
+            } as any)}
+          />
+        )}
+
+        {/* VAH Line (Value Area High) */}
+        {dynamicVah > 0 && (
+          <ReferenceLine
+            y={dynamicVah}
+            stroke="#38bdf8"
+            strokeDasharray="3 3"
+            strokeWidth={1.2}
+            label={{
+              value: `VAH (${timeframe}) • ${formatPrice(dynamicVah, { currency: true })}`,
+              fill: '#38bdf8',
+              fontSize: 9,
+              fontWeight: 700,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* POC Line (Point of Control) */}
+        {dynamicPoc > 0 && (
+          <ReferenceLine
+            y={dynamicPoc}
+            stroke="#06b6d4"
+            strokeDasharray="4 2"
+            strokeWidth={1.8}
+            label={{
+              value: `POC (${timeframe}) • ${formatPrice(dynamicPoc, { currency: true })}`,
+              fill: '#06b6d4',
+              fontSize: 9,
+              fontWeight: 800,
+              position: 'insideRight'
+            }}
+          />
+        )}
+
+        {/* VAL Line (Value Area Low) */}
+        {dynamicVal > 0 && (
+          <ReferenceLine
+            y={dynamicVal}
+            stroke="#38bdf8"
+            strokeDasharray="3 3"
+            strokeWidth={1.2}
+            label={{
+              value: `VAL (${timeframe}) • ${formatPrice(dynamicVal, { currency: true })}`,
+              fill: '#38bdf8',
+              fontSize: 9,
+              fontWeight: 700,
+              position: 'insideRight'
+            }}
+          />
+        )}
+      </React.Fragment>
+    );
+  };
+
   const renderFibonacciOverlay = () => {
+    if (!fibOverlayEnabled) return null;
     const p1 = fib.point1Price || (fib.trend === 'DOWN' ? fib.swingHigh : fib.swingLow);
     const p0 = fib.point0Price || (fib.trend === 'DOWN' ? fib.swingLow : fib.swingHigh);
     const p1Type = fib.point1Type || (fib.trend === 'DOWN' ? 'HH' : 'LL');
@@ -719,7 +830,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             strokeDasharray="2 2"
             strokeWidth={1.2}
             label={{
-              value: `0.68 (${formatPrice(fib.fib68, { currency: true })})`,
+              value: `0.68 (GP ${timeframe}) • ${formatPrice(fib.fib68, { currency: true })}`,
               fill: '#ffffff',
               fontSize: 9,
               fontWeight: 700,
@@ -736,7 +847,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             strokeDasharray="3 3"
             strokeWidth={1.5}
             label={{
-              value: `0.618 (${formatPrice(fib.fib618, { currency: true })})`,
+              value: `0.618 (GP ${timeframe}) • ${formatPrice(fib.fib618, { currency: true })}`,
               fill: '#facc15',
               fontSize: 9,
               fontWeight: 800,
@@ -753,7 +864,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             strokeDasharray="3 3"
             strokeWidth={1}
             label={{
-              value: `0.50 (${formatPrice(fib.fib50, { currency: true })})`,
+              value: `0.50 • ${formatPrice(fib.fib50, { currency: true })}`,
               fill: '#06b6d4',
               fontSize: 9,
               position: 'insideRight'
@@ -812,31 +923,6 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
       </React.Fragment>
     );
   };
-
-  const { domainMin, domainMax, priceRange } = useMemo(() => {
-    const target = slicedData.length > 0 ? slicedData : chartData;
-    if (!target.length) return { domainMin: 0, domainMax: 1, priceRange: 1 };
-    const rawMin = Math.min(...target.map(d => d.low));
-    const rawMax = Math.max(...target.map(d => d.high));
-    const pad = (rawMax - rawMin) * 0.03 || 1;
-    const min = rawMin - pad;
-    const max = rawMax + pad;
-    return { domainMin: min, domainMax: max, priceRange: max - min || 1 };
-  }, [slicedData, chartData]);
-
-  const heatmapData = useMemo(() => {
-    const target = slicedData.length > 0 ? slicedData : chartData;
-    if (!target.length || !ticker) {
-      return { buckets: [], pocBucket: null, topSupplyCluster: null, topDemandCluster: null, maxBucketVolume: 0 };
-    }
-    return calculateLiquidityHeatmap(target, ticker.price, heatmapBucketCount);
-  }, [slicedData, chartData, ticker?.price, heatmapBucketCount]);
-
-  const volumeProfileData = useMemo(() => {
-    const target = slicedData.length > 0 ? slicedData : chartData;
-    if (!target.length || !ticker) return null;
-    return calculateVolumeProfile(target, volumeProfileBins, 0.70);
-  }, [slicedData, chartData, ticker?.symbol, volumeProfileBins]);
 
   const chartHeightPx = 240;
 
@@ -1440,21 +1526,42 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               {formatPrice(price, { currency: true })}
               {loading && <RefreshCw className="h-4 w-4 text-neutral-500 animate-spin" />}
             </div>
-            <span className={`text-xs font-bold ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {changePct >= 0 ? '▲ ' : '▼ '}{formatPercent(changePct)} (24h)
-            </span>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={`text-xs font-bold ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {changePct >= 0 ? '▲ ' : '▼ '}{formatPercent(changePct)} (24h)
+              </span>
+              <span className="text-[10px] text-neutral-500 font-mono">•</span>
+              <span className="text-[10px] text-cyan-400 font-bold font-mono">
+                TF Ativo: {timeframe.toUpperCase()}
+              </span>
+            </div>
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
-            {/* Timeframe Selector */}
-            <div className="flex items-center bg-[#050505] rounded border border-white/5 p-0.5 shadow-inner">
-              {['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
+            {/* Timeframe Selector with Prominent Toggle Buttons */}
+            <div className="flex items-center bg-[#050505] rounded-lg border border-white/10 p-0.5 shadow-inner">
+              {[
+                { tf: '1m', label: '1M', desc: 'Scalping Ultra-Rápido' },
+                { tf: '3m', label: '3M', desc: 'Scalp Médio' },
+                { tf: '5m', label: '5M', desc: 'Day Trade Rápido' },
+                { tf: '15m', label: '15M', desc: 'Intraday Principal' },
+                { tf: '30m', label: '30M', desc: 'Intraday Expandido' },
+                { tf: '1h', label: '1H', desc: 'Swing Trade Horário' },
+                { tf: '4h', label: '4H', desc: 'Tendência 4 Horas' },
+                { tf: '1d', label: '1D', desc: 'Diário Macro' },
+                { tf: '1w', label: '1W', desc: 'Semanal Institucional' }
+              ].map(item => (
                 <button
-                  key={tf}
-                  onClick={() => setTimeframe(tf)}
-                  className={`px-2 py-1 rounded text-[10px] font-bold transition ${timeframe === tf ? 'bg-orange-500 text-black shadow-sm' : 'text-neutral-500 hover:text-white'}`}
+                  key={item.tf}
+                  onClick={() => setTimeframe(item.tf)}
+                  title={`${item.label} - ${item.desc}`}
+                  className={`px-2 py-1 rounded text-[10px] font-bold transition flex items-center gap-0.5 ${
+                    timeframe === item.tf
+                      ? 'bg-orange-500 text-black shadow-sm font-black'
+                      : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                  }`}
                 >
-                  {tf.toUpperCase()}
+                  {item.label}
                 </button>
               ))}
             </div>
@@ -1601,34 +1708,63 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 <AlertSoundSettingsMenu />
               </div>
             )}
-
-            {/* Golden Pocket Banner */}
-            <AppTooltip
-              position="bottom"
-              title="Retração de Fibonacci & Golden Pocket"
-              badge={`FIBO ${fib.trend === 'DOWN' ? 'Baixa (HH 1 → LL 0)' : 'Alta (LL 1 → HH 0)'}`}
-              content="Traçado TradingView: ponto 1 (HH na baixa / LL na alta) até o ponto 0 (LL na baixa / HH na alta). Golden Pocket entre os níveis 0.618 e 0.68."
-            >
-              <div className={`px-2.5 py-1 rounded border text-[10px] font-bold flex items-center gap-1.5 cursor-help ${
-                fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 border-orange-500/40 animate-pulse' : 'bg-neutral-900 text-neutral-400 border-white/10'
-              }`}>
-                <Flame className="h-3.5 w-3.5 text-orange-400" />
-                <span>
-                  {fib.inGoldenPocket
-                    ? `🔥 NA ZONA GOLDEN POCKET (${fib.trend === 'DOWN' ? 'HH 1 ➔ LL 0' : 'LL 1 ➔ HH 0'})`
-                    : `FIBO ${fib.trend === 'DOWN' ? 'BAIXA (HH 1 ➔ LL 0)' : 'ALTA (LL 1 ➔ HH 0)'}`}
-                </span>
-                {fib.fib618 > 0 && fib.fib68 > 0 && (
-                  <span className="text-[9px] text-yellow-400 font-mono bg-yellow-400/10 px-1.5 py-0.2 rounded border border-yellow-400/20">
-                    GP: {formatPrice(Math.min(fib.fib618, fib.fib68))} - {formatPrice(Math.max(fib.fib618, fib.fib68))}
-                  </span>
-                )}
-              </div>
-            </AppTooltip>
           </div>
         </div>
 
-        {/* Liquidity Heatmap & Volume Profile Overlay Badges & Controls */}
+        {/* Dynamic Multi-Timeframe HUD Status Strip (Fibonacci & Market Profile VAH/VAL/POC Synchronization) */}
+        <div className="bg-[#050505] p-2.5 rounded-lg border border-white/10 flex flex-wrap items-center justify-between gap-2.5 text-[10px] font-mono shadow-md">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Active Timeframe Badge */}
+            <div className="flex items-center gap-1.5 bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded border border-orange-500/20 font-bold">
+              <Clock className="h-3.5 w-3.5" />
+              <span>TIMEFRAME: {timeframe.toUpperCase()}</span>
+              <span className="text-[9px] text-neutral-400 font-normal">
+                ({slicedData.length || chartData.length}v carregadas)
+              </span>
+            </div>
+
+            {/* Dynamic Market Profile (VAH / POC / VAL) Real-Time Levels */}
+            <div className="flex items-center gap-2 bg-[#0A0A0A] px-2.5 py-0.5 rounded border border-cyan-500/20">
+              <Layers className="h-3.5 w-3.5 text-cyan-400" />
+              <span className="text-neutral-400 font-bold">Market Profile ({timeframe}):</span>
+              <span className="text-cyan-300 font-bold">VAH: {formatPrice(dynamicVah)}</span>
+              <span className="text-neutral-500">|</span>
+              <span className="text-cyan-400 font-black">POC: {formatPrice(dynamicPoc)}</span>
+              <span className="text-neutral-500">|</span>
+              <span className="text-cyan-300 font-bold">VAL: {formatPrice(dynamicVal)}</span>
+              <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
+                isInsideValueArea
+                  ? 'bg-cyan-500/20 text-cyan-300'
+                  : isAboveVah
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-rose-500/20 text-rose-300'
+              }`}>
+                {isInsideValueArea ? 'Na Value Area' : isAboveVah ? 'Acima do VAH' : 'Abaixo do VAL'}
+              </span>
+            </div>
+
+            {/* Dynamic Fibonacci Retracement & Golden Pocket Status */}
+            <div className="flex items-center gap-2 bg-[#0A0A0A] px-2.5 py-0.5 rounded border border-orange-500/20">
+              <Flame className="h-3.5 w-3.5 text-orange-400" />
+              <span className="text-neutral-400 font-bold">Fibonacci ({timeframe}):</span>
+              <span className="text-neutral-300">
+                {fib.trend === 'DOWN' ? 'Baixa (HH 1 ➔ LL 0)' : 'Alta (LL 1 ➔ HH 0)'}
+              </span>
+              {fib.fib618 > 0 && fib.fib68 > 0 && (
+                <span className="text-yellow-400 font-bold bg-yellow-400/10 px-1 py-0.2 rounded border border-yellow-400/20">
+                  GP: {formatPrice(Math.min(fib.fib618, fib.fib68))} - {formatPrice(Math.max(fib.fib618, fib.fib68))}
+                </span>
+              )}
+              <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
+                fib.inGoldenPocket ? 'bg-orange-500/20 text-orange-400 animate-pulse' : 'bg-neutral-900 text-neutral-400'
+              }`}>
+                {fib.inGoldenPocket ? '🔥 No Golden Pocket' : 'Fora da Zona'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Liquidity Heatmap, Volume Profile, Fibonacci & Value Area Overlay Badges & Controls */}
         <div className="flex flex-wrap items-center justify-between gap-2.5">
           <LiquidityHeatmapBadge
             heatmapData={heatmapData}
@@ -1638,8 +1774,60 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             onChangeBucketCount={(cnt) => setHeatmapBucketCount(cnt)}
           />
 
-          {/* Volume Profile & Volume Delta Controls */}
+          {/* Volume Profile, Fibonacci, Value Area & Volume Delta Controls */}
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+            {/* Toggle Fibonacci Overlay on Chart */}
+            <AppTooltip
+              position="top"
+              title={`Overlay de Fibonacci (${timeframe.toUpperCase()})`}
+              badge={fibOverlayEnabled ? "FIBO ATIVO NO GRÁFICO" : "FIBO OCULTO"}
+              content="Exibe as linhas de retração de Fibonacci e a área sombreada do Golden Pocket (0.618 - 0.68) calculadas dinamicamente para o timeframe atual."
+            >
+              <button
+                type="button"
+                onClick={() => setFibOverlayEnabled(!fibOverlayEnabled)}
+                className={`px-2.5 py-1 rounded-lg border font-bold transition flex items-center gap-1.5 ${
+                  fibOverlayEnabled
+                    ? 'bg-orange-500/20 text-orange-300 border-orange-500/40 shadow-xs'
+                    : 'bg-[#050505] text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Flame className={`h-3.5 w-3.5 ${fibOverlayEnabled ? 'text-orange-400' : 'text-neutral-500'}`} />
+                <span>Fibo Overlay ({timeframe.toUpperCase()})</span>
+                {fib.fib618 > 0 && (
+                  <span className="text-[9px] bg-yellow-400/20 text-yellow-300 px-1 py-0.2 rounded font-bold">
+                    0.618 {formatPrice(fib.fib618)}
+                  </span>
+                )}
+              </button>
+            </AppTooltip>
+
+            {/* Toggle Value Area & VAH/VAL/POC Lines on Chart */}
+            <AppTooltip
+              position="top"
+              title={`Área de Valor VAH / VAL / POC (${timeframe.toUpperCase()})`}
+              badge={valueAreaOverlayEnabled ? "VAH/VAL/POC ATIVO" : "OCULTO"}
+              content="Exibe as linhas de referência de VAH (Value Area High), POC (Point of Control) e VAL (Value Area Low) juntamente com a faixa sombreada de 70% de volume para o timeframe selecionado."
+            >
+              <button
+                type="button"
+                onClick={() => setValueAreaOverlayEnabled(!valueAreaOverlayEnabled)}
+                className={`px-2.5 py-1 rounded-lg border font-bold transition flex items-center gap-1.5 ${
+                  valueAreaOverlayEnabled
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-xs'
+                    : 'bg-[#050505] text-neutral-400 border-white/10 hover:text-white'
+                }`}
+              >
+                <Target className={`h-3.5 w-3.5 ${valueAreaOverlayEnabled ? 'text-cyan-400' : 'text-neutral-500'}`} />
+                <span>VAH/VAL/POC ({timeframe.toUpperCase()})</span>
+                {dynamicPoc > 0 && (
+                  <span className="text-[9px] bg-cyan-400/20 text-cyan-300 px-1 py-0.2 rounded font-bold">
+                    POC {formatPrice(dynamicPoc)}
+                  </span>
+                )}
+              </button>
+            </AppTooltip>
+
             {/* Toggle Volume Profile On Chart */}
             <AppTooltip
               position="top"
@@ -1658,11 +1846,6 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
               >
                 <Layers className={`h-3.5 w-3.5 ${volumeProfileEnabled ? 'text-cyan-400 animate-pulse' : 'text-neutral-500'}`} />
                 <span>Volume Profile (VP)</span>
-                {volumeProfileData?.poc && (
-                  <span className="text-[9px] bg-cyan-400/20 text-cyan-300 px-1 py-0.2 rounded font-bold">
-                    POC {formatPrice(volumeProfileData.poc)}
-                  </span>
-                )}
               </button>
             </AppTooltip>
 
@@ -1783,7 +1966,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           )}
           {loading ? (
             <div className="h-full flex items-center justify-center text-neutral-500 text-xs">
-              <RefreshCw className="h-5 w-5 animate-spin mr-2" /> Carregando gráfico...
+              <RefreshCw className="h-5 w-5 animate-spin mr-2" /> Carregando gráfico ({timeframe.toUpperCase()})...
             </div>
           ) : chartType === 'line' ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -1800,11 +1983,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
                 {/* Liquidity Heatmap Overlay Reference Areas */}
                 <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
-                {/* Fibonacci Retracement Levels & Golden Pocket Overlay */}
+                {/* Dynamic Value Area & VAH / VAL / POC Overlay */}
+                {renderMarketProfileOverlay()}
+                {/* Dynamic Fibonacci Retracement Levels & Golden Pocket Overlay */}
                 {renderFibonacciOverlay()}
-                {range.poc > 0 && (
-                  <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
-                )}
                 {/* Active Signal / AI Review targets */}
                 {(aiReview?.takeProfit1 || activeSignal?.target1) && (
                    <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />
@@ -1899,11 +2081,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }} />
                 {/* Liquidity Heatmap Overlay Reference Areas */}
                 <LiquidityHeatmapReferenceAreas heatmapData={heatmapData} visible={heatmapEnabled} />
-                {/* Fibonacci Retracement Levels & Golden Pocket Overlay */}
+                {/* Dynamic Value Area & VAH / VAL / POC Overlay */}
+                {renderMarketProfileOverlay()}
+                {/* Dynamic Fibonacci Retracement Levels & Golden Pocket Overlay */}
                 {renderFibonacciOverlay()}
-                {range.poc > 0 && (
-                  <ReferenceLine y={range.poc} stroke="#06b6d4" strokeDasharray="2 2" label={{ value: `POC Range (${formatPrice(range.poc, { currency: true })})`, fill: '#06b6d4', fontSize: 9 }} />
-                )}
                 {/* Active Signal / AI Review targets */}
                 {(aiReview?.takeProfit1 || activeSignal?.target1) && (
                    <ReferenceLine y={aiReview?.takeProfit1 || activeSignal?.target1} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Alvo', fill: '#10b981', fontSize: 9 }} />

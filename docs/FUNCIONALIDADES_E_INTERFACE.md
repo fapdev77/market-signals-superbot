@@ -363,3 +363,23 @@ Painel integrado na aba **Ajustes** que fornece métricas transparentes sobre a 
 * Botão de desfragmentação **VACUUM** para liberação de espaço em disco.
 * Botão de **Reset Global / Padrão de Fábrica** com 3 níveis de confirmação de segurança.
 
+---
+
+## 21. Seletor Multi-Timeframe Dinâmico com Sincronização de Fibonacci & VAH/VAL/POC (`ChartAndProfile.tsx`)
+
+### O que é?
+Sistema de alternância multi-timeframe de alta precisão que permite aos traders comutar instantaneamente entre múltiplos tempos gráficos (**1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d, 1w**) para o mesmo ativo monitorado. A cada troca de timeframe, o sistema recalcula em tempo real e sincroniza diretamente no gráfico:
+1. **Retração de Fibonacci & Golden Pocket Dinâmicos:**
+   - Detecção automática de topos (*Swing High* / HH) e fundos (*Swing Low* / LL) para a série temporal do timeframe selecionado.
+   - Projeção de todos os níveis padrão TradingView: `1.000` (Início), `0.786`, `0.680` (Golden Pocket Ext), `0.618` (Golden Pocket Core), `0.500` (Equilíbrio), `0.382`, `0.236` e `0.000` (Fim).
+   - Zona sombreada do Golden Pocket com identificação em tempo real se a cotação está na zona áurea.
+2. **Market Profile & Value Area Dinâmicos (VAH, VAL, POC):**
+   - **Point of Control (POC):** Nível de preço com o maior volume negociado nas velas do timeframe ativo.
+   - **Value Area High (VAH) & Value Area Low (VAL):** Limites superior e inferior da faixa que concentra 70% de todo o volume negociado no tempo gráfico.
+   - **Banda Sombreada da Value Area (70%):** Destaque translúcido no gráfico delimitando a zona de aceitação institucional de valor.
+   - Indicador de regime situacional: *Na Value Area*, *Acima do VAH (Expansão Alta)* ou *Abaixo do VAL (Desconto/Rompimento Baixa)*.
+3. **Controles de Visibilidade & HUD de Status:**
+   - Botões de alternância direta no toolbar do gráfico para ativar/ocultar o **Overlay de Fibonacci** e a **Área de Valor VAH/VAL/POC**.
+   - Barra de status HUD dedicada exibindo o timeframe ativo, contagem de velas carregadas e os valores numéricos exatos de VAH, POC, VAL e Golden Pocket.
+
+

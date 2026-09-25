@@ -561,6 +561,9 @@ export const FibonacciCard: React.FC<FibonacciCardProps> = ({
             </h3>
           </div>
           <div className="flex items-center gap-2">
+            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-orange-500/10 text-orange-400 border border-orange-500/30">
+              {timeframe.toUpperCase()}
+            </span>
             <span className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase border flex items-center gap-1 ${
               fibMetrics.trend === 'DOWN'
                 ? 'bg-rose-500/10 text-rose-300 border-rose-500/20'
@@ -585,12 +588,12 @@ export const FibonacciCard: React.FC<FibonacciCardProps> = ({
           onClick={() => { setFibMode('chart'); setIsCustomEditing(false); }}
           className={`py-1 px-1.5 rounded font-bold transition flex items-center justify-center gap-1 truncate ${
             fibMode === 'chart'
-              ? 'bg-orange-500 text-black shadow'
+              ? 'bg-orange-500 text-black shadow font-black'
               : 'text-neutral-400 hover:text-white'
           }`}
-          title="Calcula Fibonacci com base nas velas visíveis no gráfico atual"
+          title={`Calcula Fibonacci com base nas velas visíveis no gráfico de ${timeframe}`}
         >
-          Gráfico ({swings.candlesCount}v)
+          Gráfico ({swings.candlesCount}v • {timeframe})
         </button>
 
         <button

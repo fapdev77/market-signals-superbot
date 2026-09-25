@@ -88,15 +88,20 @@ export const VolumeProfileCard: React.FC<VolumeProfileCardProps> = ({
             <Layers className="h-4 w-4 text-cyan-400" />
             <h3 className="text-xs font-bold text-white uppercase tracking-wide">Volume Profile do Range</h3>
           </div>
-          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase border ${
-            inValueArea 
-              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
-              : aboveVAH
-              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-              : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-          }`}>
-            {inValueArea ? 'Na Value Area' : aboveVAH ? 'Acima do VAH' : 'Abaixo do VAL'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+              {timeframe.toUpperCase()}
+            </span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase border ${
+              inValueArea 
+                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                : aboveVAH
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+            }`}>
+              {inValueArea ? 'Na Value Area' : aboveVAH ? 'Acima do VAH' : 'Abaixo do VAL'}
+            </span>
+          </div>
         </div>
 
         {/* Toggle de Modo: Gráfico Visível vs Motor do Bot */}
