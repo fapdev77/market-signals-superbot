@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
-import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders, Layers, BarChart3 } from 'lucide-react';
+import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders, Layers, BarChart3, FileText } from 'lucide-react';
+import { AIReviewPromptModal } from './AIReviewPromptModal';
 import { MarketProfileMetrics, VolumeProfileCard, OrderFlowFundingCard, DivergenceStructureCard } from './MarketProfileMetrics';
 import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
@@ -54,6 +55,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const [loading, setLoading] = useState(false);
   const [aiReview, setAiReview] = useState<AIReviewResponse | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
+  const [showPromptModal, setShowPromptModal] = useState<boolean>(false);
   const [timeframe, setTimeframe] = useState('15m');
   const [chartType, setChartType] = useState<'line' | 'candles'>('line');
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -1133,6 +1135,23 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
             <AppTooltip
               position="left"
+              title="Conferir & Personalizar Prompt"
+              badge="PREVIEW"
+              content="Veja na íntegra o prompt montado pelo robô, adicione observações do trader ou edite o texto livremente antes de enviar à IA."
+            >
+              <button
+                type="button"
+                onClick={() => setShowPromptModal(true)}
+                disabled={loadingReview}
+                className="px-3 py-2 bg-[#050505] hover:bg-neutral-900 text-orange-400 border border-orange-500/30 hover:border-orange-500/60 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-md cursor-pointer disabled:opacity-50"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span>Conferir Prompt</span>
+              </button>
+            </AppTooltip>
+
+            <AppTooltip
+              position="left"
               title={aiReview ? "Re-Executar Auditoria de IA" : "Executar Auditoria IA do Ativo"}
               badge="AUDIT"
               content="Envia os dados de Orderflow, Volume Profile, Suporte/Resistência e Médias para o motor de IA avaliar o risco/retorno atual."
@@ -1153,6 +1172,24 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
             </AppTooltip>
           </div>
         </div>
+
+        {/* Modal for Prompt Preview & Customization before Sending */}
+        {showPromptModal && ticker && (
+          <AIReviewPromptModal
+            isOpen={showPromptModal}
+            onClose={() => setShowPromptModal(false)}
+            ticker={ticker}
+            signal={activeSignal}
+            activeModels={activeModels}
+            selectedModel={selectedModel}
+            onChangeModel={setSelectedModel}
+            selectedPersona={selectedPersona}
+            onChangePersona={setSelectedPersona}
+            onReviewComplete={(review) => {
+              setAiReview(review);
+            }}
+          />
+        )}
 
         {/* AI Reasoning Header if AI Review exists */}
         {aiReview && (

@@ -672,26 +672,15 @@ export async function generateContentWithModel(
   throw new Error(`Provedor de IA não suportado: ${provider}`);
 }
 
-/**
- * AI Real-time Signal Review ("Revisão em tempo real")
- */
-export async function reviewSignalWithAI(
+export function buildSignalReviewPrompt(
   ticker: TickerData,
   signal: TradeSignal,
-  requestedModel?: string,
-  aiAnalysisEnabled: boolean = true,
-  availableModels: AIModelConfig[] = [],
-  personaId?: string
-): Promise<AIReviewResponse> {
-  if (!aiAnalysisEnabled) {
-    return getFallbackSignalReview(ticker, signal, 'IA Desativada');
-  }
-
+  personaId?: string,
+  customNotes?: string
+): string {
   const persona = getAIPersonaById(personaId);
-  const modelChain = getOrderedModelChain(requestedModel, availableModels);
-  let lastErrorMsg = '';
 
-  const prompt = `Act as an elite quantitative trader adopting the following specific trading persona:
+  let prompt = `Act as an elite quantitative trader adopting the following specific trading persona:
 [PERSONA SELECIONADA: ${persona.name}]
 ${persona.systemPromptAddendum}
 Tolerância a Risco: ${persona.riskTolerance}
@@ -716,9 +705,13 @@ Live Market Metrics:
 - CVD Total Acumulado: $${ticker.cvd.toLocaleString()} (${ticker.cvdDirection}) | Delta Recente: $${(ticker.cvdDelta ?? 0).toLocaleString()} (${(ticker.cvdDeltaPercent ?? 0) > 0 ? '+' : ''}${ticker.cvdDeltaPercent ?? 0}% Taker Delta)
 - Taker Buy Ratio: ${(ticker.takerBuyRatio * 100).toFixed(1)}%
 - Golden Pocket 0.618-0.68 Fib: [${formatPriceString(ticker.fibonacci?.fib68)} - ${formatPriceString(ticker.fibonacci?.fib618)}]
-- Volume Profile Range: VAL ${formatPriceString(ticker.rangeProfile?.val)} | POC ${formatPriceString(ticker.rangeProfile?.poc)} | VAH ${formatPriceString(ticker.rangeProfile?.vah)}
+- Volume Profile Range: VAL ${formatPriceString(ticker.rangeProfile?.val)} | POC ${formatPriceString(ticker.rangeProfile?.poc)} | VAH ${formatPriceString(ticker.rangeProfile?.vah)}`;
 
-Instructions:
+  if (customNotes && customNotes.trim()) {
+    prompt += `\n\nTrader's Additional Operational Context & Notes:\n${customNotes.trim()}`;
+  }
+
+  prompt += `\n\nInstructions:
 1. Validate whether this setup is high probability or if there is hidden liquidity risk.
 2. CRITICAL TRADING EXECUTION RULES FOR NUMERICAL VALUES:
    - For SHORT signals: Stop Loss MUST be HIGHER than the entry price (stopLoss > entryMax). Take Profits MUST be LOWER than the entry price (takeProfit2 < takeProfit1 < entryMin).
@@ -726,6 +719,33 @@ Instructions:
 3. PRECISION FOR MICRO-VALUE ASSETS:
    - For assets with values < 1 (e.g. PEPE, SHIB, BONK), output exact decimal numbers with full decimal precision (e.g. 0.00001234). Do NOT round them to 0 or 0.00.
 4. Provide your response as JSON.`;
+
+  return prompt;
+}
+
+/**
+ * AI Real-time Signal Review ("Revisão em tempo real")
+ */
+export async function reviewSignalWithAI(
+  ticker: TickerData,
+  signal: TradeSignal,
+  requestedModel?: string,
+  aiAnalysisEnabled: boolean = true,
+  availableModels: AIModelConfig[] = [],
+  personaId?: string,
+  customNotes?: string,
+  customPromptOverride?: string
+): Promise<AIReviewResponse> {
+  if (!aiAnalysisEnabled) {
+    return getFallbackSignalReview(ticker, signal, 'IA Desativada');
+  }
+
+  const modelChain = getOrderedModelChain(requestedModel, availableModels);
+  let lastErrorMsg = '';
+
+  const prompt = (customPromptOverride && customPromptOverride.trim())
+    ? customPromptOverride.trim()
+    : buildSignalReviewPrompt(ticker, signal, personaId, customNotes);
 
   for (const targetModelConfig of modelChain) {
     try {

@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader } from '../aiMotor.js';
+import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader, buildSignalReviewPrompt } from '../aiMotor.js';
 import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
 import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights, getSignalById, getSignalsByDateRange, seedHistoricalSignalsIfEmpty } from '../db.js';
 import { buildTradeSignal, normalizePricePrecision } from '../signalEngine.js';
 import { TickerData, TradeSignal, BotState } from '../../src/types.js';
+import { getAIPersonaById } from '../../src/constants/aiPersonas.js';
 import { safeFetch } from '../utils/safeFetch.js';
 
 export function createAIRouter(
@@ -188,7 +189,7 @@ export function createAIRouter(
 
   // Trigger AI Signal Review for a specific symbol & signal
   router.post('/review', async (req: Request, res: Response) => {
-    const { symbol, model, personaId, signalId, signal: clientSignal } = req.body;
+    const { symbol, model, personaId, signalId, signal: clientSignal, customNotes, customPromptOverride } = req.body;
     const tickerCache = getTickerCache();
     const botState = getBotState();
     const ticker = tickerCache[symbol];
@@ -234,8 +235,75 @@ export function createAIRouter(
       };
     }
 
-    const review = await reviewSignalWithAI(ticker, targetSignal, model, botState.aiAnalysisEnabled, botState.aiModels, personaId);
+    const review = await reviewSignalWithAI(
+      ticker,
+      targetSignal,
+      model,
+      botState.aiAnalysisEnabled,
+      botState.aiModels,
+      personaId,
+      customNotes,
+      customPromptOverride
+    );
     res.json(review);
+  });
+
+  // Preview Prompt before sending to AI
+  router.post('/review/preview-prompt', async (req: Request, res: Response) => {
+    const { symbol, personaId, signalId, signal: clientSignal, customNotes } = req.body;
+    const tickerCache = getTickerCache();
+    const ticker = tickerCache[symbol];
+    if (!ticker) {
+      return res.status(404).json({ error: 'Ticker not found' });
+    }
+
+    let targetSignal: TradeSignal | null = null;
+    if (signalId) {
+      targetSignal = await getSignalById(signalId);
+    }
+    if (!targetSignal && clientSignal && clientSignal.symbol === symbol) {
+      targetSignal = clientSignal;
+    }
+
+    if (!targetSignal) {
+      const weights = await getIndicatorWeights();
+      const isShort = ticker.signalType.includes('SHORT');
+      targetSignal = buildTradeSignal(ticker, [], weights.minRiskRewardRatio, 'INTRADAY', '30m', weights.signalTtlSettings) || {
+        id: `${symbol}-CUSTOM-${Date.now()}`,
+        symbol,
+        marketType: ticker.marketType,
+        signalType: ticker.signalType,
+        direction: isShort ? 'SHORT' : 'LONG',
+        entryZone: [
+          normalizePricePrecision(isShort ? ticker.price : ticker.price * 0.998),
+          normalizePricePrecision(isShort ? ticker.price * 1.002 : ticker.price)
+        ],
+        currentPrice: normalizePricePrecision(ticker.price),
+        stopLoss: normalizePricePrecision(isShort ? ticker.price * 1.015 : ticker.price * 0.985),
+        target1: normalizePricePrecision(isShort ? ticker.price * 0.98 : ticker.price * 1.02),
+        target2: normalizePricePrecision(isShort ? ticker.price * 0.96 : ticker.price * 1.04),
+        riskRewardRatio: 2.2,
+        confluenceScore: ticker.confluenceScore,
+        confluenceFactors: ticker.confluenceFactors,
+        timeframe: '1m / 5m / 15m',
+        validationStatus: 'CONFIRMED',
+        validationStage: 'VALIDADO: Auditoria IA Solicitada',
+        candle1mConfirmed: true,
+        candle5mConfirmed: true,
+        createdAt: Date.now(),
+        status: 'ACTIVE'
+      };
+    }
+
+    const persona = getAIPersonaById(personaId);
+    const prompt = buildSignalReviewPrompt(ticker, targetSignal, personaId, customNotes);
+    res.json({
+      success: true,
+      prompt,
+      persona,
+      symbol,
+      signal: targetSignal
+    });
   });
 
   // Trigger Deep Strategic Market Audit
