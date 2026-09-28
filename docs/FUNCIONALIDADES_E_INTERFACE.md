@@ -68,12 +68,27 @@ Mapeia agrupamentos de liquidez institucional e zonas de liquidação de futuros
 
 ---
 
-## 4. Auditoria de IA Multimodelo (`AIModelsConfigDashboard.tsx`)
+## 4. Auditoria de IA Multimodelo & Modal de Pré-Visualização (`PromptPreviewModal.tsx`)
 
-Permite alternar e comparar dinamicamente múltiplos modelos de inteligência artificial do Google Gemini:
-- **Gemini 3.6 Flash:** Otimizado para baixa latência, auditoria de scalping e geração de pareceres táticos em sub-segundo.
-- **Gemini 3.5 Flash:** Modelo de alta estabilidade e balanceamento analítico.
-- Configuração de temperatura, top-p, cotas de requisição e persistência das calibrações no servidor Node.js/Express.
+### O que é?
+O **PromptPreviewModal** é o centro de controle pré-disparo da auditoria de IA. Ao clicar em *"Auditar com IA"* (na Matriz de Sinais ou no Gráfico) ou em *"Conferir Prompt"*, o robô não executa às cegas: ele abre este modal para que o operador possa inspecionar o prompt completo, adicionar notas contextuais ou executar imediatamente com um clique.
+
+### Principais Recursos
+1. **Seletor de Provedor & Modelo de IA em Tempo Real:**
+   - **Gemini 2.5 Flash:** Otimizado para sub-segundo e baixa latência.
+   - **Gemini 2.5 Pro:** Para análises profundas de risco macro.
+   - **Ollama Local (Llama 3.2):** Execução offline e sem custos de API.
+   - **Claude 3.5 Sonnet:** Via gateway OpenRouter.
+2. **Seletor de Persona Operacional (Viés Técnico):**
+   - Permite escolher entre *Conservador*, *Agressivo / Squeeze*, *Scalper* ou *Swing Trader*, reconfigurando a aversão ao risco e as metas mínimas de R:R no prompt.
+3. **Injeção de Notas do Trader & Contexto Adicional:**
+   - Campo de texto para acrescentar observações operacionais (ex: *"Atenção para divulgação de CPI às 14:30; book com parede em 69.500"*).
+   - Botões de atalho rápido de 1 clique para inserir situações comuns (FOMC, Paredes no book, Feriado/Baixo volume, Confirmação de 4H).
+4. **Modo de Edição Livre do Prompt:**
+   - Permite editar manualmente 100% do texto do prompt antes do disparo, com contagem de tokens/caracteres, botão para copiar e botão para restaurar o padrão.
+5. **Ações de Disparo:**
+   - **"⚡ Disparar Direto (Padrão)":** Executa a auditoria em 1 clique com os parâmetros vigentes.
+   - **"Confirmar & Executar Auditoria IA":** Envia o prompt customizado e atualiza as metas e Stop Loss do gráfico em tempo real.
 
 ---
 

@@ -33,7 +33,7 @@ O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenv
 * **Filtro Anti-Spike e Validação Multi-Timeframe**: Confirmação obrigatória de sustentação no candle de 1 min e alinhamento de tendência no candle de 5 min antes da validação do sinal.
 * **Modelagem Temporal Institucional (TTL / Alpha Half-Life)**: Decaimento temporal de sinal baseado em regimes de volatilidade (*Calmo, Padrão, Agitado, Extremo*) com ajuste fino via multiplicador contínuo.
 * **Proteção de Capital com Breakeven Automático**: Ao atingir o Alvo 1 (+50% de realização parcial), o Stop Loss é automaticamente elevado para a entrada (0.00% de risco).
-* **Auditoria Quantitativa por IA**: Integração com modelos Gemini (Flash / Pro) para validação independente de confluência, riscos macroeconômicos e desequilíbrios no book.
+* **Auditoria Quantitativa por IA com Personas & Customização de Prompt**: Integração com modelos Gemini (Flash / Pro) e provedores externos (Ollama/Claude), com seletor de Personas Operacionais (*Conservador, Agressivo, Scalper, Swing*), injeção de notas do trader e modal de conferência prévia (`PromptPreviewModal`).
 
 ---
 
@@ -44,6 +44,7 @@ O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenv
 | **Cockpit Principal & Screener** | Monitor em tempo real de ativos com ranking de confluência, variação 24h, volume, CVD, funding rate e status operacional. |
 | **Matriz de Sinais Institucional** | Painel de sinais com HUD superior em tempo real, contagem regressiva de TTL, barra visual de decaimento de alpha, filtros por ciclo de vida (*Ativos, Próximos de Expirar, Breakeven, Alvo Atingido, Stop Loss, Expirados*) e ordenação avançada. |
 | **Gráfico Interativo & Candlesticks** | Visualização avançada com overlays de POC, VAH, VAL, Golden Pocket, Níveis de Entrada, Stop Loss e Alvos parciais/finais. |
+| **Auditoria & PromptPreviewModal** | Sistema de pré-visualização e customização de prompts antes do disparo para a IA, com seletor de personas, injeção de contexto extra do trader e modo de edição livre. |
 | **Radar de Traders Presos (Trapped Traders)** | Mapa de calor e detecção de zonas de liquidação de comprados/vendidos alavancados presos em topos e fundos. |
 | **Monitor de Divergências RSI** | Detecção automatizada de divergências clássicas e ocultas de RSI com confirmação de volume e CVD. |
 | **Dashboard de Gestão de Risco** | Value-at-Risk (VaR 95%/99%), concentração setorial, matriz de correlação cruzada e exposição total de capital. |
@@ -215,7 +216,8 @@ O backend disponibiliza uma API REST documentada:
 | `GET` | `/api/system/db-info` | Retorna diagnóstico do banco de dados (tabelas, linhas, tamanho). |
 | `POST` | `/api/system/vacuum` | Executa o comando VACUUM no banco SQLite para desfragmentação. |
 | `POST` | `/api/system/reset` | Executa o reset parcial ou total do sistema com base no escopo selecionado. |
-| `POST` | `/api/ai/review` | Executa auditoria quantitativa de setup com Inteligência Artificial Gemini. |
+| `POST` | `/api/ai/review` | Executa auditoria quantitativa de setup com Inteligência Artificial (suporta `customNotes` e `customPromptOverride`). |
+| `POST` | `/api/ai/review/preview-prompt` | Sintetiza e retorna a pré-visualização completa do prompt para conferência antes do envio à IA. |
 | `GET` | `/api/screener/settings` | Retorna a lista de pares ativos e classes de mercado configuradas. |
 
 ---
