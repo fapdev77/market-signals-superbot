@@ -441,8 +441,7 @@ export const defaultAIModels: AIModelConfig[] = [
     parameters: {
       temperature: 0.2,
       maxTokens: 8192,
-      topP: 0.95,
-      systemInstruction: 'Act as an elite quantitative crypto & TradFi hedge fund trader. Require strong confluence in CVD and Fibonacci Golden Pocket 0.618.'
+      topP: 0.95
     }
   },
   {
@@ -457,8 +456,7 @@ export const defaultAIModels: AIModelConfig[] = [
     parameters: {
       temperature: 0.1,
       maxTokens: 8192,
-      topP: 0.95,
-      systemInstruction: 'Act as a senior risk manager at a quantitative trading firm. Rigorously evaluate liquidity traps and order flow imbalances.'
+      topP: 0.95
     }
   },
   {
@@ -503,7 +501,21 @@ export async function getAIModels(): Promise<AIModelConfig[]> {
   }
   try {
     const parsed = JSON.parse(res[0].values[0][0] as string);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultAIModels;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      // Clean any stale conflicting hardcoded system instructions
+      return parsed.map((m: AIModelConfig) => {
+        if (m.parameters?.systemInstruction && (
+          m.parameters.systemInstruction.includes('Exija forte confluência em CVD') ||
+          m.parameters.systemInstruction.includes('Require strong confluence in CVD') ||
+          m.parameters.systemInstruction.includes('Atue como um analista trader quantitativo')
+        )) {
+          const { systemInstruction, ...restParams } = m.parameters;
+          return { ...m, parameters: restParams };
+        }
+        return m;
+      });
+    }
+    return defaultAIModels;
   } catch (err) {
     return defaultAIModels;
   }

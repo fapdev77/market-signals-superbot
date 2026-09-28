@@ -161,11 +161,18 @@ export async function generateContentWithModel(
     }
     const targetModel = normalizeGeminiModelName(modelConfig.modelId);
     
+    const explicitSysInstruction = options.systemInstruction !== undefined 
+      ? options.systemInstruction 
+      : (modelConfig.parameters?.systemInstruction || '');
+    
     const configObj: any = {
-      systemInstruction: options.systemInstruction || modelConfig.parameters.systemInstruction,
       temperature: modelConfig.parameters.temperature ?? 0.2,
       topP: modelConfig.parameters.topP ?? 0.95
     };
+
+    if (explicitSysInstruction && explicitSysInstruction.trim()) {
+      configObj.systemInstruction = explicitSysInstruction.trim();
+    }
 
     if (options.responseMimeType) {
       configObj.responseMimeType = options.responseMimeType;
@@ -184,9 +191,8 @@ export async function generateContentWithModel(
       const durationMs = Date.now() - startTime;
       const textOutput = response.text?.trim() || '';
 
-      const sysInstruction = options.systemInstruction || modelConfig.parameters.systemInstruction;
-      const fullPromptText = sysInstruction 
-        ? `[SYSTEM INSTRUCTION]\n${sysInstruction}\n\n[USER PROMPT]\n${options.prompt}` 
+      const fullPromptText = (explicitSysInstruction && explicitSysInstruction.trim())
+        ? `[SYSTEM INSTRUCTION]\n${explicitSysInstruction.trim()}\n\n[USER PROMPT]\n${options.prompt}` 
         : options.prompt;
 
       const promptTokens = (response as any)?.usageMetadata?.promptTokenCount || Math.ceil(fullPromptText.length / 4);
@@ -751,6 +757,7 @@ export async function reviewSignalWithAI(
     try {
       const result = await generateContentWithModel(targetModelConfig, {
         prompt,
+        systemInstruction: '', // Fully self-contained prompt, no generic systemInstruction injection
         responseMimeType: "application/json",
         logType: 'SIGNAL_REVIEW',
         jsonSchema: {

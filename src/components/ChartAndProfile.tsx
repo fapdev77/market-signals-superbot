@@ -3,7 +3,7 @@ import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, 
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
 import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders, Layers, BarChart3, FileText } from 'lucide-react';
-import { AIReviewPromptModal } from './AIReviewPromptModal';
+import { PromptPreviewModal } from './PromptPreviewModal';
 import { MarketProfileMetrics, VolumeProfileCard, OrderFlowFundingCard, DivergenceStructureCard } from './MarketProfileMetrics';
 import { FibonacciCard } from './FibonacciCard';
 import { OrderflowIndicators, ChartDataItem } from './OrderflowIndicators';
@@ -216,10 +216,10 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     }
   };
   
-  // Auto-trigger AI review if requested from navigation
+  // Open AI review prompt modal if requested from navigation / signal click
   useEffect(() => {
-    if (autoTriggerAI && ticker?.symbol && !loadingReview) {
-      handleRunAIReview();
+    if (autoTriggerAI && ticker?.symbol) {
+      setShowPromptModal(true);
       if (onClearAutoTrigger) {
         onClearAutoTrigger();
       }
@@ -1175,7 +1175,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
         {/* Modal for Prompt Preview & Customization before Sending */}
         {showPromptModal && ticker && (
-          <AIReviewPromptModal
+          <PromptPreviewModal
             isOpen={showPromptModal}
             onClose={() => setShowPromptModal(false)}
             ticker={ticker}
