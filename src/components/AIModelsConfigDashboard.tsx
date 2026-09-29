@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { AIModelConfig, AIProvider } from '../types';
 import { Tooltip } from './Tooltip';
+import { apiFetch } from '../services/apiClient';
 
 const GEMINI_MODEL_SUGGESTIONS = [
   { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash (Ultrarrápido & Econômico)' },
@@ -212,7 +213,7 @@ export const AIModelsConfigDashboard: React.FC<{
   const testConnection = async (model: AIModelConfig) => {
     setTestResult({ modelId: model.id, loading: true, message: 'Testando conexão com a API e rodando diagnósticos...' });
     try {
-      const res = await fetch('/api/ai/test-connection', {
+      const res = await apiFetch('/api/ai/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -4,11 +4,14 @@ import {
   vacuumDatabase, 
   clearTable, 
   exportDatabaseJson, 
-  factoryResetDatabase 
+  factoryResetDatabase,
+  recordAuditLog,
+  getAuditLogs
 } from '../db.js';
 import { BotState } from '../../src/types.js';
 import { getDefaultIndicatorWeights } from '../../src/constants/strategyPresets.js';
 import { defaultModels } from '../../src/config/defaultModels.js';
+import { validateBody, resetConfirmationSchema, tableClearConfirmationSchema } from '../middleware/validation.js';
 
 export function createSystemRouter(
   getBotState: () => BotState,
@@ -27,10 +30,22 @@ export function createSystemRouter(
     }
   });
 
+  // Get Security Audit Logs
+  router.get('/audit-logs', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(200, Math.max(10, parseInt((req.query.limit as string) || '50', 10)));
+      const logs = await getAuditLogs(limit);
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Falha ao buscar logs de auditoria', details: err?.message });
+    }
+  });
+
   // Optimize & compact SQLite database (VACUUM)
   router.post('/database-vacuum', async (req: Request, res: Response) => {
     try {
       const result = await vacuumDatabase();
+      await recordAuditLog('DATABASE_VACUUM', req.originalUrl, 'ADMIN', result);
       res.json(result);
     } catch (err: any) {
       console.error('Failed to vacuum database:', err);
@@ -38,29 +53,27 @@ export function createSystemRouter(
     }
   });
 
-  // Clear specific clearable table
-  router.post('/table-clear', async (req: Request, res: Response) => {
-    const { tableName } = req.body || {};
-    if (!tableName || typeof tableName !== 'string') {
-      return res.status(400).json({ error: 'Nome da tabela inválido ou ausente.' });
-    }
-
+  // Clear specific clearable table (requires explicit confirmation)
+  router.post('/table-clear', validateBody(tableClearConfirmationSchema), async (req: Request, res: Response) => {
+    const table = req.body.table || req.body.tableName;
     try {
-      const result = await clearTable(tableName);
+      const result = await clearTable(table);
+      await recordAuditLog('TABLE_CLEAR', req.originalUrl, 'ADMIN', { table, rowsRemoved: result.rowsRemoved });
       if (triggerMarketScan) {
         triggerMarketScan().catch(err => console.warn('Background scan warning after clear:', err));
       }
       res.json(result);
     } catch (err: any) {
-      console.error(`Failed to clear table ${tableName}:`, err);
+      console.error(`Failed to clear table ${table}:`, err);
       res.status(400).json({ error: err?.message || 'Falha ao limpar tabela' });
     }
   });
 
-  // Export full JSON database backup
+  // Export full JSON database backup (secrets redacted)
   router.get('/database-export', async (req: Request, res: Response) => {
     try {
       const data = await exportDatabaseJson();
+      await recordAuditLog('DATABASE_EXPORT', req.originalUrl, 'ADMIN');
       const isDownload = req.query.download === '1' || req.query.download === 'true';
       if (isDownload) {
         const filename = `superbot-sqlite-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
@@ -74,8 +87,8 @@ export function createSystemRouter(
     }
   });
 
-  // GLOBAL FACTORY RESET
-  router.post('/factory-reset', async (req: Request, res: Response) => {
+  // GLOBAL FACTORY RESET (requires explicit confirmation { confirm: "RESET" })
+  router.post('/factory-reset', validateBody(resetConfirmationSchema), async (req: Request, res: Response) => {
     try {
       const defaultWeights = getDefaultIndicatorWeights();
       const result = await factoryResetDatabase(defaultWeights, defaultModels);
@@ -88,6 +101,8 @@ export function createSystemRouter(
       botState.ticksProcessed = 0;
       botState.lastTickTime = Date.now();
       botState.isMonitoring = true;
+
+      await recordAuditLog('FACTORY_RESET', req.originalUrl, 'ADMIN', { scope: req.body.scope || 'ALL' });
 
       if (triggerMarketScan) {
         triggerMarketScan().catch(err => console.warn('Initial market scan after factory reset:', err));

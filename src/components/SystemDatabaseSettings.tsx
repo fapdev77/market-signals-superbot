@@ -7,6 +7,7 @@ import {
 import { SystemDatabaseStats, SystemTableInfo, ClientStorageItem } from '../types';
 import { useToast } from './Toast';
 import { ResetConfirmModal } from './ResetConfirmModal';
+import { apiFetch } from '../services/apiClient';
 
 interface SystemDatabaseSettingsProps {
   onFactoryResetComplete?: () => void;
@@ -91,7 +92,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
   const fetchStats = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/system/database-info');
+      const res = await apiFetch('/api/system/database-info');
       if (res.ok) {
         const data: SystemDatabaseStats = await res.json();
         setDbStats(data);
@@ -116,7 +117,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
     if (isVacuuming) return;
     setIsVacuuming(true);
     try {
-      const res = await fetch('/api/system/database-vacuum', { method: 'POST' });
+      const res = await apiFetch('/api/system/database-vacuum', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         showToast('success', 'Otimização Concluída (VACUUM)', data.message);
@@ -137,7 +138,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
     if (isExporting) return;
     setIsExporting(true);
     try {
-      const res = await fetch('/api/system/database-export?download=1');
+      const res = await apiFetch('/api/system/database-export?download=1');
       if (res.ok) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -168,10 +169,10 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
 
     setClearingTableName(tableName);
     try {
-      const res = await fetch('/api/system/table-clear', {
+      const res = await apiFetch('/api/system/table-clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tableName })
+        body: JSON.stringify({ table: tableName, confirm: 'CLEAR' })
       });
       const data = await res.json();
       if (res.ok) {

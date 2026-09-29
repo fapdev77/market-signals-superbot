@@ -86,6 +86,14 @@ export interface TickerData {
   signalReason: string;
   confluenceFactors: string[];
   
+  // Provenance & Quality Metrics (Phase 1)
+  dataQuality?: {
+    isLive: boolean;
+    isDegraded: boolean;
+    lastPriceAgeMs: number;
+    source: 'WS' | 'REST' | 'CACHE' | 'SYNTHETIC';
+  };
+
   updatedAt: number;                // timestamp
 }
 
@@ -281,6 +289,7 @@ export interface IndicatorWeights {
   trappedTradersWeight?: number;    // default 25 (para contra-trade / fade de absorção)
   rsiDivergenceWeight?: number;     // default 20 (para divergências de RSI)
   minRiskRewardRatio: number;       // default 2.5
+  minConfluenceScore?: number;      // default 65
   volumeProfileRange: number;       // default 50 (resolução em linhas/bins de preço)
   volumeProfileTimeframe?: string;  // default '30m'
   volumeProfileCandles?: number;    // default 48 (48 * 30m = 24h)

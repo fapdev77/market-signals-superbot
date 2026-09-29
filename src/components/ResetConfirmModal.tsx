@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Trash2, Download, X, ShieldAlert, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useToast } from './Toast';
+import { apiFetch } from '../services/apiClient';
 
 interface ResetConfirmModalProps {
   isOpen: boolean;
@@ -27,7 +28,7 @@ export const ResetConfirmModal: React.FC<ResetConfirmModalProps> = ({
     setIsDownloadingBackup(true);
     try {
       // 1. Fetch server database export
-      const res = await fetch('/api/system/database-export');
+      const res = await apiFetch('/api/system/database-export');
       let serverData = {};
       if (res.ok) {
         serverData = await res.json();
@@ -94,9 +95,10 @@ export const ResetConfirmModal: React.FC<ResetConfirmModalProps> = ({
 
     try {
       // 1. Call server factory reset endpoint
-      const res = await fetch('/api/system/factory-reset', {
+      const res = await apiFetch('/api/system/factory-reset', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'RESET' })
       });
 
       if (!res.ok) {

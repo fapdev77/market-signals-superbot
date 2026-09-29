@@ -31,6 +31,7 @@ import {
 import { Tooltip as AppTooltip } from './Tooltip';
 import { AILogEntry, AIModelConfig } from '../types';
 import { SignalHitRateD3Chart, SignalHitRatePerformanceData } from './SignalHitRateD3Chart';
+import { apiFetch } from '../services/apiClient';
 
 export const AIDashboard: React.FC = () => {
   const [logs, setLogs] = useState<AILogEntry[]>([]);
@@ -48,9 +49,9 @@ export const AIDashboard: React.FC = () => {
     setIsLoading(true);
     try {
       const [resLogs, resModels, resPerf] = await Promise.all([
-        fetch('/api/ai/logs'),
-        fetch('/api/settings/ai-models'),
-        fetch('/api/ai/performance?days=30')
+        apiFetch('/api/ai/logs'),
+        apiFetch('/api/settings/ai-models'),
+        apiFetch('/api/ai/performance?days=30')
       ]);
 
       if (resLogs.ok) {
@@ -77,7 +78,7 @@ export const AIDashboard: React.FC = () => {
   const refreshPerformanceOnly = async () => {
     setIsPerfLoading(true);
     try {
-      const res = await fetch('/api/ai/performance?days=30');
+      const res = await apiFetch('/api/ai/performance?days=30');
       if (res.ok) {
         const data: SignalHitRatePerformanceData = await res.json();
         setPerformanceData(data);
@@ -101,7 +102,7 @@ export const AIDashboard: React.FC = () => {
     }
     setIsClearing(true);
     try {
-      const res = await fetch('/api/ai/logs', { method: 'DELETE' });
+      const res = await apiFetch('/api/ai/logs', { method: 'DELETE' });
       if (res.ok) {
         setLogs([]);
       }

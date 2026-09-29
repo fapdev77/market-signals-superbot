@@ -18,6 +18,7 @@ import {
   Zap,
   SlidersHorizontal
 } from 'lucide-react';
+import { apiFetch } from '../services/apiClient';
 
 export interface PromptPreviewModalProps {
   isOpen: boolean;
@@ -67,7 +68,7 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
     setLoadingPreview(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/ai/review/preview-prompt', {
+      const res = await apiFetch('/api/ai/review/preview-prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,7 +141,7 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
     setErrorMsg(null);
     try {
       const model = selectedModel || activeModels.find(m => m.isActive)?.id || undefined;
-      const res = await fetch('/api/ai/review', {
+      const res = await apiFetch('/api/ai/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

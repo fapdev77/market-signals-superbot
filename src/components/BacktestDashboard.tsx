@@ -26,6 +26,7 @@ import {
 import { Tooltip } from './Tooltip';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ReferenceLine } from 'recharts';
 import { exportTradesToCSV } from '../utils/backtestMetrics';
+import { apiFetch } from '../services/apiClient';
 
 const WEIGHT_LABELS: Record<string, string> = {
   volumeSurgeWeight: 'Volume Surge',
@@ -85,7 +86,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
   const fetchDbStats = async () => {
     setStatsLoading(true);
     try {
-      const res = await fetch(`/api/backtest/stats/${selectedSymbol}`);
+      const res = await apiFetch(`/api/backtest/stats/${selectedSymbol}`);
       const data = await res.json();
       if (data.success) {
         setDbStats(data.stats);
@@ -107,7 +108,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
     let interval: any;
     if (syncState?.status === 'SYNCING') {
       interval = setInterval(() => {
-        fetch(`/api/backtest/sync/${selectedSymbol}`)
+        apiFetch(`/api/backtest/sync/${selectedSymbol}`)
           .then(res => res.json())
           .then(data => {
             setSyncState(data);
@@ -121,12 +122,12 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
   }, [syncState?.status, selectedSymbol]);
 
   const handleSync = async (forceFull = false) => {
-    await fetch('/api/backtest/sync', {
+    await apiFetch('/api/backtest/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol: selectedSymbol, days, forceFull })
     });
-    const res = await fetch(`/api/backtest/sync/${selectedSymbol}`);
+    const res = await apiFetch(`/api/backtest/sync/${selectedSymbol}`);
     setSyncState(await res.json());
   };
 
@@ -134,7 +135,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
     setSelectedTrade(trade);
     setTradeCandlesLoading(true);
     try {
-      const res = await fetch(`/api/backtest/trade-candles?symbol=${trade.symbol}&startTime=${trade.entryTime}&endTime=${trade.exitTime}`);
+      const res = await apiFetch(`/api/backtest/trade-candles?symbol=${trade.symbol}&startTime=${trade.entryTime}&endTime=${trade.exitTime}`);
       const data = await res.json();
       if (data.success) {
         setTradeCandles(data.klines);
@@ -151,7 +152,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
     setError(null);
     setAppliedSuccessMsg(null);
     try {
-      const res = await fetch('/api/backtest/run', {
+      const res = await apiFetch('/api/backtest/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -188,7 +189,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
     setError(null);
     setAppliedSuccessMsg(null);
     try {
-      const res = await fetch('/api/backtest/autotune', {
+      const res = await apiFetch('/api/backtest/autotune', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -220,7 +221,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
 
   const handleApplyTunedWeights = async (newWeights: IndicatorWeights) => {
     try {
-      const res = await fetch('/api/settings/weights', {
+      const res = await apiFetch('/api/settings/weights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newWeights)

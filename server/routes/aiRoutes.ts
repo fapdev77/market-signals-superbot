@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader, buildSignalReviewPrompt } from '../aiMotor.js';
 import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
-import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights, getSignalById, getSignalsByDateRange, seedHistoricalSignalsIfEmpty } from '../db.js';
+import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights, getSignalById, getSignalsByDateRange } from '../db.js';
 import { buildTradeSignal, normalizePricePrecision } from '../signalEngine.js';
 import { TickerData, TradeSignal, BotState } from '../../src/types.js';
 import { getAIPersonaById } from '../../src/constants/aiPersonas.js';
 import { safeFetch } from '../utils/safeFetch.js';
+import { validateOutboundAIUrl } from '../utils/outboundPolicy.js';
 
 export function createAIRouter(
   getBotState: () => BotState,
@@ -30,9 +31,6 @@ export function createAIRouter(
       const days = parseInt(req.query.days as string) || 30;
       const now = Date.now();
       const startTime = now - days * 24 * 60 * 60 * 1000;
-
-      // Ensure historical data is seeded if fresh
-      await seedHistoricalSignalsIfEmpty();
 
       const signals = await getSignalsByDateRange(startTime, now);
 
@@ -407,6 +405,13 @@ export function createAIRouter(
 
       if (provider === 'local') {
         const url = (apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
+        const validation = validateOutboundAIUrl(url, 'local');
+        if (!validation.isValid) {
+          const msg = validation.error || 'URL local não autorizada por política de segurança.';
+          diagnosticSteps.push(`[Segurança] Bloqueio outbound: ${msg}`);
+          return res.status(400).json({ success: false, message: msg, diagnosticSteps });
+        }
+
         const modelName = modelId || 'llama3.2';
         const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
         const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(url.replace(/^https?:\/\//, ''));
@@ -614,7 +619,16 @@ export function createAIRouter(
       if (provider === 'openrouter' || provider === 'openai') {
         const defaultUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1';
         const url = (apiUrl || defaultUrl).replace(/\/+$/, '');
-        const key = apiKey || (provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY);
+        const validation = validateOutboundAIUrl(url, provider);
+        if (!validation.isValid) {
+          const msg = validation.error || 'URL não permitida por política de segurança outbound.';
+          diagnosticSteps.push(`[Segurança] Bloqueio outbound: ${msg}`);
+          return res.status(400).json({ success: false, message: msg, diagnosticSteps });
+        }
+
+        const isCustomHost = apiUrl && !apiUrl.includes('openrouter.ai') && !apiUrl.includes('openai.com');
+        // Environment key fallback only applies to official default host
+        const key = apiKey || (isCustomHost ? undefined : (provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY));
         
         diagnosticSteps.push(`URL do Provedor: ${url}`);
         diagnosticSteps.push(`Chave API presente: ${key ? 'Sim' : 'Não'}`);

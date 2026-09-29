@@ -107,6 +107,15 @@ export async function getDb(): Promise<Database> {
       settings TEXT,
       updated_at INTEGER
     );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT NOT NULL,
+      route TEXT NOT NULL,
+      actor TEXT DEFAULT 'SYSTEM',
+      details TEXT,
+      created_at INTEGER NOT NULL
+    );
   `);
 
   // Safe table migrations for new columns
@@ -146,14 +155,14 @@ export async function getDb(): Promise<Database> {
     // Column may already exist
   }
 
+  // Phase 1 Security & Data Integrity: Purge any fabricated historical signals (HIST-*)
+  try {
+    db.run(`DELETE FROM trade_signals WHERE id LIKE 'HIST-%';`);
+  } catch {
+    // ignore
+  }
+
   saveDbToDisk();
-  
-  // Seed historical signals asynchronously if newly created or empty
-  setTimeout(() => {
-    seedHistoricalSignalsIfEmpty().catch(err => {
-      console.warn('Historical signals seed warning:', err);
-    });
-  }, 100);
 
   return db;
 }
@@ -714,111 +723,41 @@ export async function getSignalsByDateRange(startTime: number, endTime: number):
   return res[0].values.map(row => rowToTradeSignal(columns, row));
 }
 
-/**
- * Ensures realistic historical signals exist for the last 30 days if the DB is freshly deployed,
- * comparing each against subsequent price action to compute realistic historical hit rates.
- */
-export async function seedHistoricalSignalsIfEmpty(force = false) {
+export interface AuditLogEntry {
+  id?: number;
+  action: string;
+  route: string;
+  actor: string;
+  details?: string;
+  createdAt: number;
+}
+
+export async function recordAuditLog(action: string, route: string, actor: string = 'SYSTEM', details?: any) {
+  try {
+    const database = await getDb();
+    const detailsStr = typeof details === 'object' ? JSON.stringify(details) : (details ? String(details) : '');
+    database.run(
+      `INSERT INTO audit_logs (action, route, actor, details, created_at) VALUES (?, ?, ?, ?, ?)`,
+      [action, route, actor, detailsStr, Date.now()]
+    );
+    saveDbToDisk();
+  } catch (err) {
+    console.error('Failed to record audit log:', err);
+  }
+}
+
+export async function getAuditLogs(limit: number = 100): Promise<AuditLogEntry[]> {
   const database = await getDb();
-  const now = Date.now();
-  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
-  
-  if (!force) {
-    const countRes = database.exec(`SELECT count(*) FROM trade_signals WHERE created_at >= ${thirtyDaysAgo}`);
-    const currentCount = countRes.length && countRes[0].values.length ? Number(countRes[0].values[0][0]) : 0;
-
-    if (currentCount >= 40) {
-      return; // Already populated sufficiently
-    }
-  }
-
-  console.log('🌱 Seeding 30-day historical signal audit dataset for D3 hit-rate performance tracking...');
-  const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'SUIUSDT', 'AVAXUSDT', 'LINKUSDT', 'PEPEUSDT'];
-  const basePrices: Record<string, number> = {
-    BTCUSDT: 91500, ETHUSDT: 3380, SOLUSDT: 185, BNBUSDT: 645,
-    XRPUSDT: 2.35, ADAUSDT: 0.785, DOGEUSDT: 0.24, SUIUSDT: 3.45, AVAXUSDT: 32.5,
-    LINKUSDT: 18.2, PEPEUSDT: 0.0000185
-  };
-
-  // Generate 2-5 validated signals per day across the 30 days
-  for (let dayOffset = 30; dayOffset >= 1; dayOffset--) {
-    const dayStart = now - dayOffset * 24 * 60 * 60 * 1000;
-    const signalsPerDay = 3 + Math.floor(Math.sin(dayOffset * 1.7) * 2 + 1); // 2 to 6 signals
-
-    for (let s = 0; s < signalsPerDay; s++) {
-      const symbol = symbols[(dayOffset + s * 3) % symbols.length];
-      const basePrice = basePrices[symbol] || getBenchmarkPrice(symbol);
-      // Slight price drift simulation across 30 days
-      const dayFactor = 1 + (Math.sin(dayOffset / 5) * 0.06);
-      const entryPrice = basePrice * dayFactor * (1 + (Math.random() * 0.01 - 0.005));
-
-      const isLong = (dayOffset + s) % 3 !== 0; // ~67% Long bias in crypto
-      const direction: 'LONG' | 'SHORT' = isLong ? 'LONG' : 'SHORT';
-
-      // Win rate profile: high quality confluences have ~68-76% hit rate over time
-      const randOutcome = Math.random();
-      let status: 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
-      let outcomePnlPct: number;
-
-      // Realistic outcome probability distribution
-      if (randOutcome < 0.68) {
-        status = 'TARGET_REACHED';
-        outcomePnlPct = 1.8 + Math.random() * 2.5; // +1.8% to +4.3%
-      } else if (randOutcome < 0.92) {
-        status = 'STOPPED_OUT';
-        outcomePnlPct = -(0.9 + Math.random() * 0.8); // -0.9% to -1.7%
-      } else {
-        status = 'EXPIRED';
-        outcomePnlPct = Math.random() * 0.6 - 0.3; // Flat / break-even
-      }
-
-      const stopLoss = isLong ? entryPrice * 0.985 : entryPrice * 1.015;
-      const target1 = isLong ? entryPrice * 1.02 : entryPrice * 0.98;
-      const target2 = isLong ? entryPrice * 1.038 : entryPrice * 0.962;
-      const exitPrice = status === 'TARGET_REACHED' ? target2 : status === 'STOPPED_OUT' ? stopLoss : entryPrice * (1 + outcomePnlPct / 100);
-
-      const timestamp = dayStart + s * 3.5 * 3600 * 1000 + Math.floor(Math.random() * 1800000);
-      const confluenceScore = 65 + Math.floor(Math.random() * 28);
-      const id = `HIST-${symbol}-${timestamp}`;
-
-      const aiConfidence = 70 + Math.floor(Math.random() * 24);
-      const aiReview = status === 'TARGET_REACHED' 
-        ? `Validação de confluência positiva: Order Flow favorável, absorção em suporte e alinhamento com CVD delta.`
-        : `Sinal auditado: Mercado apresentou exaustão no alvo planejado com reversão de fluxo.`;
-
-      database.run(
-        `INSERT OR IGNORE INTO trade_signals (
-          id, symbol, market_type, signal_type, direction, entry_min, entry_max, current_price,
-          stop_loss, target1, target2, risk_reward, confluence_score, confluence_factors, timeframe,
-          validation_status, validation_stage, candle_1m_confirmed, candle_5m_confirmed,
-          ai_review, ai_confidence, created_at, validated_at, rejected_at, status, strategy_category
-        ) VALUES (?, ?, 'crypto_futures', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '15m', 'CONFIRMED', 'VALIDADO_HISTORICO', 1, 1, ?, ?, ?, ?, NULL, ?, 'INTRADAY')`,
-        [
-          id,
-          symbol,
-          isLong ? (confluenceScore > 80 ? 'STRONG_LONG' : 'LONG') : (confluenceScore > 80 ? 'STRONG_SHORT' : 'SHORT'),
-          direction,
-          entryPrice * 0.998,
-          entryPrice * 1.002,
-          exitPrice,
-          stopLoss,
-          target1,
-          target2,
-          2.15,
-          confluenceScore,
-          JSON.stringify(['Volume Profile POC', 'Delta CVD Absorption', 'Golden Pocket 0.618']),
-          aiReview,
-          aiConfidence,
-          timestamp,
-          timestamp + 60000,
-          status
-        ]
-      );
-    }
-  }
-
-  saveDbToDisk();
-  console.log('✅ Seeding completed: 30-day historical signals database ready.');
+  const res = database.exec(`SELECT id, action, route, actor, details, created_at FROM audit_logs ORDER BY created_at DESC LIMIT ${limit}`);
+  if (!res.length || !res[0].values) return [];
+  return res[0].values.map(row => ({
+    id: Number(row[0]),
+    action: String(row[1]),
+    route: String(row[2]),
+    actor: String(row[3]),
+    details: row[4] ? String(row[4]) : undefined,
+    createdAt: Number(row[5])
+  }));
 }
 
 // ============================================
@@ -1095,7 +1034,17 @@ export async function exportDatabaseJson(): Promise<Record<string, any>> {
         const rows = res[0].values.map(val => {
           const item: Record<string, any> = {};
           cols.forEach((col, idx) => {
-            item[col] = val[idx];
+            if (table === 'ai_models_settings' && col === 'models' && val[idx]) {
+              try {
+                const parsed = JSON.parse(val[idx] as string);
+                const sanitized = Array.isArray(parsed) ? parsed.map(({ apiKey, ...rest }) => rest) : parsed;
+                item[col] = JSON.stringify(sanitized);
+              } catch {
+                item[col] = val[idx];
+              }
+            } else {
+              item[col] = val[idx];
+            }
           });
           return item;
         });
@@ -1145,29 +1094,18 @@ export async function factoryResetDatabase(
   // 4. Reset Screener settings to factory defaults
   database.run(`DELETE FROM screener_settings;`);
 
-  // 5. Force re-seed standard 30-day baseline historical signals
-  await seedHistoricalSignalsIfEmpty(true);
-
-  // 6. Compact database file
+  // 5. Compact database file
   database.run('VACUUM;');
   saveDbToDisk();
 
-  // Count reseeded signals
-  let reseededCount = 0;
-  try {
-    const cRes = database.exec(`SELECT count(*) FROM trade_signals;`);
-    if (cRes.length && cRes[0].values.length) reseededCount = Number(cRes[0].values[0][0]);
-  } catch {
-    reseededCount = 0;
-  }
-
-  console.log(`✅ [FACTORY RESET] Global reset completed successfully. Reseeded ${reseededCount} baseline signals.`);
+  console.log(`✅ [FACTORY RESET] Global reset completed successfully.`);
 
   return {
     success: true,
-    message: 'Banco de dados e configurações restaurados com sucesso para os padrões de fábrica.',
+    message: 'Banco de dados restaurado para configurações de fábrica.',
     clearedTables: ['trade_signals', 'ticker_snapshots', 'ai_audits', 'watched_symbols', 'screener_settings'],
-    signalsReseededCount: reseededCount
+    signalsReseededCount: 0
   };
 }
+
 

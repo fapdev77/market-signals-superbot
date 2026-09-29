@@ -24,6 +24,7 @@ import { usePaperTrading } from '../hooks/usePaperTrading';
 import { UserPriceAlert } from '../types';
 import { getTopDetectedPattern } from '../utils/aiPatternScanner';
 import { PatternBadge } from './PatternBadge';
+import { apiFetch } from '../services/apiClient';
 
 interface ChartAndProfileProps {
   selectedTicker: TickerData | null;
@@ -196,7 +197,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
     setLoadingReview(true);
     try {
       const model = selectedModel || activeModels.find(m => m.isActive)?.id || undefined;
-      const res = await fetch('/api/ai/review', {
+      const res = await apiFetch('/api/ai/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -233,7 +234,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   useEffect(() => {
     if (!ticker?.symbol) return;
     setLoading(true);
-    fetch(`/api/tickers/${ticker.symbol}?tf=${timeframe}`)
+    apiFetch(`/api/tickers/${ticker.symbol}?tf=${timeframe}`)
       .then(res => res.json())
       .then(data => {
         if (data.klines) {

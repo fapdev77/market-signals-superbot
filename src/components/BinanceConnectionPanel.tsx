@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { WSClientStatus, WSLogEntry } from '../hooks/useBinanceWebSocket';
 import { Tooltip } from './Tooltip';
+import { apiFetch } from '../services/apiClient';
 
 export interface AILogEntry {
   id: string;
@@ -93,9 +94,9 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
   const fetchLogsAndStatus = async () => {
     try {
       const [resStatus, resBinanceLogs, resAiLogs] = await Promise.all([
-        fetch('/api/binance/status').catch(() => null),
-        fetch('/api/binance/logs').catch(() => null),
-        fetch('/api/ai/logs').catch(() => null)
+        apiFetch('/api/binance/status').catch(() => null),
+        apiFetch('/api/binance/logs').catch(() => null),
+        apiFetch('/api/ai/logs').catch(() => null)
       ]);
 
       if (resStatus && resStatus.ok) {
@@ -122,7 +123,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
   const clearAiLogs = async () => {
     if (confirm('Deseja limpar todos os logs de execução e diagnóstico do Motor de IA?')) {
       try {
-        await fetch('/api/ai/logs', { method: 'DELETE' });
+        await apiFetch('/api/ai/logs', { method: 'DELETE' });
         setAiLogs([]);
       } catch (e) {
         console.error('Erro ao limpar logs de IA:', e);

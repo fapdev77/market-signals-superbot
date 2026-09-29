@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { getBinanceLogs } from '../binanceWebsocket.js';
 import { fetchKlines, fetchOrderBookDepth } from '../binanceService.js';
-import { getRecentSignals, saveIndicatorWeights, saveAIModels, expireActiveSignalsByCategory, expireAllActiveSignals } from '../db.js';
+import { getRecentSignals, saveIndicatorWeights, saveAIModels, expireActiveSignalsByCategory, expireAllActiveSignals, recordAuditLog } from '../db.js';
 import { TickerData, BotState, StrategyCategory } from '../../src/types.js';
+import { redactAIModelConfigs, mergePreservedSecrets } from '../utils/secretsRedaction.js';
+import { validateBody, validateParams, symbolParamSchema, aiModelsUpdateSchema, weightsUpdateSchema } from '../middleware/validation.js';
 
 export function createMarketRouter(
   getBotState: () => BotState,
@@ -48,7 +50,7 @@ export function createMarketRouter(
   });
 
   // Specific Ticker Details & Kline Chart
-  router.get('/tickers/:symbol', async (req: Request, res: Response) => {
+  router.get('/tickers/:symbol', validateParams(symbolParamSchema), async (req: Request, res: Response) => {
     const symbol = req.params.symbol.toUpperCase();
     const timeframe = (req.query.tf as string) || '15m';
     const tickerCache = getTickerCache();
@@ -58,7 +60,7 @@ export function createMarketRouter(
   });
 
   // Order Book Liquidity Depth & Imbalance
-  router.get('/tickers/:symbol/depth', async (req: Request, res: Response) => {
+  router.get('/tickers/:symbol/depth', validateParams(symbolParamSchema), async (req: Request, res: Response) => {
     try {
       const symbol = req.params.symbol.toUpperCase();
       const limit = Math.min(60, Math.max(10, parseInt((req.query.limit as string) || '35', 10)));
@@ -103,6 +105,7 @@ export function createMarketRouter(
     };
     
     await saveIndicatorWeights(botState.weights);
+    await recordAuditLog('UPDATE_WEIGHTS', req.originalUrl, 'ADMIN', { activeStrategy, scope });
 
     // Map strategy to category
     const categoryMap: Record<string, StrategyCategory> = {
@@ -141,21 +144,22 @@ export function createMarketRouter(
     });
   });
 
-  // Settings: AI Models
+  // Settings: AI Models (Redacts secrets on GET, preserves on POST)
   router.get('/settings/ai-models', (req: Request, res: Response) => {
     const botState = getBotState();
-    res.json(botState.aiModels);
+    res.json(redactAIModelConfigs(botState.aiModels));
   });
 
-  router.post('/settings/ai-models', async (req: Request, res: Response) => {
+  router.post('/settings/ai-models', validateBody(aiModelsUpdateSchema), async (req: Request, res: Response) => {
     const botState = getBotState();
-    if (Array.isArray(req.body)) {
-      botState.aiModels = req.body;
-      await saveAIModels(botState.aiModels);
-      res.json({ success: true, models: botState.aiModels });
-    } else {
-      res.status(400).json({ error: 'Expected array of AIModelConfig' });
-    }
+    const incomingModels = req.body as any[];
+    const resolvedModels = mergePreservedSecrets(incomingModels, botState.aiModels);
+    
+    botState.aiModels = resolvedModels;
+    await saveAIModels(botState.aiModels);
+    await recordAuditLog('UPDATE_AI_MODELS', req.originalUrl, 'ADMIN', { modelCount: resolvedModels.length });
+    
+    res.json({ success: true, models: redactAIModelConfigs(botState.aiModels) });
   });
 
   // ==========================================

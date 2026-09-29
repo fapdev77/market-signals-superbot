@@ -3,6 +3,7 @@ import { AIAuditReport, TickerData, IndicatorWeights, AIModelConfig } from '../t
 import { Brain, Cpu, RefreshCw, Send, ShieldAlert, Sparkles, CheckCircle, Sliders, MessageSquare, UserCheck } from 'lucide-react';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 import { Tooltip } from './Tooltip';
+import { apiFetch } from '../services/apiClient';
 
 interface AIMotorPanelProps {
   tickers: TickerData[];
@@ -59,7 +60,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
 
   const fetchLatestAudit = async () => {
     try {
-      const res = await fetch('/api/ai/audit/latest');
+      const res = await apiFetch('/api/ai/audit/latest');
       const data = await res.json();
       if (data && data.marketOverview) setAuditReport(data);
     } catch (err) {
@@ -74,7 +75,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
   const handleRunAudit = async () => {
     setLoadingAudit(true);
     try {
-      const res = await fetch('/api/ai/audit', {
+      const res = await apiFetch('/api/ai/audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: selectedModel })
@@ -97,7 +98,7 @@ export const AIMotorPanel: React.FC<AIMotorPanelProps> = ({
     setLoadingChat(true);
 
     try {
-      const res = await fetch('/api/ai/chat', {
+      const res = await apiFetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

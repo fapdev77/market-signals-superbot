@@ -68,10 +68,79 @@ class ApiError extends Error {
   }
 }
 
+const AUTH_STORAGE_KEY = 'superbot_auth_bearer_token';
+let cachedToken: string | null = null;
+
+export function getStoredAuthToken(): string | null {
+  if (cachedToken) return cachedToken;
+  try {
+    const stored = sessionStorage.getItem(AUTH_STORAGE_KEY);
+    if (stored) {
+      cachedToken = stored;
+      return stored;
+    }
+  } catch {
+    // sessionStorage might be restricted
+  }
+  return null;
+}
+
+export function setStoredAuthToken(token: string): void {
+  cachedToken = token.trim();
+  try {
+    sessionStorage.setItem(AUTH_STORAGE_KEY, token.trim());
+  } catch {
+    // ignore
+  }
+}
+
+export function clearStoredAuthToken(): void {
+  cachedToken = null;
+  try {
+    sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
+  const token = getStoredAuthToken();
+  const headers: Record<string, string> = {
+    ...(options.body && typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...(options.headers as Record<string, string> || {}),
+  };
+
+  const response = await fetch(endpoint, {
+    ...options,
+    headers,
+  });
+
+  if (response.status === 401 && !token && endpoint !== '/api/auth/status') {
+    try {
+      const statusRes = await fetch('/api/auth/status');
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        if (statusData.defaultDevToken) {
+          setStoredAuthToken(statusData.defaultDevToken);
+          headers['Authorization'] = `Bearer ${statusData.defaultDevToken}`;
+          return fetch(endpoint, { ...options, headers });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return response;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const headers = {
+  const token = getStoredAuthToken();
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...(options.headers as Record<string, string> || {}),
   };
 
   const response = await fetch(endpoint, {
@@ -80,6 +149,25 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   });
 
   if (!response.ok) {
+    // If 401 and in dev session, auto-fetch status to bootstrap token if available
+    if (response.status === 401 && !token && endpoint !== '/api/auth/status') {
+      try {
+        const statusRes = await fetch('/api/auth/status');
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (statusData.defaultDevToken) {
+            setStoredAuthToken(statusData.defaultDevToken);
+            // Retry once with bootstrapped token
+            headers['Authorization'] = `Bearer ${statusData.defaultDevToken}`;
+            const retryRes = await fetch(endpoint, { ...options, headers });
+            if (retryRes.ok) return retryRes.json();
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
     try {
       const errorJson = await response.json();

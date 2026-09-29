@@ -36,15 +36,18 @@ export function processTickerState(
   weights: IndicatorWeights,
   longShortData?: LongShortRatioData,
   trappedTradersData?: TrappedTradersData
-): TickerData {
+): TickerData | null {
+  if (!rawTicker) return null;
   const symbol = rawTicker.symbol || 'BTCUSDT';
-  const benchmark = getBenchmarkPrice(symbol);
   const parsedPrice = parseFloat(rawTicker.lastPrice || rawTicker.price);
-  const price = !isNaN(parsedPrice) && parsedPrice > 0 ? parsedPrice : benchmark;
+  if (isNaN(parsedPrice) || parsedPrice <= 0) {
+    return null;
+  }
+  const price = parsedPrice;
   const priceChangePercent24h = parseFloat(rawTicker.priceChangePercent || '0');
-  const high24h = parseFloat(rawTicker.highPrice || normalizePricePrecision(price * 1.02));
-  const low24h = parseFloat(rawTicker.lowPrice || normalizePricePrecision(price * 0.98));
-  const volume24h = parseFloat(rawTicker.volume || '10000');
+  const high24h = parseFloat(rawTicker.highPrice || (price * 1.02).toString());
+  const low24h = parseFloat(rawTicker.lowPrice || (price * 0.98).toString());
+  const volume24h = parseFloat(rawTicker.volume || '0');
   const quoteVolume24h = parseFloat(rawTicker.quoteVolume || (volume24h * price).toFixed(0));
 
   // Compute 24h Moving Average (from available klines or estimate from 24h high, low, open, close)
@@ -391,6 +394,12 @@ export function processTickerState(
     signalType,
     signalReason,
     confluenceFactors,
+    dataQuality: {
+      isLive: true,
+      isDegraded: false,
+      lastPriceAgeMs: 0,
+      source: 'WS'
+    },
     updatedAt: Date.now()
   };
 }

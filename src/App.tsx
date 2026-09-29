@@ -33,6 +33,7 @@ import { SystemHealthWidget } from './components/SystemHealthWidget';
 import { TrappedTradersRadar } from './components/TrappedTradersRadar';
 import { RSIDivergenceMonitor } from './components/RSIDivergenceMonitor';
 import { SystemDatabaseSettings } from './components/SystemDatabaseSettings';
+import { apiFetch } from './services/apiClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -117,7 +118,7 @@ export default function App() {
   const fetchData = async () => {
     try {
       // Fetch Tickers
-      const resT = await fetch('/api/tickers');
+      const resT = await apiFetch('/api/tickers');
       if (resT.ok) {
         const dataT: TickerData[] = await resT.json();
         setTickers(dataT);
@@ -135,7 +136,7 @@ export default function App() {
       }
 
       // Fetch Signals
-      const resS = await fetch('/api/signals');
+      const resS = await apiFetch('/api/signals');
       if (resS.ok) {
         const dataS: TradeSignal[] = await resS.json();
 
@@ -160,7 +161,7 @@ export default function App() {
       }
 
       // Fetch Bot Status
-      const resB = await fetch('/api/bot/status');
+      const resB = await apiFetch('/api/bot/status');
       if (resB.ok) {
         const dataB: BotState = await resB.json();
         setBotState(prev => {
@@ -198,7 +199,7 @@ export default function App() {
 
   const handleToggleBot = async () => {
     try {
-      const res = await fetch('/api/bot/toggle', { method: 'POST' });
+      const res = await apiFetch('/api/bot/toggle', { method: 'POST' });
       const data = await res.json();
       setBotState(prev => ({ ...prev, isMonitoring: data.isMonitoring }));
     } catch (err) {
@@ -208,7 +209,7 @@ export default function App() {
 
   const handleToggleAI = async (enabled: boolean) => {
     try {
-      const res = await fetch('/api/bot/toggle-ai', {
+      const res = await apiFetch('/api/bot/toggle-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled })
@@ -227,7 +228,7 @@ export default function App() {
 
   const handleSaveWeights = async (newWeights: IndicatorWeights, scope?: 'ALL_FUTURE' | 'RESET_AND_RESCAN' | 'RESET_ALL_AND_RESCAN') => {
     try {
-      const res = await fetch('/api/settings/weights', {
+      const res = await apiFetch('/api/settings/weights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -250,7 +251,7 @@ export default function App() {
   const handleSaveAIModels = async (newModels: AIModelConfig[]) => {
     try {
       setBotState(prev => ({ ...prev, aiModels: newModels }));
-      const res = await fetch('/api/settings/ai-models', {
+      const res = await apiFetch('/api/settings/ai-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newModels)
