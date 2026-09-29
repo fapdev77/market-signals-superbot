@@ -33,7 +33,8 @@ import { SystemHealthWidget } from './components/SystemHealthWidget';
 import { TrappedTradersRadar } from './components/TrappedTradersRadar';
 import { RSIDivergenceMonitor } from './components/RSIDivergenceMonitor';
 import { SystemDatabaseSettings } from './components/SystemDatabaseSettings';
-import { apiFetch } from './services/apiClient';
+import { AuthModal } from './components/AuthModal';
+import { apiFetch, getStoredAuthToken } from './services/apiClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -44,6 +45,24 @@ export default function App() {
   const [autoTriggerAIReview, setAutoTriggerAIReview] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isLiveStreamPaused, setIsLiveStreamPaused] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setIsAuthModalOpen(true);
+    };
+    window.addEventListener('superbot:unauthorized', handleUnauthorized);
+    // If no token stored on mount, check auth status
+    apiFetch('/api/auth/status').then(res => res.json()).then(data => {
+      if (!data.authenticated && !getStoredAuthToken()) {
+        setIsAuthModalOpen(true);
+      }
+    }).catch(() => {});
+
+    return () => {
+      window.removeEventListener('superbot:unauthorized', handleUnauthorized);
+    };
+  }, []);
   
   // Terminal keybinds (1-9, Ctrl+K, Space, Esc)
   useTerminalKeybinds({
@@ -413,6 +432,16 @@ export default function App() {
         onNavigateToTab={(tab) => setActiveTab(tab)}
         onTriggerAutoTune={() => setActiveTab('settings')}
         onToggleBot={handleToggleBot}
+      />
+
+      {/* Authentication Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={() => {
+          setIsAuthModalOpen(false);
+          fetchData();
+        }}
       />
 
       {/* Main Content Area */}

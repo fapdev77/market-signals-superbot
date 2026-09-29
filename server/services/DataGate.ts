@@ -36,6 +36,15 @@ export function canGenerateSignals(ticker: TickerData, now: number = Date.now())
     };
   }
 
+  if (ticker.dataQuality?.source === 'SYNTHETIC' && process.env.ALLOW_SYNTHETIC_DATA !== 'true') {
+    return {
+      allow: false,
+      reason: 'Sinais bloqueados para dados sintéticos/simulados (ALLOW_SYNTHETIC_DATA=false).',
+      isDegraded: true,
+      ageMs
+    };
+  }
+
   if (ticker.dataQuality?.isDegraded) {
     return {
       allow: false,

@@ -775,6 +775,27 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </Tooltip>
 
+          {/* Bearer Auth Token Management Button */}
+          <Tooltip
+            position="bottom-right"
+            title="Autenticação Bearer • Segurança"
+            badge="API KEY"
+            content="Gerencie ou insira o Token de Autenticação Bearer para autorizar chamadas às rotas protegidas da API."
+          >
+            <button
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('superbot:unauthorized'));
+                }
+              }}
+              className="p-2 rounded-lg border transition hidden sm:flex items-center justify-center shrink-0 bg-neutral-900 border-white/10 text-neutral-400 hover:text-orange-400 hover:border-orange-500/30"
+              title="Gerenciar Token de Acesso"
+              aria-label="Gerenciar Token de Acesso"
+            >
+              <ShieldAlert className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+
 
           {/* Theme Picker Dropdown — Desktop (sm+) */}
           <div className="relative hidden sm:block" ref={themeMenuRef}>

@@ -116,19 +116,10 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     headers,
   });
 
-  if (response.status === 401 && !token && endpoint !== '/api/auth/status') {
-    try {
-      const statusRes = await fetch('/api/auth/status');
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        if (statusData.defaultDevToken) {
-          setStoredAuthToken(statusData.defaultDevToken);
-          headers['Authorization'] = `Bearer ${statusData.defaultDevToken}`;
-          return fetch(endpoint, { ...options, headers });
-        }
-      }
-    } catch {
-      // ignore
+  if (response.status === 401) {
+    // Notify UI to request access token from user
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('superbot:unauthorized'));
     }
   }
 
@@ -149,30 +140,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   });
 
   if (!response.ok) {
-    // If 401 and in dev session, auto-fetch status to bootstrap token if available
-    if (response.status === 401 && !token && endpoint !== '/api/auth/status') {
-      try {
-        const statusRes = await fetch('/api/auth/status');
-        if (statusRes.ok) {
-          const statusData = await statusRes.json();
-          if (statusData.defaultDevToken) {
-            setStoredAuthToken(statusData.defaultDevToken);
-            // Retry once with bootstrapped token
-            headers['Authorization'] = `Bearer ${statusData.defaultDevToken}`;
-            const retryRes = await fetch(endpoint, { ...options, headers });
-            if (retryRes.ok) return retryRes.json();
-          }
-        }
-      } catch {
-        // ignore
+    if (response.status === 401) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('superbot:unauthorized'));
       }
     }
 
     let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
     try {
       const errorJson = await response.json();
-      if (errorJson?.error) {
-        errorMsg = errorJson.error;
+      if (errorJson?.message || errorJson?.error) {
+        errorMsg = errorJson.message || errorJson.error;
       }
     } catch {
       // Ignora erro de parse caso corpo não seja json

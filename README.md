@@ -131,15 +131,33 @@ npm start
 
 ---
 
-## 6. Configuração de Variáveis de Ambiente
+## 6. Configuração de Variáveis de Ambiente & Segurança Fail-Closed
 
-O arquivo `.env` suporta as seguintes configurações:
+O arquivo `.env` suporta as seguintes configurações de operação e proteção:
 
 | Variável | Tipo | Padrão | Descrição |
 | :--- | :---: | :---: | :--- |
+| `API_AUTH_TOKEN` | `string` | *dinâmico* | Token de autenticação Bearer obrigatório para rotas `/api/*`. Em dev, se não definido, o servidor gera uma chave segura criptográfica impressa no terminal. Em produção (`NODE_ENV=production`), o servidor falha imediatamente (*fail-closed*) caso não esteja presente. |
+| `ALLOWED_ORIGINS` | `string` | `http://localhost:3000,http://127.0.0.1:3000` | Lista de origens permitidas pelo middleware de CORS separadas por vírgula. |
+| `ALLOWED_AI_HOSTS` | `string` | *vazio* | Hostnames adicionais permitidos para conexões de IA externas além dos oficiais (`googleapis.com`, `openrouter.ai`, `anthropic.com`, `openai.com`). |
+| `ALLOW_SYNTHETIC_DATA`| `boolean`| `false` | Se `false`, o sistema opera em modo estritamente real: recusa fabricar candles sintéticos caso a Binance esteja fora do ar e bloqueia backtests sem dados reais históricos pré-sincronizados. |
 | `GEMINI_API_KEY` | `string` | *vazio* | Chave de API do Google Gemini para auditoria e diagnósticos de IA. |
-| `PORT` | `number` | `3000` | Porta TCP em que o servidor Express e a interface serão executados. |
-| `NODE_ENV` | `string` | `development` | Ambiente de execução (`development` ou `production`). |
+| `PORT` | `number` | `3000` | Porta TCP em que o servidor Express escuta. |
+| `HOST` | `string` | `0.0.0.0` | Endereço de interface de rede para escuta (definir `127.0.0.1` para ambientes estritamente locais). |
+| `NODE_ENV` | `string` | `development` | Ambiente de execução (`development`, `test` ou `production`). |
+
+### 🔒 Particularidades de Ambiente & Exceções
+
+1. **Ambiente em Nuvem / Contêineres (Cloud Run, Docker, AI Studio):**
+   * O servidor escuta em `HOST=0.0.0.0` por padrão com `trust proxy: 1` para permitir que o tráfego do gateway da nuvem alcance a aplicação sem mascarar o IP real nos limitadores de taxa (*rate limiting*).
+   * O dev server é estritamente fixado na porta `3000` para compatibilidade com o supervisor de iframes. Em produção, portas dinâmicas injetadas pelo orquestrador (`process.env.PORT`) são respeitadas automaticamente.
+   * Não é possível conectar modelos Ollama locais utilizando IPs privados locais (como `192.168.x.x` ou `localhost`) a partir da nuvem. Nestes casos, recomenda-se criar um túnel seguro HTTPS (ex.: via Ngrok ou Cloudflare Tunnel) ou executar o SuperBot localmente.
+
+2. **Proteção Anti-SSRF e DNS Rebinding:**
+   * Todas as requisições externas para provedores de IA passam pelo módulo `outboundPolicy.ts` com validação de hostname, bloqueio estrito de faixas privadas (RFC 1918, RFC 3927, RFC 4193, loopback, CGNAT e metadados de nuvem `169.254.169.254`) e resolução prévia de DNS para mitigar ataques de DNS rebinding.
+
+3. **Integridade de Dados e DataGate Ativo:**
+   * O robô possui um guardião de dados (`DataGate.ts`). Sinais quantitativos são bloqueados se o feed de cotações estiver desatualizado (>60s) ou se a integridade dos dados estiver degradada. Avaliações de trailing stop em ordens abertas são congeladas em caso de queda de rede para evitar saídas em falsos stops.
 
 ---
 

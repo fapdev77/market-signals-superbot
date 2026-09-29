@@ -303,5 +303,35 @@ export function createMarketRouter(
     }
   });
 
+  // TradFi Assets & Trading Schedule Status (Phase 2.4)
+  router.get('/tradfi/assets', async (req: Request, res: Response) => {
+    try {
+      const { TRADFI_ASSETS, isTradfiMarketOpen } = await import('../binanceService.js');
+      const tickerCache = getTickerCache();
+
+      const items = TRADFI_ASSETS.map(asset => {
+        const liveTicker = tickerCache[asset.symbol];
+        const isOpen = isTradfiMarketOpen(asset.tradfiCategory);
+
+        return {
+          ...asset,
+          isOpen,
+          price: liveTicker?.price || null,
+          priceChangePercent24h: liveTicker?.priceChangePercent24h || 0,
+          volume24h: liveTicker?.volume24h || 0,
+          confluenceScore: liveTicker?.confluenceScore || 0,
+          signalType: liveTicker?.signalType || 'NEUTRAL',
+          scheduleDescription: asset.tradfiCategory === 'COMMODITY'
+            ? 'Mercado 24/7 (Cripto/Commodity Perpétuo)'
+            : 'Sessão Regular NYSE/NASDAQ (14:30 - 21:00 UTC / Seg-Sex)'
+        };
+      });
+
+      res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to load TradFi assets' });
+    }
+  });
+
   return router;
 }

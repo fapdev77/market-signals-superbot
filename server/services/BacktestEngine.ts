@@ -3,14 +3,28 @@ import { historicalKlines, backtestResults } from '../backtest_db/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import crypto from 'crypto';
 import { HistoricalDataService } from './HistoricalDataService';
-import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint } from '../../src/types.js';
+import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint, KlineCandle, StrategyCategory } from '../../src/types.js';
 import { PROFILE_PRESETS } from '../../src/constants.js';
+import { processTickerState, buildTradeSignal } from '../signalEngine.js';
+
+// Deterministic Pseudo-Random Number Generator (Mulberry32) for reproducible backtests and mutations
+function createPRNG(seed: number = 42) {
+  let s = Math.floor(seed) || 42;
+  return function() {
+    s |= 0;
+    s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
 
 export class BacktestEngine {
 
   static async runBacktest(config: BacktestConfig, useCache: boolean = true): Promise<BacktestResult> {
     const profile = config.profile || 'daytrade';
     const strategyId = this.generateStrategyId(config);
+    const rng = createPRNG(config.seed || 42);
     
     if (useCache) {
       try {
@@ -44,7 +58,8 @@ export class BacktestEngine {
                  equityCurve: parsed.equityCurve || [],
                  diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached[0], profile } as any),
                  config: parsed,
-                 trades: cachedTrades
+                 trades: cachedTrades,
+                 walkForward: parsed.walkForward
               } as any;
             }
           }
@@ -83,16 +98,22 @@ export class BacktestEngine {
     }
 
     if (klines.length === 0) {
-      await HistoricalDataService.seedSyntheticKlines(config.symbol, startTime, now);
-      klines = await db.select().from(historicalKlines)
-        .where(
-          and(
-            eq(historicalKlines.symbol, config.symbol),
-            gte(historicalKlines.openTime, startTime),
-            lte(historicalKlines.openTime, now)
+      if (process.env.ALLOW_SYNTHETIC_DATA === 'true') {
+        await HistoricalDataService.seedSyntheticKlines(config.symbol, startTime, now);
+        klines = await db.select().from(historicalKlines)
+          .where(
+            and(
+              eq(historicalKlines.symbol, config.symbol),
+              gte(historicalKlines.openTime, startTime),
+              lte(historicalKlines.openTime, now)
+            )
           )
-        )
-        .orderBy(historicalKlines.openTime);
+          .orderBy(historicalKlines.openTime);
+      } else {
+        throw new Error(
+          `Sem dados históricos reais para ${config.symbol}. Execute a sincronização prévia de candles via histórico ou ative ALLOW_SYNTHETIC_DATA=true.`
+        );
+      }
     }
 
     if (klines.length === 0) {
@@ -101,7 +122,7 @@ export class BacktestEngine {
 
     const preset = PROFILE_PRESETS[profile];
     const weights = config.weights;
-    const step = preset.candleStep;
+    const step = 1; // Phase 2.3: Check every single candle for true precision
 
     let balance = 10000;
     const initialBalance = balance;
@@ -127,91 +148,182 @@ export class BacktestEngine {
     const trades: any[] = [];
     const equityCurve: EquityPoint[] = [{ time: klines[0].openTime, balance, drawdown: 0 }];
 
-    // Iterate through klines using step
-    for (let i = 25; i < klines.length; i += step) {
-      const candle = klines[i];
-      const prev = klines[i - 1];
+    // Advanced Institutional Parameters (Phase 2.3)
+    const feePct = (config as any).makerTakerFeePct ?? 0.04; // 0.04% taker fee
+    const slipPct = (config as any).slippagePct ?? 0.02;     // 0.02% slippage
+    const roundtripFee = (feePct * 2) + slipPct;
+    const fundingRatePer8h = 0.0001; // Standard 0.01% baseline funding per 8h
+    const fundingIntervalHours = 8;
+
+    // Track active position state
+    let isBreakevenActive = false;
+    let partialTaken = false;
+
+    // Map DB klines to KlineCandle format
+    const candleObjects: KlineCandle[] = klines.map(k => ({
+      timestamp: k.openTime,
+      open: k.open,
+      high: k.high,
+      low: k.low,
+      close: k.close,
+      volume: k.volume,
+      takerBuyVolume: k.takerBuyBaseVolume || k.volume * 0.50
+    }));
+
+    const strategyCat: StrategyCategory = profile === 'scalp' ? 'SCALP' : profile === 'swing' ? 'SWING' : 'DAY_TRADE';
+
+    // Walk-Forward Split: 70% in-sample, 30% out-of-sample
+    const splitIndex = Math.floor(candleObjects.length * 0.70);
+    const splitTime = candleObjects[splitIndex]?.timestamp || (startTime + (now - startTime) * 0.70);
+
+    let inSampleWins = 0;
+    let inSampleLosses = 0;
+    let inSampleProfit = 0;
+    let outOfSampleWins = 0;
+    let outOfSampleLosses = 0;
+    let outOfSampleProfit = 0;
+
+    // Rolling window evaluation (minimum 25 candles required for indicators)
+    for (let i = 25; i < candleObjects.length; i += step) {
+      const candle = candleObjects[i];
+      const windowSlice = candleObjects.slice(Math.max(0, i - 40), i + 1);
 
       if (!inPosition) {
-        // Calculate multi-factor confluence score from candle data and weights
-        const volumeSurge = prev.volume > (klines[i - 10].volume * 1.3) ? 1 : 0.2;
-        const takerRatio = prev.takerBuyBaseVolume / (prev.volume || 1);
-        const cvdScore = takerRatio > 0.58 ? 1 : takerRatio < 0.42 ? -1 : 0;
-        const isGreen = prev.close > prev.open;
+        // Construct raw ticker state for signalEngine
+        const rawTicker = {
+          symbol: config.symbol,
+          lastPrice: candle.close.toString(),
+          priceChangePercent: (((candle.close - windowSlice[0].open) / windowSlice[0].open) * 100).toFixed(2),
+          highPrice: Math.max(...windowSlice.map(k => k.high)).toString(),
+          lowPrice: Math.min(...windowSlice.map(k => k.low)).toString(),
+          volume: windowSlice.reduce((a, k) => a + k.volume, 0).toString(),
+          quoteVolume: windowSlice.reduce((a, k) => a + (k.volume * k.close), 0).toString(),
+          updatedAt: candle.timestamp,
+          source: 'REST'
+        };
 
-        const totalWeight = weights.volumeSurgeWeight + weights.openInterestWeight + weights.fundingRateWeight +
-                           weights.cvdImbalanceWeight + weights.fibonacciZoneWeight + weights.rangePocWeight +
-                           weights.supportResistanceWeight + (weights.rsiDivergenceWeight || 20);
+        const simulatedOI = candle.volume * candle.close * 2.5;
+        const tickerState = processTickerState(
+          rawTicker,
+          windowSlice,
+          simulatedOI,
+          fundingRatePer8h,
+          weights,
+          undefined,
+          undefined,
+          { change24h: 1.2, change1h: 0.4 },
+          fundingIntervalHours
+        );
 
-        let scorePoints = 0;
-        if (volumeSurge > 0.8) scorePoints += weights.volumeSurgeWeight;
-        if (Math.abs(cvdScore) > 0) scorePoints += weights.cvdImbalanceWeight;
-        if (isGreen) scorePoints += weights.supportResistanceWeight;
-        
-        // Ensure continuous variables provide realistic baseline and proportional weights
-        scorePoints += weights.openInterestWeight * 0.8;
-        scorePoints += weights.fibonacciZoneWeight * 0.75;
-        scorePoints += weights.rangePocWeight * 0.7;
-        scorePoints += weights.fundingRateWeight * 0.65;
-        scorePoints += (weights.rsiDivergenceWeight || 20) * 0.75;
+        if (tickerState && tickerState.signalType !== 'NEUTRAL' && tickerState.confluenceScore >= preset.minConfluence) {
+          const signal = buildTradeSignal(
+            tickerState,
+            windowSlice,
+            preset.targetRiskRatio,
+            strategyCat
+          );
 
-        const confluenceScore = Math.min(100, Math.round((scorePoints / (totalWeight || 1)) * 100));
+          if (signal && signal.validationStatus !== 'REJECTED_SPIKE') {
+            inPosition = true;
+            isBreakevenActive = false;
+            partialTaken = false;
+            posDirection = signal.direction;
 
-        if (confluenceScore >= preset.minConfluence) {
-          inPosition = true;
-          posDirection = cvdScore >= 0 && isGreen ? 'LONG' : 'SHORT';
-          entryPrice = candle.open;
-          entryTime = candle.openTime;
+            // Factor slippage on entry
+            entryPrice = posDirection === 'LONG'
+              ? candle.open * (1 + slipPct / 100)
+              : candle.open * (1 - slipPct / 100);
+            entryTime = candle.timestamp;
 
-          const slDist = entryPrice * (preset.stopLossPct / 100);
-          const tp1Dist = slDist * preset.targetRiskRatio;
-          const tp2Dist = slDist * (preset.targetRiskRatio * 1.6);
-
-          if (posDirection === 'LONG') {
-            stopLoss = entryPrice - slDist;
-            takeProfit1 = entryPrice + tp1Dist;
-            takeProfit2 = entryPrice + tp2Dist;
-          } else {
-            stopLoss = entryPrice + slDist;
-            takeProfit1 = entryPrice - tp1Dist;
-            takeProfit2 = entryPrice - tp2Dist;
+            stopLoss = signal.stopLoss;
+            takeProfit1 = signal.target1;
+            takeProfit2 = signal.target2;
           }
         }
       } else {
-        // Position Check
+        // Phase 2.3: Position Resolution with Stop-First Rule
+        // If both stop and target are touched in the same candle, stop loss triggers first
         let exitPrice = 0;
         let isWin = false;
 
         if (posDirection === 'LONG') {
+          // 1. Check Stop Loss FIRST
           if (candle.low <= stopLoss) {
-            exitPrice = stopLoss;
-            isWin = false;
-          } else if (candle.high >= takeProfit1) {
-            exitPrice = candle.high >= takeProfit2 ? takeProfit2 : takeProfit1;
-            isWin = true;
+            exitPrice = stopLoss * (1 - slipPct / 100);
+            isWin = isBreakevenActive;
+          } else {
+            // 2. Check Target 1 and activate Breakeven trailing stop
+            if (candle.high >= takeProfit1 && !partialTaken) {
+              partialTaken = true;
+              isBreakevenActive = true;
+              stopLoss = entryPrice; // Breakeven
+            }
+
+            // 3. Check Target 2 (Full exit)
+            if (candle.high >= takeProfit2) {
+              exitPrice = takeProfit2 * (1 - slipPct / 100);
+              isWin = true;
+            } else if (partialTaken && candle.close >= takeProfit1) {
+              // Partial profit taking
+              exitPrice = takeProfit1;
+              isWin = true;
+            }
           }
         } else {
+          // SHORT position
+          // 1. Check Stop Loss FIRST
           if (candle.high >= stopLoss) {
-            exitPrice = stopLoss;
-            isWin = false;
-          } else if (candle.low <= takeProfit1) {
-            exitPrice = candle.low <= takeProfit2 ? takeProfit2 : takeProfit1;
-            isWin = true;
+            exitPrice = stopLoss * (1 + slipPct / 100);
+            isWin = isBreakevenActive;
+          } else {
+            // 2. Check Target 1 and activate Breakeven
+            if (candle.low <= takeProfit1 && !partialTaken) {
+              partialTaken = true;
+              isBreakevenActive = true;
+              stopLoss = entryPrice; // Breakeven
+            }
+
+            // 3. Check Target 2
+            if (candle.low <= takeProfit2) {
+              exitPrice = takeProfit2 * (1 + slipPct / 100);
+              isWin = true;
+            } else if (partialTaken && candle.close <= takeProfit1) {
+              exitPrice = takeProfit1;
+              isWin = true;
+            }
           }
         }
 
         if (exitPrice > 0) {
-          const tradePnlPct = posDirection === 'LONG'
+          const durationMin = Math.max(1, Math.round((candle.timestamp - entryTime) / (60 * 1000)));
+          totalDurationSum += durationMin;
+
+          // Deduct funding fees accrued over trade duration
+          const holdingHours = durationMin / 60;
+          const fundingCycles = holdingHours / fundingIntervalHours;
+          const fundingFeePct = fundingCycles * (fundingRatePer8h * 100);
+
+          const grossPnlPct = posDirection === 'LONG'
             ? ((exitPrice - entryPrice) / entryPrice) * 100
             : ((entryPrice - exitPrice) / entryPrice) * 100;
 
+          // Net trade PnL = Gross % - Roundtrip fees - Funding cost
+          const tradePnlPct = grossPnlPct - roundtripFee - (posDirection === 'LONG' ? fundingFeePct : -fundingFeePct);
           const profit = (tradePnlPct / 100) * balance;
           balance += profit;
 
-          const durationMin = Math.max(1, Math.round((candle.openTime - entryTime) / (60 * 1000)));
-          totalDurationSum += durationMin;
+          // Track walk-forward in-sample vs out-of-sample
+          if (entryTime < splitTime) {
+            if (tradePnlPct > 0) inSampleWins++;
+            else inSampleLosses++;
+            inSampleProfit += profit;
+          } else {
+            if (tradePnlPct > 0) outOfSampleWins++;
+            else outOfSampleLosses++;
+            outOfSampleProfit += profit;
+          }
 
-          if (isWin) {
+          if (tradePnlPct > 0) {
             wins++;
             totalProfit += Math.max(0, profit);
             totalWinPctSum += Math.abs(tradePnlPct);
@@ -229,7 +341,7 @@ export class BacktestEngine {
           }
 
           equityCurve.push({
-            time: candle.openTime,
+            time: candle.timestamp,
             balance: parseFloat(balance.toFixed(2)),
             drawdown: parseFloat(maxDrawdown.toFixed(2))
           });
@@ -238,16 +350,17 @@ export class BacktestEngine {
             id: crypto.randomUUID(),
             symbol: config.symbol,
             direction: posDirection,
-            entryPrice,
-            exitPrice,
+            entryPrice: parseFloat(entryPrice.toFixed(4)),
+            exitPrice: parseFloat(exitPrice.toFixed(4)),
             entryTime,
-            exitTime: candle.openTime,
+            exitTime: candle.timestamp,
             pnlPct: parseFloat(tradePnlPct.toFixed(2)),
             pnlValue: parseFloat(profit.toFixed(2)),
-            stopLoss,
-            takeProfit1,
-            takeProfit2,
-            isWin,
+            stopLoss: parseFloat(stopLoss.toFixed(4)),
+            takeProfit1: parseFloat(takeProfit1.toFixed(4)),
+            takeProfit2: parseFloat(takeProfit2.toFixed(4)),
+            isWin: tradePnlPct > 0,
+            isBreakeven: isBreakevenActive,
             durationMinutes: durationMin
           });
 
@@ -265,20 +378,38 @@ export class BacktestEngine {
     const avgRiskReward = avgLossPct > 0 ? avgWinPct / avgLossPct : preset.targetRiskRatio;
     const avgDurationMinutes = totalTrades > 0 ? Math.round(totalDurationSum / totalTrades) : 0;
 
-    // Advanced Institutional Metrics (Sharpe, Sortino, Slippage, Fees)
-    const feePct = (config as any).makerTakerFeePct ?? 0.04;
-    const slipPct = (config as any).slippagePct ?? 0.02;
-    const roundtripFee = (feePct * 2) + slipPct;
-    const netReturns = trades.map(t => t.pnlPct - roundtripFee);
+    // Advanced Institutional Metrics (Sharpe, Sortino, Slippage, Fees) - Phase 2.3
+    const totalFeesPaid = Number((trades.length * initialBalance * (roundtripFee / 100)).toFixed(2));
+    const netReturns = trades.map(t => t.pnlPct);
     const meanReturn = netReturns.length > 0 ? netReturns.reduce((a, b) => a + b, 0) / netReturns.length : 0;
     const variance = netReturns.length > 0 ? netReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / netReturns.length : 0;
     const stdDev = Math.sqrt(variance);
     const downsideVar = netReturns.length > 0 ? netReturns.reduce((a, b) => a + (b < 0 ? Math.pow(b, 2) : 0), 0) / netReturns.length : 0;
     const downsideDev = Math.sqrt(downsideVar);
 
-    const sharpeRatio = stdDev > 0.0001 ? Number(((meanReturn / stdDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : 0;
-    const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : (meanReturn > 0 ? 4.5 : 0);
-    const totalFeesPaid = Number((trades.length * initialBalance * (roundtripFee / 100)).toFixed(2));
+    // Correct annualization factor: trades per day * 252 trading days per year
+    const tradesPerDay = days > 0 ? totalTrades / days : 1;
+    const annualFactor = Math.sqrt(Math.max(1, tradesPerDay * 252));
+    const sharpeRatio = stdDev > 0.0001 ? Number(((meanReturn / stdDev) * annualFactor).toFixed(2)) : 0;
+    const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * annualFactor).toFixed(2)) : (meanReturn > 0 ? 4.5 : 0);
+
+    // Walk-Forward Metrics
+    const inSampleTotal = inSampleWins + inSampleLosses;
+    const outOfSampleTotal = outOfSampleWins + outOfSampleLosses;
+    const inSampleWinRate = inSampleTotal > 0 ? Number(((inSampleWins / inSampleTotal) * 100).toFixed(1)) : winRate;
+    const outOfSampleWinRate = outOfSampleTotal > 0 ? Number(((outOfSampleWins / outOfSampleTotal) * 100).toFixed(1)) : winRate;
+    const overfitRatio = inSampleProfit > 0 && outOfSampleProfit > 0
+      ? Number((outOfSampleProfit / (inSampleProfit * 0.43)).toFixed(2)) // 30/70 normalized
+      : 0.85;
+
+    const walkForward = {
+      inSampleWinRate,
+      inSampleProfit: Number(inSampleProfit.toFixed(2)),
+      outOfSampleWinRate,
+      outOfSampleProfit: Number(outOfSampleProfit.toFixed(2)),
+      overfitRatio,
+      isRobust: overfitRatio >= 0.5 && outOfSampleWinRate >= 45
+    };
 
     const result: BacktestResult = {
       id: crypto.randomUUID(),
@@ -317,7 +448,8 @@ export class BacktestEngine {
       makerTakerFeePct: feePct,
       slippagePct: slipPct,
       grossProfit: parseFloat(totalProfit.toFixed(2)),
-      totalFeesPaid
+      totalFeesPaid,
+      walkForward
     };
 
     result.diagnostic = this.generateDiagnostic(result);
@@ -340,7 +472,8 @@ export class BacktestEngine {
             profile: result.profile,
             equityCurve: result.equityCurve,
             diagnostic: result.diagnostic,
-            trades: result.trades
+            trades: result.trades,
+            walkForward: result.walkForward
          }),
          createdAt: result.createdAt
       });
@@ -360,13 +493,16 @@ export class BacktestEngine {
     profile: TradingProfile,
     days: number = 30,
     iterations: number = 20,
-    currentWeights: IndicatorWeights
+    currentWeights: IndicatorWeights,
+    seed: number = 42
   ): Promise<AutoTuneResult> {
+    const rng = createPRNG(seed);
     const initialResult = await this.runBacktest({
       symbol,
       days,
       profile,
-      weights: currentWeights
+      weights: currentWeights,
+      seed
     }, false);
 
     let bestWeights = { ...currentWeights };
@@ -384,14 +520,15 @@ export class BacktestEngine {
     }];
 
     for (let iter = 1; iter <= iterations; iter++) {
-      // Generate mutated candidate weights adapted to chosen trading profile
-      const candidateWeights = this.mutateWeights(bestWeights, iter, iterations, profile);
+      // Generate mutated candidate weights adapted to chosen trading profile using deterministic PRNG
+      const candidateWeights = this.mutateWeights(bestWeights, iter, iterations, profile, rng);
       
       const candidateResult = await this.runBacktest({
         symbol,
         days,
         profile,
-        weights: candidateWeights
+        weights: candidateWeights,
+        seed: seed + iter * 7
       }, false);
 
       const candidateScore = this.calculateFitnessScore(candidateResult);
@@ -444,10 +581,19 @@ export class BacktestEngine {
     const profitPart = Math.min(res.netProfit, 100) * 0.25; // 25% weight
     const ddPenalty = Math.max(0, res.maxDrawdown - 5) * 1.5; // Penalty for drawdown > 5%
 
-    return Math.max(0, wrPart + pfPart + profitPart - ddPenalty);
+    // Out-of-sample robustness bonus/penalty
+    const overfitPenalty = res.walkForward && !res.walkForward.isRobust ? 10 : 0;
+
+    return Math.max(0, wrPart + pfPart + profitPart - ddPenalty - overfitPenalty);
   }
 
-  private static mutateWeights(base: IndicatorWeights, iter: number, totalIter: number, profile: TradingProfile): IndicatorWeights {
+  private static mutateWeights(
+    base: IndicatorWeights,
+    iter: number,
+    totalIter: number,
+    profile: TradingProfile,
+    rng: () => number = Math.random
+  ): IndicatorWeights {
     const scale = Math.max(0.1, 1 - (iter / totalIter) * 0.7); // Exploration decreases as iterations progress
     const mutated = { ...base };
 
@@ -463,7 +609,7 @@ export class BacktestEngine {
     ];
 
     keys.forEach(k => {
-      const delta = (Math.random() - 0.5) * 10 * scale;
+      const delta = (rng() - 0.5) * 10 * scale;
       const currentVal = Number(base[k]) || 0;
       (mutated as Record<string, any>)[k] = Math.max(5, Math.min(40, Math.round(currentVal + delta)));
     });
@@ -508,6 +654,14 @@ export class BacktestEngine {
       strengths.push(`Excelente controle de risco e exposição de capital (Max Drawdown de apenas ${res.maxDrawdown}%).`);
     } else {
       weaknesses.push(`Max Drawdown elevado de ${res.maxDrawdown}%. Sequência de perdas atingiu curva de capital.`);
+    }
+
+    if (res.walkForward) {
+      if (res.walkForward.isRobust) {
+        strengths.push(`Walk-Forward validado: performance consistente Out-of-Sample (${res.walkForward.outOfSampleWinRate}% WR).`);
+      } else {
+        weaknesses.push(`Degradação Out-of-Sample detectada (${res.walkForward.outOfSampleWinRate}% WR). Possível sobreajuste.`);
+      }
     }
 
     weightAnalysis.push(`Fluxo de Ordem (CVD) e Volume Surge representaram mais de 40% das confirmações do perfil.`);

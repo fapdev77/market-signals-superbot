@@ -1,10 +1,11 @@
 import './server/utils/bootstrap.js';
 import express from 'express';
+import cors from 'cors';
 import path from 'path';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createServer as createViteServer } from 'vite';
-import { DEFAULT_SYMBOLS, TRADFI_ASSETS, fetchBinanceFuturesTickers, fetchOpenInterest, fetchFundingRate, fetchKlines, fetchLongShortRatio } from './server/binanceService.js';
+import { DEFAULT_SYMBOLS, TRADFI_ASSETS, isTradfiMarketOpen, fetchBinanceFuturesTickers, fetchOpenInterest, fetchFundingRate, fetchKlines, fetchLongShortRatio } from './server/binanceService.js';
 import { initBinanceWebSocket, getWebSocketStatus } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
 import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels, expireStaleSignals, expireActiveSignalsByCategory, expireAllActiveSignals, recordAuditLog } from './server/db.js';
@@ -39,8 +40,33 @@ async function startServer() {
   }
 
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  // Environment constraint: Dev server must run on port 3000 in AI Studio
+  const PORT = process.env.NODE_ENV === 'production' ? (Number(process.env.PORT) || 3000) : 3000;
   const HOST = process.env.HOST || '0.0.0.0';
+
+  // S2: Enable trust proxy (essential for Cloud Run, reverse proxies and rate-limiting)
+  app.set('trust proxy', 1);
+
+  // S2: Configured CORS middleware
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+  const allowedOrigins = allowedOriginsEnv
+    ? allowedOriginsEnv.split(',').map(o => o.trim())
+    : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, same-origin iframe in dev)
+      if (!origin) return callback(null, true);
+      // In dev/preview environments, allow same host or explicit origins
+      if (process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin) || origin.endsWith('.run.app')) {
+        return callback(null, true);
+      }
+      callback(new Error('Bloqueado por política de CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-token']
+  }));
 
   // S2: Hardening HTTP Headers via Helmet (with iframe & WASM support)
   app.use(helmet({
@@ -69,9 +95,19 @@ async function startServer() {
     message: { error: 'Too Many Requests', message: 'Limite de requisições para operações sensíveis atingido.' }
   });
 
+  const authBruteForceLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 15, // Max 15 token verifications per minute to stop brute-force
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too Many Requests', message: 'Muitas tentativas de validação de token. Aguarde 1 minuto.' }
+  });
+
   app.use('/api', globalApiLimiter);
   app.use('/api/ai', strictSensitiveLimiter);
   app.use('/api/system/factory-reset', strictSensitiveLimiter);
+  app.use('/api/system/table-clear', strictSensitiveLimiter);
+  app.use('/api/auth/verify', authBruteForceLimiter);
 
   // Health check endpoint (Public, unauthenticated for probes)
   app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
@@ -83,15 +119,15 @@ async function startServer() {
     let providedToken = '';
     if (authHeader && authHeader.startsWith('Bearer ')) {
       providedToken = authHeader.slice(7).trim();
+    } else if (req.headers['x-api-token']) {
+      providedToken = String(req.headers['x-api-token']).trim();
     }
     const effectiveToken = getEffectiveAuthToken();
     const isValid = Boolean(providedToken && validateTokenConstantTime(providedToken, effectiveToken));
-    const isDevSession = !process.env.API_AUTH_TOKEN;
 
     res.json({
       authenticated: isValid,
-      isDevSession,
-      defaultDevToken: isDevSession ? effectiveToken : undefined
+      hasExplicitTokenConfigured: Boolean(process.env.API_AUTH_TOKEN)
     });
   });
 
@@ -177,15 +213,20 @@ async function startServer() {
             // Fetch live Kline data (15m timeframe, 60 candles)
             const klines = await fetchKlines(symbol, '15m', 60);
 
-            // Fetch live Open Interest
+            // Fetch live Open Interest with real change tracking (Phase 2.2)
             const oiData = await fetchOpenInterest(symbol);
             const liveOI = (oiData && oiData.openInterest > 0) 
               ? oiData.openInterest 
               : (existingCache?.openInterest || 0);
+            const realOiChange = {
+              change24h: oiData?.change24h ?? existingCache?.openInterestChange24h,
+              change1h: oiData?.change1h ?? existingCache?.openInterestChange1h
+            };
 
-            // Fetch live Funding Rate
+            // Fetch live Funding Rate with contract interval (Phase 2.2)
             const fundingData = await fetchFundingRate(symbol);
             const liveFunding = fundingData ? fundingData.fundingRate : (existingCache?.fundingRate || 0.0001);
+            const fundingIntervalHours = fundingData?.fundingIntervalHours || existingCache?.fundingIntervalHours || 8;
 
             // Fetch Long/Short Ratio
             let lsData = undefined;
@@ -195,8 +236,18 @@ async function startServer() {
               // Non-blocking
             }
 
-            // D3/D5: Process ticker state strictly from real live data
-            const processed = processTickerState(raw, klines, liveOI, liveFunding, weights, lsData);
+            // D3/D5 & Phase 2.2: Process ticker state strictly from real live data
+            const processed = processTickerState(
+              raw,
+              klines,
+              liveOI,
+              liveFunding,
+              weights,
+              lsData,
+              undefined,
+              realOiChange,
+              fundingIntervalHours
+            );
             if (!processed) {
               return;
             }
@@ -219,7 +270,12 @@ async function startServer() {
 
               if (activeSignalsForCategory.length === 0) {
                 const minScore = weights.minConfluenceScore ?? 65;
-                if (gateDecision.allow && processed.confluenceScore >= minScore) {
+                
+                // Phase 2.4: Ensure underlying TradFi market is open before emitting signals
+                const tradfiAsset = TRADFI_ASSETS.find(a => a.symbol === symbol);
+                const isTradfiAllowed = !tradfiAsset || isTradfiMarketOpen(tradfiAsset.tradfiCategory);
+
+                if (gateDecision.allow && isTradfiAllowed && processed.confluenceScore >= minScore) {
                   const newSignal = buildTradeSignal(
                     processed, 
                     klines, 

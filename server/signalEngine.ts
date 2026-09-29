@@ -1,5 +1,5 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData, SignalTtlSettings } from '../src/types.js';
-import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis } from './binanceService.js';
+import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, TRADFI_ASSETS, isTradfiMarketOpen } from './binanceService.js';
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
@@ -35,7 +35,9 @@ export function processTickerState(
   fundingRate: number,
   weights: IndicatorWeights,
   longShortData?: LongShortRatioData,
-  trappedTradersData?: TrappedTradersData
+  trappedTradersData?: TrappedTradersData,
+  realOiChange?: { change24h?: number; change1h?: number },
+  fundingIntervalHours: number = 8
 ): TickerData | null {
   if (!rawTicker) return null;
   const symbol = rawTicker.symbol || 'BTCUSDT';
@@ -97,9 +99,13 @@ export function processTickerState(
   const cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL' =
     takerBuyRatio > 0.53 ? 'BUY' : takerBuyRatio < 0.47 ? 'SELL' : 'NEUTRAL';
 
-  // Open Interest % estimation / change
-  const openInterestChange24h = priceChangePercent24h * 0.8 + (takerBuyRatio - 0.5) * 10;
-  const openInterestChange1h = (takerBuyRatio - 0.5) * 6;
+  // Real Open Interest % change from exchange endpoint (no synthetic estimation)
+  const openInterestChange24h = typeof realOiChange?.change24h === 'number'
+    ? realOiChange.change24h
+    : 0;
+  const openInterestChange1h = typeof realOiChange?.change1h === 'number'
+    ? realOiChange.change1h
+    : 0;
 
   // Single Prints & FVG
   const fvg = detectFVG(klines);
@@ -176,13 +182,14 @@ export function processTickerState(
     confluenceFactors.push('Rejection at Range High (VAH) Resistance');
   }
 
-  // 5. Funding Rate Crowd Positioning (Análise do Comportamento do Funding Rate)
-  const fundingRateDaily = fundingRate * 3;
-  const annualFunding = fundingRate * 3 * 365 * 100;
+  // 5. Funding Rate Crowd Positioning with Contract-Specific Interval (Phase 2.2)
+  const cyclesPerDay = 24 / (fundingIntervalHours || 8);
+  const fundingRateDaily = fundingRate * cyclesPerDay;
+  const annualFunding = fundingRateDaily * 365 * 100;
   let fundingStatus: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE' = 'NEUTRAL';
   let fundingPressure: any = 'NEUTRO / EQUILIBRADO';
   let fundingBias: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
-  let fundingDesc = 'Funding rate em equilíbrio normal (' + (fundingRateDaily * 100).toFixed(3) + '%/dia). Sem pressões alavancadas em extremos.';
+  let fundingDesc = `Funding rate em equilíbrio normal (${(fundingRateDaily * 100).toFixed(3)}%/dia · ciclo de ${fundingIntervalHours}h). Sem pressões alavancadas em extremos.`;
 
   if (fundingRate > 0.0004) {
     fundingStatus = 'EXTREME_POSITIVE';
@@ -348,6 +355,15 @@ export function processTickerState(
     }
   }
 
+  // Phase 2.4: Check TradFi market schedule - No signals during market closed hours
+  const tradfiAsset = TRADFI_ASSETS.find(a => a.symbol === symbol);
+  const isMarketOpen = tradfiAsset ? isTradfiMarketOpen(tradfiAsset.tradfiCategory) : true;
+
+  if (tradfiAsset && !isMarketOpen) {
+    signalType = 'NEUTRAL';
+    signalReason = `Mercado tradicional subjacente (${tradfiAsset.tradfiCategory}) fechado no momento. Sinais pausados até a reabertura da sessão.`;
+  }
+
   const baseAsset = symbol.replace(/USDT|USD|BUSD/, '');
   const quoteAsset = symbol.includes('USDT') ? 'USDT' : 'USD';
 
@@ -369,6 +385,7 @@ export function processTickerState(
     openInterestChange24h,
     openInterestChange1h,
     fundingRate,
+    fundingIntervalHours,
     fundingRateDaily,
     fundingRateAnnualized: annualFunding,
     fundingRateAnalysis,
@@ -395,12 +412,12 @@ export function processTickerState(
     signalReason,
     confluenceFactors,
     dataQuality: {
-      isLive: true,
-      isDegraded: false,
-      lastPriceAgeMs: 0,
-      source: 'WS'
+      isLive: (rawTicker.updatedAt ? (Date.now() - rawTicker.updatedAt < 60000) : true) && (!klines || klines.length >= 5),
+      isDegraded: (rawTicker.updatedAt ? (Date.now() - rawTicker.updatedAt > 60000) : false) || (!klines || klines.length < 5),
+      lastPriceAgeMs: rawTicker.updatedAt ? Math.max(0, Date.now() - rawTicker.updatedAt) : 0,
+      source: rawTicker.source || (rawTicker.updatedAt && (Date.now() - rawTicker.updatedAt < 15000) ? 'WS' : 'REST')
     },
-    updatedAt: Date.now()
+    updatedAt: typeof rawTicker.updatedAt === 'number' ? rawTicker.updatedAt : Date.now()
   };
 }
 
@@ -472,7 +489,21 @@ export function buildTradeSignal(
   }
 
   const slDist = price * slPct;
-  let stopLoss = isLong ? Math.min(ticker.keyLevels.support1, price - slDist) : Math.max(ticker.keyLevels.resistance1, price + slDist);
+
+  // Phase 2.2: Stop Loss anchored to recent candle Swing High / Swing Low extremes with safety buffer
+  let recentLowestLow = price * (1 - slPct);
+  let recentHighestHigh = price * (1 + slPct);
+  if (klines && klines.length >= 5) {
+    const lookback = klines.slice(-10);
+    recentLowestLow = Math.min(...lookback.map(k => k.low));
+    recentHighestHigh = Math.max(...lookback.map(k => k.high));
+  }
+
+  // Long: Stop loss slightly below lowest low (with 0.15% buffer)
+  // Short: Stop loss slightly above highest high (with 0.15% buffer)
+  let stopLoss = isLong
+    ? Math.min(recentLowestLow * 0.9985, ticker.keyLevels.support1, price - slDist)
+    : Math.max(recentHighestHigh * 1.0015, ticker.keyLevels.resistance1, price + slDist);
   
   // Natural targets based on market structure
   let target1 = isLong ? ticker.keyLevels.resistance1 : ticker.keyLevels.support1;

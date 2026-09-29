@@ -23,7 +23,8 @@ export interface TickerData {
   openInterestChange24h: number;     // % change
   openInterestChange1h: number;      // % change
   fundingRate: number;              // e.g. 0.0001 (0.01% atual / ciclo)
-  fundingRateDaily: number;         // e.g. 0.0003 (0.03% diário - 3 ciclos)
+  fundingIntervalHours?: number;    // e.g. 8 (standard), 4 or 2 hours depending on contract
+  fundingRateDaily: number;         // e.g. 0.0003 (0.03% diário)
   fundingRateAnnualized: number;    // % annualized
   fundingRateAnalysis?: {
     status: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE';
@@ -383,9 +384,10 @@ export interface AIModelConfig {
 
 export interface BacktestConfig {
   symbol: string;
-  days: number;
-  profile: TradingProfile;
+  days?: number;
+  profile?: TradingProfile;
   weights: IndicatorWeights;
+  seed?: number;
 }
 
 export interface EquityPoint {
@@ -448,6 +450,14 @@ export interface BacktestResult {
   slippagePct?: number;
   grossProfit?: number;
   totalFeesPaid?: number;
+  walkForward?: {
+    inSampleWinRate: number;
+    inSampleProfit: number;
+    outOfSampleWinRate: number;
+    outOfSampleProfit: number;
+    overfitRatio: number;
+    isRobust: boolean;
+  };
 }
 
 export interface LiquidityBucket {
@@ -1021,6 +1031,17 @@ export interface ClientStorageItem {
   itemCount?: number;
   previewSummary: string;
 }
+
+export type FeedSource = 'WS' | 'REST' | 'CACHE' | 'SYNTHETIC';
+
+export interface FeedResult<T> {
+  value: T;
+  source: FeedSource;
+  fetchedAt: number;
+  isDegraded: boolean;
+  error?: string;
+}
+
 
 
 

@@ -1,4 +1,5 @@
 import { URL } from 'url';
+import dns from 'dns';
 
 const DEFAULT_ALLOWED_HOSTS = new Set([
   'generativelanguage.googleapis.com',
@@ -7,14 +8,21 @@ const DEFAULT_ALLOWED_HOSTS = new Set([
   'api.openai.com'
 ]);
 
+// Comprehensive RFC 1918, RFC 3927, RFC 4193, RFC 4291, loopback and cloud metadata patterns
 const FORBIDDEN_IP_PATTERNS = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
-  /^192\.168\./,
-  /^169\.254\./, // Cloud Metadata IP (AWS, GCP, Azure)
-  /^0\./,
-  /^::1$/,
+  /^127\./,                           // Loopback IPv4
+  /^10\./,                            // Class A Private
+  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,   // Class B Private
+  /^192\.168\./,                      // Class C Private
+  /^169\.254\./,                      // Link-Local / Cloud Metadata IP (AWS, GCP, Azure)
+  /^0\./,                             // Current network (RFC 1122)
+  /^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./, // CGNAT (RFC 6598)
+  /^198\.1[89]\./,                    // Benchmarking (RFC 2544)
+  /^::1$/,                            // Loopback IPv6
+  /^fc00:/i,                          // Unique Local IPv6 (RFC 4193)
+  /^fd00:/i,
+  /^fe80:/i,                          // Link-Local IPv6 (RFC 4291)
+  /^::ffff:(127\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|169\.254\.)/i, // IPv4-mapped IPv6
   /^localhost$/i
 ];
 
@@ -85,3 +93,44 @@ export function validateOutboundAIUrl(
 
   return { isValid: true, normalizedUrl: parsed.toString() };
 }
+
+/**
+ * Async DNS resolution check to prevent DNS rebinding attacks on outbound connections
+ */
+export async function validateOutboundAIUrlWithDns(
+  rawUrl: string,
+  provider: string = 'gemini'
+): Promise<OutboundValidationResult> {
+  const syncCheck = validateOutboundAIUrl(rawUrl, provider);
+  if (!syncCheck.isValid) {
+    return syncCheck;
+  }
+
+  if (provider === 'local') {
+    return syncCheck;
+  }
+
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const lookup = await dns.promises.lookup(parsed.hostname, { all: true });
+    for (const record of lookup) {
+      const ip = record.address;
+      for (const pattern of FORBIDDEN_IP_PATTERNS) {
+        if (pattern.test(ip)) {
+          return {
+            isValid: false,
+            error: `Conexão rejeitada: o host resolveu para IP restrito/privado '${ip}' (proteção contra DNS Rebinding).`
+          };
+        }
+      }
+    }
+  } catch (err: any) {
+    return {
+      isValid: false,
+      error: `Falha na resolução de DNS para o host: ${err?.message || 'Host inacessível'}`
+    };
+  }
+
+  return syncCheck;
+}
+

@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { addAILog } from './aiLogger.js';
 import { getAIPersonaById } from '../src/constants/aiPersonas.js';
 import { safeFetch } from './utils/safeFetch.js';
+import { validateOutboundAIUrl } from './utils/outboundPolicy.js';
 
 const getAiClient = (apiKeyOverride?: string) => {
   const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
@@ -242,6 +243,21 @@ export async function generateContentWithModel(
   if (provider === 'local') {
     const baseUrl = (modelConfig.apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
     const modelId = modelConfig.modelId || 'llama3.2';
+
+    const validation = validateOutboundAIUrl(baseUrl, 'local');
+    if (!validation.isValid) {
+      const errMsg = `URL bloqueada pela política de segurança SSRF: ${validation.error}`;
+      addAILog({
+        level: 'ERROR',
+        type: logType,
+        provider: 'local',
+        modelId,
+        message: errMsg,
+        durationMs: 0
+      });
+      throw new Error(errMsg);
+    }
+
     const isLocalhost = baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1');
     const isPrivateIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(baseUrl.replace(/^https?:\/\//, ''));
 
@@ -488,6 +504,21 @@ export async function generateContentWithModel(
   if (provider === 'openai' || provider === 'openrouter') {
     const defaultUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1';
     const baseUrl = (modelConfig.apiUrl || defaultUrl).replace(/\/+$/, '');
+
+    const validation = validateOutboundAIUrl(baseUrl, provider);
+    if (!validation.isValid) {
+      const errMsg = `URL bloqueada pela política de segurança SSRF: ${validation.error}`;
+      addAILog({
+        level: 'ERROR',
+        type: logType,
+        provider,
+        modelId: modelConfig.modelId,
+        message: errMsg,
+        durationMs: 0
+      });
+      throw new Error(errMsg);
+    }
+
     const apiKey = modelConfig.apiKey || (provider === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OPENAI_API_KEY);
 
     if (!apiKey) {
@@ -598,6 +629,21 @@ export async function generateContentWithModel(
 
   if (provider === 'anthropic') {
     const baseUrl = (modelConfig.apiUrl || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
+
+    const validation = validateOutboundAIUrl(baseUrl, 'anthropic');
+    if (!validation.isValid) {
+      const errMsg = `URL bloqueada pela política de segurança SSRF: ${validation.error}`;
+      addAILog({
+        level: 'ERROR',
+        type: logType,
+        provider: 'anthropic',
+        modelId: modelConfig.modelId,
+        message: errMsg,
+        durationMs: 0
+      });
+      throw new Error(errMsg);
+    }
+
     const apiKey = modelConfig.apiKey || process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { validateOutboundAIUrl } from '../utils/outboundPolicy.js';
 
 export const symbolParamSchema = z.object({
   symbol: z.string().regex(/^[A-Z0-9_]{2,20}$/, 'Símbolo inválido. Deve conter de 2 a 20 caracteres alfanuméricos.')
@@ -44,7 +45,18 @@ export const aiModelConfigItemSchema = z.object({
     topP: z.number().min(0).max(1).optional(),
     systemInstruction: z.string().optional()
   }).optional()
-}).passthrough();
+}).passthrough().superRefine((data, ctx) => {
+  if (data.apiUrl && data.apiUrl.trim().length > 0) {
+    const validation = validateOutboundAIUrl(data.apiUrl, data.provider);
+    if (!validation.isValid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['apiUrl'],
+        message: validation.error || 'URL da API inválida ou não autorizada pela política anti-SSRF.'
+      });
+    }
+  }
+});
 
 export const aiModelsUpdateSchema = z.array(aiModelConfigItemSchema).min(1, 'Pelo menos um modelo deve ser configurado.');
 

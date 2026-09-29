@@ -75,7 +75,10 @@ export function requestJson<T = any>(urlStr: string, options: HttpRequestOptions
               }
             } else {
               // Body is drained to avoid memory leaks or hung sockets
-              rejectOnce(new Error(`HTTP status ${status} de ${parsedUrl.hostname}`));
+              const httpErr: any = new Error(`HTTP status ${status} de ${parsedUrl.hostname}`);
+              httpErr.status = status;
+              httpErr.headers = res.headers;
+              rejectOnce(httpErr);
             }
           });
         }

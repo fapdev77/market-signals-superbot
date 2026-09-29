@@ -2,6 +2,7 @@ import { TickerData, KlineCandle, OrderBookDepthData, OrderBookLevel, LongShortR
 import { addBinanceLog, getLiveWSTickers, getLiquidationsSummary } from './binanceWebsocket.js';
 import { requestJson } from './utils/httpClient.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
+import { BinanceRateLimiter } from './utils/binanceRateLimiter.js';
 
 function formatPriceString(value: number | null | undefined): string {
   if (value === null || value === undefined || isNaN(value)) return '0.00';
@@ -15,13 +16,12 @@ function formatPriceString(value: number | null | undefined): string {
   return value.toFixed(decimals);
 }
 
-// Order of preference for Binance REST endpoints (vision public archive data first to bypass Cloud Run 451 geo-restrictions)
+// Phase 2.1: Exclusive fapi endpoints for perpetual contracts with weight control
 const REST_ENDPOINTS = [
-  { base: 'https://data-api.binance.vision', type: 'spot_public', tickerPath: '/api/v3/ticker/24hr', klinePath: '/api/v3/klines' },
   { base: 'https://fapi.binance.com', type: 'futures', tickerPath: '/fapi/v1/ticker/24hr', klinePath: '/fapi/v1/klines' },
   { base: 'https://fapi1.binance.com', type: 'futures', tickerPath: '/fapi/v1/ticker/24hr', klinePath: '/fapi/v1/klines' },
-  { base: 'https://api.binance.us', type: 'us_spot', tickerPath: '/api/v3/ticker/24hr', klinePath: '/api/v3/klines' },
-  { base: 'https://api.binance.com', type: 'spot', tickerPath: '/api/v3/ticker/24hr', klinePath: '/api/v3/klines' }
+  { base: 'https://fapi2.binance.com', type: 'futures', tickerPath: '/fapi/v1/ticker/24hr', klinePath: '/fapi/v1/klines' },
+  { base: 'https://fapi3.binance.com', type: 'futures', tickerPath: '/fapi/v1/ticker/24hr', klinePath: '/fapi/v1/klines' }
 ];
 
 let currentWorkingBaseIndex = 0;
@@ -43,18 +43,100 @@ export const DEFAULT_SYMBOLS = [
   'NEARUSDT'
 ];
 
-// Monitored TradFi / Macro Overview
+// Monitored TradFi / Macro Overview (Phase 2.4: Real Binance-traded commodities and wrapped equity assets)
 export const TRADFI_ASSETS = [
-  { symbol: 'SPY', name: 'S&P 500 Index ETF', baseAsset: 'SPY', quoteAsset: 'USD' },
-  { symbol: 'QQQ', name: 'Nasdaq 100 ETF', baseAsset: 'QQQ', quoteAsset: 'USD' },
-  { symbol: 'NVDA', name: 'NVIDIA Corp', baseAsset: 'NVDA', quoteAsset: 'USD' },
-  { symbol: 'AAPL', name: 'Apple Inc', baseAsset: 'AAPL', quoteAsset: 'USD' },
-  { symbol: 'TSLA', name: 'Tesla Inc', baseAsset: 'TSLA', quoteAsset: 'USD' },
-  { symbol: 'GOLD', name: 'Gold Spot USD', baseAsset: 'XAU', quoteAsset: 'USD' }
+  { symbol: 'PAXGUSDT', name: 'PAX Gold Perpetual / Spot', baseAsset: 'PAXG', quoteAsset: 'USDT', tradfiCategory: 'COMMODITY' as const, contractType: 'PERPETUAL' },
+  { symbol: 'XAUTUSDT', name: 'Tether Gold Perpetual / Spot', baseAsset: 'XAUT', quoteAsset: 'USDT', tradfiCategory: 'COMMODITY' as const, contractType: 'PERPETUAL' },
+  { symbol: 'EURUSDT', name: 'Euro FX Perpetual', baseAsset: 'EUR', quoteAsset: 'USDT', tradfiCategory: 'FOREX' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'GBPUSDT', name: 'British Pound FX Perpetual', baseAsset: 'GBP', quoteAsset: 'USDT', tradfiCategory: 'FOREX' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'JPYUSDT', name: 'Japanese Yen FX Perpetual', baseAsset: 'JPY', quoteAsset: 'USDT', tradfiCategory: 'FOREX' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'NVDABUSDT', name: 'NVIDIA Corp Tokenized', baseAsset: 'NVDA', quoteAsset: 'USDT', tradfiCategory: 'EQUITY' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'TSLABUSDT', name: 'Tesla Inc Tokenized', baseAsset: 'TSLA', quoteAsset: 'USDT', tradfiCategory: 'EQUITY' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'AAPLBUSDT', name: 'Apple Inc Tokenized', baseAsset: 'AAPL', quoteAsset: 'USDT', tradfiCategory: 'EQUITY' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'SPYBUSDT', name: 'S&P 500 ETF Tokenized', baseAsset: 'SPY', quoteAsset: 'USDT', tradfiCategory: 'INDEX' as const, contractType: 'TRADIFI_PERPETUAL' },
+  { symbol: 'QQQBUSDT', name: 'Nasdaq 100 ETF Tokenized', baseAsset: 'QQQ', quoteAsset: 'USDT', tradfiCategory: 'INDEX' as const, contractType: 'TRADIFI_PERPETUAL' }
 ];
+
+// Cache for TradFi exchange info & schedule
+let tradfiContractsCache: Set<string> | null = null;
+let lastExchangeInfoFetch = 0;
+
+/**
+ * Fetches and filters Binance FAPI exchangeInfo for TradFi and Perpetual contracts
+ */
+export async function fetchBinanceTradfiContracts(): Promise<Set<string>> {
+  const now = Date.now();
+  if (tradfiContractsCache && now - lastExchangeInfoFetch < 300000) {
+    return tradfiContractsCache;
+  }
+
+  const result = new Set<string>();
+  try {
+    const { data } = await fetchWithFallback((ep) => '/fapi/v1/exchangeInfo');
+    if (data?.symbols && Array.isArray(data.symbols)) {
+      for (const s of data.symbols) {
+        if (s.contractType === 'TRADIFI_PERPETUAL' || s.contractType === 'PERPETUAL') {
+          result.add(s.symbol);
+        }
+      }
+    }
+  } catch (err: any) {
+    addBinanceLog('WARN', 'REST_API', `Não foi possível carregar exchangeInfo completo: ${err?.message}`);
+  }
+
+  // Ensure known supported symbols are indexed
+  TRADFI_ASSETS.forEach(a => result.add(a.symbol));
+  tradfiContractsCache = result;
+  lastExchangeInfoFetch = now;
+  return result;
+}
+
+/**
+ * Checks if the underlying traditional financial market is currently in an open trading session
+ * US Equities & Indices: 9:30 AM to 4:00 PM EST (14:30 - 21:00 UTC) Monday - Friday
+ * Forex: 22:00 UTC Sunday to 22:00 UTC Friday (24/5)
+ * Gold / Commodities: 24/7 on crypto perps / spot, regular trading hours on COMEX
+ */
+export function isTradfiMarketOpen(category: 'EQUITY' | 'INDEX' | 'COMMODITY' | 'FOREX'): boolean {
+  if (category === 'COMMODITY') {
+    // Gold spot & crypto perpetuals trade 24/7 on Binance
+    return true;
+  }
+
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  const utcHours = now.getUTCHours();
+  const utcMinutes = now.getUTCMinutes();
+  const timeInMinutes = utcHours * 60 + utcMinutes;
+
+  if (category === 'FOREX') {
+    // Forex runs from Sunday 22:00 UTC to Friday 22:00 UTC
+    if (day === 6) return false; // Saturday closed
+    if (day === 0 && timeInMinutes < 22 * 60) return false; // Sunday before 22:00 UTC closed
+    if (day === 5 && timeInMinutes > 22 * 60) return false; // Friday after 22:00 UTC closed
+    return true;
+  }
+
+  // US Equities & Indices (NYSE / NASDAQ)
+  if (day === 0 || day === 6) {
+    return false;
+  }
+
+  // NYSE/NASDAQ open: 14:30 UTC to 21:00 UTC (9:30 AM to 4:00 PM EST)
+  const marketOpen = 14 * 60 + 30; // 14:30 UTC
+  const marketClose = 21 * 60;     // 21:00 UTC
+
+  return timeInMinutes >= marketOpen && timeInMinutes <= marketClose;
+}
 
 // Helper to fetch JSON safely with timeout, User-Agent, and detailed logging
 async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => string): Promise<{ data: any; endpoint: string }> {
+  // Check if rate limiter has active cooldown
+  if (!BinanceRateLimiter.isAllowed()) {
+    const remaining = Math.round(BinanceRateLimiter.getRemainingCooldownMs() / 1000);
+    throw new Error(`Binance API em cooldown preventivo contra 429/418 (${remaining}s restantes).`);
+  }
+
   // Start trying from current working endpoint index, then wrap around
   for (let offset = 0; offset < REST_ENDPOINTS.length; offset++) {
     const idx = (currentWorkingBaseIndex + offset) % REST_ENDPOINTS.length;
@@ -67,6 +149,10 @@ async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => stri
       const latency = Date.now() - startTime;
       currentWorkingBaseIndex = idx; // Remember working endpoint
 
+      // Update rate limiter weight from response headers
+      BinanceRateLimiter.updateFromHeaders(response.headers);
+      BinanceRateLimiter.recordSuccess();
+
       addBinanceLog(
         'SUCCESS',
         'REST_API',
@@ -78,13 +164,19 @@ async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => stri
 
     } catch (err: any) {
       const latency = Date.now() - startTime;
+      const status = err?.status || 0;
       const errMsg = err?.message || 'Falha de conexão com a API';
+
+      if (status === 429 || status === 418) {
+        BinanceRateLimiter.triggerBackoff(status);
+        BinanceRateLimiter.updateFromHeaders(err?.headers || {});
+      }
 
       addBinanceLog(
         'WARN',
         'REST_API',
         `Falha na requisição para ${ep.base}: ${errMsg} (${latency}ms). Tentando servidor secundário...`,
-        { url: fullUrl, error: errMsg }
+        { url: fullUrl, error: errMsg, status }
       );
     }
   }
@@ -143,24 +235,41 @@ export async function fetchBinanceFuturesTickers(symbolsToFilter?: string[]): Pr
 }
 
 // In-memory cache for Open Interest (30s TTL) and Funding Rate (60s TTL) to minimize outbound requests
-const oiCache: Record<string, { value: number; timestamp: number }> = {};
-const fundingCache: Record<string, { value: number; timestamp: number }> = {};
+const oiCache: Record<string, { value: number; timestamp: number; source: 'REST' | 'CACHE'; change24h?: number; change1h?: number }> = {};
+const fundingCache: Record<string, { value: number; timestamp: number; source: 'REST' | 'CACHE'; intervalHours?: number }> = {};
 
 /**
- * Fetches Open Interest for a Futures symbol with 30s cache and multi-endpoint fallback
+ * Fetches Open Interest and historical change for a Futures symbol
+ * Uses /fapi/v1/openInterest and /futures/data/openInterestHist
  */
-export async function fetchOpenInterest(symbol: string): Promise<{ openInterest: number }> {
+export async function fetchOpenInterest(symbol: string): Promise<{
+  openInterest: number;
+  source?: 'REST' | 'CACHE';
+  isDegraded?: boolean;
+  change24h?: number;
+  change1h?: number;
+}> {
   const cached = oiCache[symbol];
   const now = Date.now();
   if (cached && now - cached.timestamp < 30000) {
-    return { openInterest: cached.value };
+    return {
+      openInterest: cached.value,
+      source: cached.source,
+      isDegraded: false,
+      change24h: cached.change24h,
+      change1h: cached.change1h
+    };
   }
 
   const futuresEndpoints = [
     'https://fapi.binance.com',
     'https://fapi1.binance.com',
-    'https://data-api.binance.vision'
+    'https://fapi2.binance.com',
+    'https://fapi3.binance.com'
   ];
+
+  let currentOI = 0;
+  let fetchedOI = false;
 
   for (const base of futuresEndpoints) {
     try {
@@ -168,8 +277,9 @@ export async function fetchOpenInterest(symbol: string): Promise<{ openInterest:
       if (res.data?.openInterest) {
         const val = parseFloat(res.data.openInterest);
         if (!isNaN(val) && val > 0) {
-          oiCache[symbol] = { value: val, timestamp: now };
-          return { openInterest: val };
+          currentOI = val;
+          fetchedOI = true;
+          break;
         }
       }
     } catch {
@@ -177,34 +287,112 @@ export async function fetchOpenInterest(symbol: string): Promise<{ openInterest:
     }
   }
 
-  // If remote is unreachable, return previous cached value or 0
-  return { openInterest: cached?.value || 0 };
+  // Fetch real historical OI to compute actual 1h and 24h change
+  let change1h = cached?.change1h || 0;
+  let change24h = cached?.change24h || 0;
+
+  if (fetchedOI) {
+    for (const base of futuresEndpoints) {
+      try {
+        const histRes = await requestJson<Array<{ sumOpenInterest?: string; timestamp?: number }>>(
+          `${base}/futures/data/openInterestHist?symbol=${symbol}&period=1h&limit=25`,
+          { timeoutMs: 2500 }
+        );
+        if (Array.isArray(histRes.data) && histRes.data.length >= 2) {
+          const list = histRes.data;
+          const prev1h = parseFloat(list[list.length - 2]?.sumOpenInterest || '0');
+          const prev24h = parseFloat(list[0]?.sumOpenInterest || '0');
+
+          if (prev1h > 0) {
+            change1h = Number((((currentOI - prev1h) / prev1h) * 100).toFixed(2));
+          }
+          if (prev24h > 0) {
+            change24h = Number((((currentOI - prev24h) / prev24h) * 100).toFixed(2));
+          }
+          break;
+        }
+      } catch {
+        // non-blocking
+      }
+    }
+
+    oiCache[symbol] = {
+      value: currentOI,
+      timestamp: now,
+      source: 'REST',
+      change24h,
+      change1h
+    };
+
+    return {
+      openInterest: currentOI,
+      source: 'REST',
+      isDegraded: false,
+      change24h,
+      change1h
+    };
+  }
+
+  // If remote is unreachable, return previous cached value or 0 with degraded flag
+  return {
+    openInterest: cached?.value || 0,
+    source: 'CACHE',
+    isDegraded: !cached,
+    change24h: cached?.change24h || 0,
+    change1h: cached?.change1h || 0
+  };
 }
 
 /**
- * Fetches Premium Index & Funding Rate for a Futures symbol with 60s cache
+ * Fetches Premium Index & Funding Rate with contract-specific funding interval
  */
-export async function fetchFundingRate(symbol: string): Promise<{ fundingRate: number }> {
+export async function fetchFundingRate(symbol: string): Promise<{
+  fundingRate: number;
+  fundingIntervalHours: number;
+  source?: 'REST' | 'CACHE';
+  isDegraded?: boolean;
+}> {
   const cached = fundingCache[symbol];
   const now = Date.now();
   if (cached && now - cached.timestamp < 60000) {
-    return { fundingRate: cached.value };
+    return {
+      fundingRate: cached.value,
+      fundingIntervalHours: cached.intervalHours || 8,
+      source: cached.source,
+      isDegraded: false
+    };
   }
 
   const futuresEndpoints = [
     'https://fapi.binance.com',
     'https://fapi1.binance.com',
-    'https://data-api.binance.vision'
+    'https://fapi2.binance.com',
+    'https://fapi3.binance.com'
   ];
 
   for (const base of futuresEndpoints) {
     try {
-      const res = await requestJson<{ lastFundingRate?: string }>(`${base}/fapi/v1/premiumIndex?symbol=${symbol}`, { timeoutMs: 3000 });
+      const res = await requestJson<{
+        lastFundingRate?: string;
+        fundingIntervalHours?: number;
+      }>(`${base}/fapi/v1/premiumIndex?symbol=${symbol}`, { timeoutMs: 3000 });
+
       if (res.data?.lastFundingRate) {
         const val = parseFloat(res.data.lastFundingRate);
+        const intervalHours = Number(res.data.fundingIntervalHours) || 8;
         if (!isNaN(val)) {
-          fundingCache[symbol] = { value: val, timestamp: now };
-          return { fundingRate: val };
+          fundingCache[symbol] = {
+            value: val,
+            timestamp: now,
+            source: 'REST',
+            intervalHours
+          };
+          return {
+            fundingRate: val,
+            fundingIntervalHours: intervalHours,
+            source: 'REST',
+            isDegraded: false
+          };
         }
       }
     } catch {
@@ -212,7 +400,12 @@ export async function fetchFundingRate(symbol: string): Promise<{ fundingRate: n
     }
   }
 
-  return { fundingRate: cached?.value ?? 0.0001 };
+  return {
+    fundingRate: cached?.value ?? 0,
+    fundingIntervalHours: cached?.intervalHours || 8,
+    source: 'CACHE',
+    isDegraded: !cached
+  };
 }
 
 // Memory cache for Long/Short ratio data (45s TTL)
@@ -233,7 +426,8 @@ export async function fetchLongShortRatio(symbol: string, currentPrice?: number)
   const futuresBases = [
     'https://fapi.binance.com',
     'https://fapi1.binance.com',
-    'https://data-api.binance.vision'
+    'https://fapi2.binance.com',
+    'https://fapi3.binance.com'
   ];
 
   let globalRatio = 1.0;
@@ -494,12 +688,18 @@ export function calculateTrappedTradersAnalysis(
 }
 
 // Memory cache for Klines with 10s TTL to optimize multi-strategy concurrent evaluations
-const klineCache: Record<string, { candles: KlineCandle[]; timestamp: number }> = {};
+const klineCache: Record<string, { candles: KlineCandle[]; timestamp: number; isSynthetic: boolean }> = {};
 
 /**
  * Fetches Kline / Candlestick data (e.g. 5m, 15m, 30m, 1h, 4h)
+ * Fail-closed: Never returns synthetic data silently.
+ * Synthetic fallback is only activated if explicitly allowed via ALLOW_SYNTHETIC_DATA='true'.
  */
-export async function fetchKlines(symbol: string, interval: string = '15m', limit: number = 50): Promise<KlineCandle[]> {
+export async function fetchKlines(
+  symbol: string,
+  interval: string = '15m',
+  limit: number = 50
+): Promise<KlineCandle[]> {
   const cacheKey = `${symbol}_${interval}_${limit}`;
   const now = Date.now();
   if (klineCache[cacheKey] && (now - klineCache[cacheKey].timestamp < 10000)) {
@@ -521,15 +721,28 @@ export async function fetchKlines(symbol: string, interval: string = '15m', limi
         volume: parseFloat(k[5]),
         takerBuyVolume: parseFloat(k[9]) || parseFloat(k[5]) * 0.52
       }));
-      klineCache[cacheKey] = { candles, timestamp: now };
+      klineCache[cacheKey] = { candles, timestamp: now, isSynthetic: false };
       return candles;
     }
-  } catch (err) {
-    // Fallback to synthetic kline candles
+  } catch (err: any) {
+    addBinanceLog('WARN', 'REST_API', `Falha ao obter klines para ${symbol} (${interval}): ${err?.message || err}`);
   }
-  const fallback = generateFallbackKlines(symbol, limit);
-  klineCache[cacheKey] = { candles: fallback, timestamp: now };
-  return fallback;
+
+  // If cached candles exist from earlier real fetches, reuse them
+  if (klineCache[cacheKey] && klineCache[cacheKey].candles.length > 0 && !klineCache[cacheKey].isSynthetic) {
+    return klineCache[cacheKey].candles;
+  }
+
+  // Synthetic fallback strictly controlled by environment variable
+  const allowSynthetic = process.env.ALLOW_SYNTHETIC_DATA === 'true';
+  if (allowSynthetic) {
+    const fallback = generateFallbackKlines(symbol, limit);
+    klineCache[cacheKey] = { candles: fallback, timestamp: now, isSynthetic: true };
+    return fallback;
+  }
+
+  // Fail-closed: return empty array rather than fabricating prices
+  return [];
 }
 
 /**
@@ -982,8 +1195,8 @@ export async function fetchOrderBookDepth(
   if (!isTradfi) {
     const endpoints = [
       `https://fapi.binance.com/fapi/v1/depth?symbol=${cleanSymbol}&limit=${limit}`,
-      `https://data-api.binance.vision/api/v3/depth?symbol=${cleanSymbol}&limit=${limit}`,
-      `https://api.binance.us/api/v3/depth?symbol=${cleanSymbol}&limit=${limit}`
+      `https://fapi1.binance.com/fapi/v1/depth?symbol=${cleanSymbol}&limit=${limit}`,
+      `https://fapi2.binance.com/fapi/v1/depth?symbol=${cleanSymbol}&limit=${limit}`
     ];
 
     for (const url of endpoints) {
