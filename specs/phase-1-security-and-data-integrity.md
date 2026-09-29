@@ -96,9 +96,9 @@ Checklist S1–S7 e D1–D7 verde, `tsc` sem erros, testes novos e antigos passa
 
 ## 7. Decisões que preciso que você aprove
 
-1. **Autenticação:** token estático em Bearer (simples, uso individual, minha recomendação) ou login com sessão por cookie httpOnly (mais trabalho, melhor para múltiplos usuários)?
-2. **Chaves de IA:** só por variável de ambiente, ou também no banco? Recomendo env como padrão e banco criptografado (AES-256-GCM) como opcional, adiado para a Fase 2.
-3. **Sinais falsos:** apagar os `HIST-*` (recomendo, com backup) ou apenas marcá-los como `DEMO`?
-4. **Lockfile:** manter só `package-lock.json` e remover `bun.lock` (recomendo), ou o contrário?
-5. **TradFi:** remover até existir provedor real (recomendo) ou manter rotulado como demo?
-6. **Deploy alvo:** o `metadata.json` aponta para AI Studio/Cloud Run. Confirma que é esse o ambiente? Isso define o valor padrão de `HOST` e a origem CORS.
+1. **Autenticação:** token estático em Bearer (simples, uso individual, minha recomendação) ou login com sessão por cookie httpOnly (mais trabalho, melhor para múltiplos usuários)? R: token estático em Bearer
+2. **Chaves de IA:** só por variável de ambiente, ou também no banco? Recomendo env como padrão e banco criptografado (AES-256-GCM) como opcional. R: Variavel e Banco
+3. **Sinais falsos:** apagar os `HIST-*` (recomendo, com backup) ou apenas marcá-los como `DEMO`? R: Apagar e sem backup.
+4. **Lockfile:** manter só `package-lock.json` e remover `bun.lock` (recomendo), ou o contrário? R:  manter só `package-lock.json` e remover `bun.lock`
+5. **TradFi:** remover até existir provedor real (recomendo) ou manter rotulado como demo? R: montar plano para termos dados reais de stocks verificar documentação binance se temos isso, caso contrario remover por enquanto.
+6. **Deploy alvo:** o `metadata.json` aponta para AI Studio/Cloud Run. Confirma que é esse o ambiente? Isso define o valor padrão de `HOST` e a origem CORS. O ambiente de teste sim, e esse, mas o ambiente real de produção sera ollama com llm local (ja temos isso configuravel pronto no app em Configuração e Parâmetros do Motor de IA)
