@@ -64,6 +64,10 @@ export function canGenerateSignals(ticker: TickerData, now: number = Date.now())
 /**
  * Evaluates whether open signals for this symbol can be safely updated (stops, targets, breakeven).
  * Sinais abertos não devem ser stopados ou finalizados com base em dados corrompidos ou defasados.
+ *
+ * Phase 2.5.1: this gate now honours `dataQuality.isDegraded` and a STALE source marker. A cached /
+ * degraded quote must never be used to close a position, because a stale price can trigger a fake
+ * stop-out or a fake target hit.
  */
 export function canEvaluateActiveTrades(ticker: TickerData, now: number = Date.now()): DataGateDecision {
   if (!ticker || !ticker.price || isNaN(ticker.price) || ticker.price <= 0) {
@@ -72,6 +76,15 @@ export function canEvaluateActiveTrades(ticker: TickerData, now: number = Date.n
       reason: 'Preço de mercado ausente; posições mantidas em proteção.',
       isDegraded: true,
       ageMs: Infinity
+    };
+  }
+
+  if (ticker.dataQuality?.source === 'STALE') {
+    return {
+      allow: false,
+      reason: 'Cotação marcada como STALE; avaliação de stops suspensa para evitar falsas saídas.',
+      isDegraded: true,
+      ageMs: now - (ticker.updatedAt || 0)
     };
   }
 
@@ -85,9 +98,28 @@ export function canEvaluateActiveTrades(ticker: TickerData, now: number = Date.n
     };
   }
 
+  // A degraded feed (missing klines, unreachable exchange, stale reconstruction) is not trustworthy
+  // enough to resolve a live position. Hold the position until the feed recovers.
+  if (ticker.dataQuality?.isDegraded) {
+    return {
+      allow: false,
+      reason: 'Qualidade do feed degradada; posições mantidas em proteção.',
+      isDegraded: true,
+      ageMs
+    };
+  }
+
   return {
     allow: true,
     isDegraded: false,
     ageMs
   };
+}
+
+/**
+ * True when the quote came from the in-memory reconstruction of a previous tick rather than from a
+ * live exchange response (Phase 2.5.1). Such quotes are marked STALE + degraded so the gates reject them.
+ */
+export function isStaleQuote(ticker: Partial<TickerData> | undefined | null): boolean {
+  return ticker?.dataQuality?.source === 'STALE';
 }

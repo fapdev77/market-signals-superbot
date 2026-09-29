@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Phase 2.5.7: before this workflow existed, a broken lockfile (missing cors/@types/cors) shipped and
+# `npm ci` could not run at all. These jobs are the gate that would have caught it.
+jobs:
+  verify:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      matrix:
+        # package.json declares engines.node >= 20. Test the floor and the current LTS.
+        node-version: [20.x, 22.x]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # `npm ci` is the reason this job exists: it fails loudly when the lockfile and package.json
+      # disagree, which is exactly the failure that went unnoticed before.
+      - name: Install (clean, lockfile-exact)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+        env:
+          NODE_ENV: test
+
+      - name: Build
+        run: npm run build
+
+  audit:
+    name: Production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install (clean, lockfile-exact)
+        run: npm ci
+
+      # Only production dependencies gate the build. The 4 known moderate advisories come from
+      # drizzle-kit's bundled esbuild dev server (devDependency, dev-only surface) and the only
+      # offered fix is a downgrade of drizzle-kit, so they are tracked rather than forced.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=moderate

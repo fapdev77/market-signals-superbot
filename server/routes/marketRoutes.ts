@@ -2,9 +2,12 @@ import { Router, Request, Response } from 'express';
 import { getBinanceLogs } from '../binanceWebsocket.js';
 import { fetchKlines, fetchOrderBookDepth } from '../binanceService.js';
 import { getRecentSignals, saveIndicatorWeights, saveAIModels, expireActiveSignalsByCategory, expireAllActiveSignals, recordAuditLog } from '../db.js';
+import { parseOriginFilter } from '../utils/dataOrigin.js';
 import { TickerData, BotState, StrategyCategory } from '../../src/types.js';
 import { redactAIModelConfigs, mergePreservedSecrets } from '../utils/secretsRedaction.js';
 import { validateBody, validateParams, symbolParamSchema, aiModelsUpdateSchema, weightsUpdateSchema } from '../middleware/validation.js';
+import { getAuditActor } from '../middleware/auth.js';
+import { validateOutboundAIUrlWithDns } from '../utils/outboundPolicy.js';
 
 export function createMarketRouter(
   getBotState: () => BotState,
@@ -73,10 +76,10 @@ export function createMarketRouter(
     }
   });
 
-  // Recent Generated Signals from SQLite
+  // Recent Generated Signals from SQLite (R-2: default LIVE; ?origin=DEMO|ALL para inspecionar demo)
   router.get('/signals', async (req: Request, res: Response) => {
     try {
-      const signals = await getRecentSignals(50);
+      const signals = await getRecentSignals(50, parseOriginFilter(req.query.origin));
       res.json(signals);
     } catch {
       res.status(500).json({ error: 'Failed to fetch signals' });
@@ -105,7 +108,7 @@ export function createMarketRouter(
     };
     
     await saveIndicatorWeights(botState.weights);
-    await recordAuditLog('UPDATE_WEIGHTS', req.originalUrl, 'ADMIN', { activeStrategy, scope });
+    await recordAuditLog('UPDATE_WEIGHTS', req.originalUrl, getAuditActor(req), { activeStrategy, scope });
 
     // Map strategy to category
     const categoryMap: Record<string, StrategyCategory> = {
@@ -153,11 +156,26 @@ export function createMarketRouter(
   router.post('/settings/ai-models', validateBody(aiModelsUpdateSchema), async (req: Request, res: Response) => {
     const botState = getBotState();
     const incomingModels = req.body as any[];
+
+    // R-1: the zod schema check is synchronous (URL shape + allowlist); the
+    // DNS/rebinding resolution check is async and runs here before persisting.
+    for (const model of incomingModels) {
+      if (model.apiUrl && String(model.apiUrl).trim().length > 0) {
+        const dnsCheck = await validateOutboundAIUrlWithDns(String(model.apiUrl), model.provider);
+        if (!dnsCheck.isValid) {
+          return res.status(400).json({
+            error: 'Bad Request',
+            message: `Modelo '${model.name || model.id}': ${dnsCheck.error || 'URL rejeitada pela política anti-SSRF.'}`
+          });
+        }
+      }
+    }
+
     const resolvedModels = mergePreservedSecrets(incomingModels, botState.aiModels);
     
     botState.aiModels = resolvedModels;
     await saveAIModels(botState.aiModels);
-    await recordAuditLog('UPDATE_AI_MODELS', req.originalUrl, 'ADMIN', { modelCount: resolvedModels.length });
+    await recordAuditLog('UPDATE_AI_MODELS', req.originalUrl, getAuditActor(req), { modelCount: resolvedModels.length });
     
     res.json({ success: true, models: redactAIModelConfigs(botState.aiModels) });
   });

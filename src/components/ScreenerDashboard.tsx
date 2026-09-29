@@ -293,12 +293,12 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
           </div>
           <div className="mt-2 flex items-baseline justify-between">
             <span className="text-xl font-bold text-white font-mono">
-              {summary?.topGainer.symbol || '---'}
+              {summary?.topGainer?.symbol || '---'}
             </span>
             <span className={`text-base font-bold font-mono ${
-              (summary?.topGainer.change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              (summary?.topGainer?.change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
             }`}>
-              {summary?.topGainer.change ? formatPercent(summary.topGainer.change) : '+0.00%'}
+              {summary?.topGainer?.change ? formatPercent(summary.topGainer.change) : '+0.00%'}
             </span>
           </div>
           <p className="mt-3 text-xs text-slate-400">
@@ -316,10 +316,10 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
           </div>
           <div className="mt-2 flex items-baseline justify-between">
             <span className="text-xl font-bold text-white font-mono">
-              {summary?.topOiSurge.symbol || '---'}
+              {summary?.topOiSurge?.symbol || '---'}
             </span>
             <span className="text-base font-bold font-mono text-indigo-400">
-              {summary?.topOiSurge.oiChange ? formatPercent(summary.topOiSurge.oiChange) : '+0.00%'}
+              {summary?.topOiSurge?.oiChange ? formatPercent(summary.topOiSurge.oiChange) : '+0.00%'}
             </span>
           </div>
           <p className="mt-3 text-xs text-slate-400">
@@ -337,10 +337,10 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
           </div>
           <div className="mt-2 flex items-baseline justify-between">
             <span className="text-xl font-bold text-white font-mono">
-              {summary?.topVolume.symbol || 'BTCUSDT'}
+              {summary?.topVolume?.symbol || '---'}
             </span>
             <span className="text-base font-bold font-mono text-amber-400">
-              {summary?.topVolume.quoteVolume ? formatVolume(summary.topVolume.quoteVolume) : '$0'}
+              {summary?.topVolume?.quoteVolume ? formatVolume(summary.topVolume.quoteVolume) : '$0'}
             </span>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-400">

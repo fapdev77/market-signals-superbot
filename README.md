@@ -1,6 +1,6 @@
 # 🚀 Market Signals SuperBot — Plataforma Quantitativa de Trading Institucional
 
-> Sistema de inteligência quantitativa, análise de fluxo de ordens (*Order Flow*), confluência algorítmica multi-estratégia, gestão de TTL (*Time-To-Live / Alpha Half-Life*) e validação preditiva com IA para criptoativos perpétuos e mercados tradicionais (*TradFi*).
+> Sistema de inteligência quantitativa, análise de fluxo de ordens (*Order Flow*), confluência algorítmica multi-estratégia, gestão de TTL (*Time-To-Live / Alpha Half-Life*) e validação preditiva com IA para contratos perpétuos da Binance Futures — incluindo contratos TradFi (ações/FX/commodities) quando existentes no `exchangeInfo` da Binance.
 
 ---
 
@@ -23,7 +23,7 @@
 
 ## 1. Visão Geral
 
-O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenvolvida para operadores profissionais, analistas de risco e mesas proprietárias. A aplicação ingere dados de mercado em tempo real via WebSocket e REST da **Binance Futures**, **Binance Spot** e **Mercados Tradicionais (TradFi: SPY, QQQ, NVDA, AAPL, PETR4, VALE3, Ouro, EUR/USD)**, processando uma esteira de indicadores institucionais:
+O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenvolvida para operadores profissionais, analistas de risco e mesas proprietárias. A aplicação ingere dados de mercado em tempo real via REST (`/fapi`) e WebSocket da **Binance Futures**. Contratos TradFi (ações, FX e commodities) são **descobertos dinamicamente** no `exchangeInfo` da Binance no boot (`refreshTradfiRegistry`) — nenhuma lista de símbolos é fixada em código, e ativos sem contrato real não são monitorados. A esteira de indicadores institucionais:
 
 * **Cumulative Volume Delta (CVD)** e agressão taker compradora/vendedora.
 * **Open Interest (OI)** e posicionamento institucional (*Long/Short Ratio* e *Top Trader Positioning*).
@@ -67,15 +67,15 @@ O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenv
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │                                    BACKEND (Node.js)                                  │
 │  Express API Server (`server.ts`) · Multi-Strategy Evaluation Pool                    │
-│  Signal Engine (`server/signalEngine.ts`) · Quantitative Indicators Calculation        │
-│  Institutional TTL Sweep Engine · Stale Signals Expirer · Trailing Breakeven Worker   │
+│  Signal Engine (`server/signalEngine.ts`) · DataGate · TickProcessor · RiskManager     │
+│  Institutional TTL Sweep Engine · Stale Signals Expirer · Kill-Switch & Risk Gates     │
 └─────────────────────▲─────────────────────▲─────────────────────────────▲──────────────┘
                       │                     │                             │
 ┌─────────────────────▼───────┐ ┌───────────▼──────────────┐ ┌────────────▼─────────────┐
 │       BANCO DE DADOS        │ │    FEEDS DE MERCADO      │ │        IA & AUDITORIA      │
-│ SQLite / SQL.js             │ │ Binance Futures WS & REST│ │ Google Gemini 3.7/3.5 GenAI│
-│ Persistência Local          │ │ TradFi Yahoo/Macro Proxy │ │ JSON Schema Validation     │
-│ Sinais, Configs, Logs, Pesos│ │ CVD, OI, Funding & Book  │ │ Diagnóstico de Riscos      │
+│ SQLite / SQL.js             │ │ Binance Futures WS & REST│ │ Gemini / OpenRouter /      │
+│ Persistência Local          │ │ (só /fapi · sem fallback │ │ Anthropic / Ollama local   │
+│ Sinais, Configs, Logs, Pesos│ │  spot) CVD, OI, Funding  │ │ JSON Schema + Risk Mgr     │
 └─────────────────────────────┘ └──────────────────────────┘ └────────────────────────────┘
 ```
 
@@ -85,8 +85,8 @@ O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenv
 
 Para instalar e executar o projeto em qualquer ambiente (Windows, macOS ou Linux), você precisará de:
 
-* **Node.js**: Versão `18.x`, `20.x` ou `22.x` (LTS recomendada).
-* **Gerenciador de Pacotes**: `npm` (versão 9+), `pnpm`, `yarn` ou `bun`.
+* **Node.js**: Versão `20.x` ou `22.x` (mínimo garantido por `engines.node >= 20.0.0`; a CI roda em 20.x e 22.x).
+* **Gerenciador de Pacotes**: `npm` (somente — o lockfile oficial do projeto é o `package-lock.json`).
 * **Navegador Web Moderno**: Google Chrome, Brave, Firefox, Edge ou Safari (compatível com ES2022+).
 * **Chave de API Gemini (Opcional)**: Para habilitar as auditorias de setup e diagnósticos por Inteligência Artificial (obtenha em [Google AI Studio](https://aistudio.google.com/)).
 
@@ -129,6 +129,13 @@ npm run build
 npm start
 ```
 
+### Passo 6: Docker (opcional)
+```bash
+docker build -t market-signals-superbot .
+docker run -p 3000:3000 -e API_AUTH_TOKEN=seu_token -v superbot-data:/app/data market-signals-superbot
+```
+A imagem é multi-stage, roda como usuário `node` (non-root), persiste o SQLite em `/app/data` e inclui `HEALTHCHECK` contra `/api/health`. O pipeline de CI (`.github/workflows/ci.yml`) roda `npm ci`, typecheck (`npm run typecheck`), testes (`npx vitest run`), build e `npm audit --omit=dev` em Node 20.x e 22.x.
+
 ---
 
 ## 6. Configuração de Variáveis de Ambiente & Segurança Fail-Closed
@@ -141,6 +148,7 @@ O arquivo `.env` suporta as seguintes configurações de operação e proteção
 | `ALLOWED_ORIGINS` | `string` | `http://localhost:3000,http://127.0.0.1:3000` | Lista de origens permitidas pelo middleware de CORS separadas por vírgula. |
 | `ALLOWED_AI_HOSTS` | `string` | *vazio* | Hostnames adicionais permitidos para conexões de IA externas além dos oficiais (`googleapis.com`, `openrouter.ai`, `anthropic.com`, `openai.com`). |
 | `ALLOW_SYNTHETIC_DATA`| `boolean`| `false` | Se `false`, o sistema opera em modo estritamente real: recusa fabricar candles sintéticos caso a Binance esteja fora do ar e bloqueia backtests sem dados reais históricos pré-sincronizados. |
+| `MAX_DATA_AGE_MS` | `number` | `60000` | Idade máxima tolerada para cotações. Acima disso o ticker é marcado como `STALE`, novos sinais deixam de ser gerados e a avaliação de stops/alvos é congelada. |
 | `GEMINI_API_KEY` | `string` | *vazio* | Chave de API do Google Gemini para auditoria e diagnósticos de IA. |
 | `PORT` | `number` | `3000` | Porta TCP em que o servidor Express escuta. |
 | `HOST` | `string` | `0.0.0.0` | Endereço de interface de rede para escuta (definir `127.0.0.1` para ambientes estritamente locais). |
@@ -153,11 +161,14 @@ O arquivo `.env` suporta as seguintes configurações de operação e proteção
    * O dev server é estritamente fixado na porta `3000` para compatibilidade com o supervisor de iframes. Em produção, portas dinâmicas injetadas pelo orquestrador (`process.env.PORT`) são respeitadas automaticamente.
    * Não é possível conectar modelos Ollama locais utilizando IPs privados locais (como `192.168.x.x` ou `localhost`) a partir da nuvem. Nestes casos, recomenda-se criar um túnel seguro HTTPS (ex.: via Ngrok ou Cloudflare Tunnel) ou executar o SuperBot localmente.
 
-2. **Proteção Anti-SSRF e DNS Rebinding:**
-   * Todas as requisições externas para provedores de IA passam pelo módulo `outboundPolicy.ts` com validação de hostname, bloqueio estrito de faixas privadas (RFC 1918, RFC 3927, RFC 4193, loopback, CGNAT e metadados de nuvem `169.254.169.254`) e resolução prévia de DNS para mitigar ataques de DNS rebinding.
+2. **Proteção Anti-SSRF:**
+   * Todas as requisições externas para provedores de IA passam pelo módulo `outboundPolicy.ts` com validação de hostname (comparação exata, não por substring) e bloqueio estrito de faixas privadas (RFC 1918, RFC 3927, RFC 4193, loopback, CGNAT e metadados de nuvem `169.254.169.254`).
+   * A verificação de DNS antes de conectar (mitigação de *DNS rebinding*, `validateOutboundAIUrlWithDns`) já existe no código e está rastreada para ativação em `specs/phase-4-remaining-gaps.md` (item R-1).
 
 3. **Integridade de Dados e DataGate Ativo:**
-   * O robô possui um guardião de dados (`DataGate.ts`). Sinais quantitativos são bloqueados se o feed de cotações estiver desatualizado (>60s) ou se a integridade dos dados estiver degradada. Avaliações de trailing stop em ordens abertas são congeladas em caso de queda de rede para evitar saídas em falsos stops.
+   * O robô possui um guardião de dados (`DataGate.ts`). Sinais quantitativos são bloqueados se o feed de cotações estiver desatualizado (>60s), marcado como `STALE` ou se a integridade dos dados estiver degradada. Avaliações de stops/alvos em ordens abertas são congeladas em caso de queda de rede para evitar saídas em falsos stops.
+   * Cada fator (Open Interest, Funding, Long/Short) tem proveniência própria: quando um feed falha, o fator é **excluído** do score e reportado em `dataQuality.unavailableFactors` — nunca pontuado como valor neutro.
+   * Todo dado sintético exige `ALLOW_SYNTHETIC_DATA=true` (klines de teste, screener, liquidações simuladas). Sem a flag, o sistema opera exclusivamente com dado real.
 
 ---
 
@@ -176,6 +187,12 @@ O bot avalia simultaneamente em paralelo múltiplos horizontes operacionais para
 * **Swing Trade (1h/4h):** Expansão estrutural macro e rejeições em Value Area High/Low.
 * **Position Trade (4h/1d):** Rastreamento de grandes ciclos de liquidez e tendências institucionais.
 * **Contra-Trade / TTI (15m):** Reversão à média em exaustão extrema de Open Interest e Funding Rate.
+
+### 🛑 3. Risco, Kill-Switch e Proveniência de Dados (Fases 2.5 e 3)
+* **Gerenciamento de posição por candle:** stops e alvos são avaliados com o high/low do candle em formação — um alvo tocado entre dois ticks é detectado; se stop e alvo acontecem no mesmo candle, o **stop prevalece**.
+* **Kill-Switch de emergência:** `POST /api/system/kill-switch` interrompe a emissão de novos sinais até ser liberado (motivo obrigatório, ação registrada em auditoria). A postura de risco é consultável em `GET /api/system/risk-status`.
+* **Limites de portfólio:** concorrência máxima de sinais, teto de risco por categoria e orçamento agregado de risco bloqueiam novas emissões automaticamente (`RiskManager.ts`).
+* **Badges de qualidade de dados:** o painel exibe a fonte de cada dado (`WS`/`REST`/`CACHE`/`STALE`/`SYNTHETIC`), a idade da cotação e os fatores indisponíveis por ticker (`DataQualityBadge`).
 
 ---
 
@@ -232,11 +249,15 @@ O backend disponibiliza uma API REST documentada:
 | `GET` | `/api/settings/weights` | Retorna a calibração atual de pesos e configurações de TTL. |
 | `POST` | `/api/settings/weights` | Salva novos pesos de confluência e configurações de TTL. |
 | `GET` | `/api/system/db-info` | Retorna diagnóstico do banco de dados (tabelas, linhas, tamanho). |
-| `POST` | `/api/system/vacuum` | Executa o comando VACUUM no banco SQLite para desfragmentação. |
-| `POST` | `/api/system/reset` | Executa o reset parcial ou total do sistema com base no escopo selecionado. |
+| `POST` | `/api/system/database-vacuum` | Executa o comando VACUUM no banco SQLite para desfragmentação. |
+| `POST` | `/api/system/factory-reset` | Executa o reset de fábrica (exige `{ confirm: "RESET" }` e gera registro de auditoria). |
 | `POST` | `/api/ai/review` | Executa auditoria quantitativa de setup com Inteligência Artificial (suporta `customNotes` e `customPromptOverride`). |
 | `POST` | `/api/ai/review/preview-prompt` | Sintetiza e retorna a pré-visualização completa do prompt para conferência antes do envio à IA. |
 | `GET` | `/api/screener/settings` | Retorna a lista de pares ativos e classes de mercado configuradas. |
+| `GET` | `/api/tradfi/assets` | Lista os contratos TradFi descobertos no `exchangeInfo` da Binance (vazio se nenhum existir). |
+| `GET` | `/api/system/risk-status` | Retorna a postura de risco: limites configurados, sinais abertos e estado do kill-switch. |
+| `POST` | `/api/system/kill-switch` | Ativa/desativa o kill-switch de trading (motivo obrigatório; ação auditada). |
+| `GET` | `/api/health` | Probe de liveness sem autenticação (usado pelo healthcheck do container). |
 
 ---
 
@@ -245,6 +266,7 @@ O backend disponibiliza uma API REST documentada:
 Para aprofundamento técnico e operacional, consulte os guias especializados na pasta [`/docs`](./docs):
 
 * 📘 [`docs/GUIA_INSTALACAO_E_CONFIGURACAO.md`](./docs/GUIA_INSTALACAO_E_CONFIGURACAO.md) — Guia detalhado de instalação, Docker, troubleshooting e deploy.
+* 🔒 [`docs/SEGURANCA.md`](./docs/SEGURANCA.md) — Segurança, integridade de dados, DataGate, proveniência por feed e kill-switch.
 * 🏗️ [`docs/ARQUITETURA_E_FUNCIONAMENTO.md`](./docs/ARQUITETURA_E_FUNCIONAMENTO.md) — Arquitetura interna do backend, threads de cálculo e ingestion.
 * ⏳ [`docs/GESTAO_TTL_E_ESTRATEGIAS.md`](./docs/GESTAO_TTL_E_ESTRATEGIAS.md) — Modelagem matemática de TTL, half-life e breakeven.
 * ⚙️ [`docs/CONFIGURACOES_E_RESET_GLOBAL.md`](./docs/CONFIGURACOES_E_RESET_GLOBAL.md) — Manual do painel de controle do banco e rotinas de reset.

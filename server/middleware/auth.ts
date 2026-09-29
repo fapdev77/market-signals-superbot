@@ -44,6 +44,36 @@ export function validateTokenConstantTime(providedToken: string, expectedToken: 
 }
 
 /**
+ * Extracts the presented token from either supported header. Shared by the auth middleware and the
+ * audit-actor helper so both read the credential the same way.
+ */
+export function extractProvidedToken(req: Request): string {
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  if (req.headers['x-api-token']) {
+    return String(req.headers['x-api-token']).trim();
+  }
+  return '';
+}
+
+/**
+ * Actor recorded in the audit log for a mutating request (Phase 2.5.8).
+ *
+ * The static bearer token carries no user identity, so recording a hardcoded 'ADMIN' told an auditor
+ * nothing. We now record a short fingerprint of the presented token plus the client address: enough to
+ * tell two actors apart and correlate a request with a source, without ever writing the secret itself.
+ */
+export function getAuditActor(req: Request): string {
+  const provided = extractProvidedToken(req);
+  const fingerprint = provided
+    ? crypto.createHash('sha256').update(provided).digest('hex').slice(0, 8)
+    : 'anonymous';
+  return `token:${fingerprint}@${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+}
+
+/**
  * Authentication Middleware for /api/* routes
  * Fail-Closed: All requests to protected endpoints require a valid Bearer or x-api-token.
  */
@@ -67,14 +97,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return next();
   }
 
-  const authHeader = req.headers['authorization'];
-  let providedToken = '';
-
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    providedToken = authHeader.slice(7).trim();
-  } else if (req.headers['x-api-token']) {
-    providedToken = String(req.headers['x-api-token']).trim();
-  }
+  const providedToken = extractProvidedToken(req);
 
   const expectedToken = getEffectiveAuthToken();
 

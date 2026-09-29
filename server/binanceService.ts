@@ -1,8 +1,12 @@
 import { TickerData, KlineCandle, OrderBookDepthData, OrderBookLevel, LongShortRatioData, TrappedTradersData, LiquidationSummary } from '../src/types.js';
 import { addBinanceLog, getLiveWSTickers, getLiquidationsSummary } from './binanceWebsocket.js';
-import { requestJson } from './utils/httpClient.js';
-import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
+import { requestJson, requestJsonLimited } from './utils/httpClient.js';
 import { BinanceRateLimiter } from './utils/binanceRateLimiter.js';
+// R-13: health por feed — todo caminho de fetch grava sucesso/falha no registro central.
+import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
+// R-2: os geradores sintéticos vivem todos em server/demo/.
+import { generateFallbackKlines } from './demo/syntheticKlines.js';
+import { simulateLongShortRatio } from './demo/syntheticMarket.js';
 
 function formatPriceString(value: number | null | undefined): string {
   if (value === null || value === undefined || isNaN(value)) return '0.00';
@@ -43,99 +47,393 @@ export const DEFAULT_SYMBOLS = [
   'NEARUSDT'
 ];
 
-// Monitored TradFi / Macro Overview (Phase 2.4: Real Binance-traded commodities and wrapped equity assets)
-export const TRADFI_ASSETS = [
-  { symbol: 'PAXGUSDT', name: 'PAX Gold Perpetual / Spot', baseAsset: 'PAXG', quoteAsset: 'USDT', tradfiCategory: 'COMMODITY' as const, contractType: 'PERPETUAL' },
-  { symbol: 'XAUTUSDT', name: 'Tether Gold Perpetual / Spot', baseAsset: 'XAUT', quoteAsset: 'USDT', tradfiCategory: 'COMMODITY' as const, contractType: 'PERPETUAL' },
-  { symbol: 'EURUSDT', name: 'Euro FX Perpetual', baseAsset: 'EUR', quoteAsset: 'USDT', tradfiCategory: 'FOREX' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'GBPUSDT', name: 'British Pound FX Perpetual', baseAsset: 'GBP', quoteAsset: 'USDT', tradfiCategory: 'FOREX' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'JPYUSDT', name: 'Japanese Yen FX Perpetual', baseAsset: 'JPY', quoteAsset: 'USDT', tradfiCategory: 'FOREX' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'NVDABUSDT', name: 'NVIDIA Corp Tokenized', baseAsset: 'NVDA', quoteAsset: 'USDT', tradfiCategory: 'EQUITY' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'TSLABUSDT', name: 'Tesla Inc Tokenized', baseAsset: 'TSLA', quoteAsset: 'USDT', tradfiCategory: 'EQUITY' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'AAPLBUSDT', name: 'Apple Inc Tokenized', baseAsset: 'AAPL', quoteAsset: 'USDT', tradfiCategory: 'EQUITY' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'SPYBUSDT', name: 'S&P 500 ETF Tokenized', baseAsset: 'SPY', quoteAsset: 'USDT', tradfiCategory: 'INDEX' as const, contractType: 'TRADIFI_PERPETUAL' },
-  { symbol: 'QQQBUSDT', name: 'Nasdaq 100 ETF Tokenized', baseAsset: 'QQQ', quoteAsset: 'USDT', tradfiCategory: 'INDEX' as const, contractType: 'TRADIFI_PERPETUAL' }
-];
+// ---------------------------------------------------------------------------------------------
+// TradFi registry (Phase 2.5.5)
+//
+// TradFi assets are DISCOVERED from Binance `exchangeInfo`, never hardcoded. The previous list
+// (NVDABUSDT, TSLABUSDT, AAPLBUSDT, SPYBUSDT, QQQBUSDT, EURUSDT, GBPUSDT, JPYUSDT) contained symbols
+// that were never validated against the exchange, and `fetchBinanceTradfiContracts` force-added all of
+// them to its result — so the "validation" could not fail and nothing was actually verified.
+//
+// `TRADFI_ASSETS` is now a live registry: it stays EMPTY until discovery succeeds. An empty registry
+// is the correct outcome when the exchange is unreachable or does not list the instrument.
+// ---------------------------------------------------------------------------------------------
 
-// Cache for TradFi exchange info & schedule
+export type TradfiCategory = 'EQUITY' | 'INDEX' | 'COMMODITY' | 'FOREX';
+
+export interface TradfiAsset {
+  symbol: string;
+  name: string;
+  baseAsset: string;
+  quoteAsset: string;
+  tradfiCategory: TradfiCategory;
+  contractType: string;
+  /** The exchangeInfo fields the classification was derived from, kept so an operator can audit it. */
+  classificationSource?: Record<string, unknown>;
+}
+
+/** Base assets that are unambiguously a fiat currency rather than a crypto token. */
+const FX_BASE_ASSETS = new Set([
+  'EUR', 'GBP', 'JPY', 'AUD', 'CHF', 'CAD', 'NZD', 'BRL', 'TRY', 'ZAR', 'MXN', 'CNH', 'CNY',
+  'HKD', 'SGD', 'KRW', 'INR', 'SEK', 'NOK', 'DKK', 'PLN', 'THB', 'IDR', 'PHP', 'MYR', 'CZK',
+  'HUF', 'ILS', 'RON', 'AED', 'SAR'
+]);
+
+/** Base assets that are commodity-backed or commodity contracts rather than pure crypto. */
+const COMMODITY_BASE_ASSETS = new Set([
+  'PAXG', 'XAUT', 'GOLD', 'XAU', 'XAG', 'SILVER', 'XPT', 'XPD', 'WTI', 'BRENT', 'NGAS', 'OIL'
+]);
+
+/** Live registry of discovered TradFi instruments. Empty until `refreshTradfiRegistry` succeeds. */
+export const TRADFI_ASSETS: TradfiAsset[] = [];
+
+let tradfiRegistryRefreshedAt = 0;
 let tradfiContractsCache: Set<string> | null = null;
-let lastExchangeInfoFetch = 0;
+const TRADFI_REGISTRY_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Fetches and filters Binance FAPI exchangeInfo for TradFi and Perpetual contracts
+ * Classifies a single `exchangeInfo` symbol entry, or returns null when the exchange gives no evidence
+ * that it is a TradFi instrument. Returning null is deliberate: an unclassifiable contract is reported
+ * rather than guessed into a category.
  */
-export async function fetchBinanceTradfiContracts(): Promise<Set<string>> {
-  const now = Date.now();
-  if (tradfiContractsCache && now - lastExchangeInfoFetch < 300000) {
-    return tradfiContractsCache;
-  }
+export function classifyTradfiContract(symbolInfo: any): TradfiCategory | null {
+  if (!symbolInfo || typeof symbolInfo !== 'object') return null;
 
-  const result = new Set<string>();
-  try {
-    const { data } = await fetchWithFallback((ep) => '/fapi/v1/exchangeInfo');
-    if (data?.symbols && Array.isArray(data.symbols)) {
-      for (const s of data.symbols) {
-        if (s.contractType === 'TRADIFI_PERPETUAL' || s.contractType === 'PERPETUAL') {
-          result.add(s.symbol);
-        }
-      }
-    }
-  } catch (err: any) {
-    addBinanceLog('WARN', 'REST_API', `Não foi possível carregar exchangeInfo completo: ${err?.message}`);
-  }
+  const contractType = String(symbolInfo.contractType || '');
+  const underlyingType = String(symbolInfo.underlyingType || '').toUpperCase();
+  const subTypes: string[] = Array.isArray(symbolInfo.underlyingSubType)
+    ? symbolInfo.underlyingSubType.map((x: unknown) => String(x).toUpperCase())
+    : [];
+  const base = String(symbolInfo.baseAsset || '').toUpperCase();
+  const haystack = [underlyingType, contractType, ...subTypes].join(' ').toUpperCase();
 
-  // Ensure known supported symbols are indexed
-  TRADFI_ASSETS.forEach(a => result.add(a.symbol));
-  tradfiContractsCache = result;
-  lastExchangeInfoFetch = now;
-  return result;
+  // Commodity-backed tokens are a genuine classification regardless of the exchange's TradFi marker.
+  if (COMMODITY_BASE_ASSETS.has(base)) return 'COMMODITY';
+  if (FX_BASE_ASSETS.has(base)) return 'FOREX';
+
+  if (!contractType) return null;
+
+  // Only instruments the exchange itself flags as TradFi (or with an obvious TradFi underlying) qualify.
+  const looksTradfi =
+    contractType.toUpperCase() === 'TRADIFI_PERPETUAL' ||
+    underlyingType === 'INDEX' ||
+    /(^|\s)(EQUITY|STOCK|INDEX|FX|FOREX|COMMODITY|METAL|GOLD)(\s|$)/.test(haystack);
+  if (!looksTradfi) return null;
+
+  if (/COMMODITY|METAL|GOLD|SILVER|OIL/.test(haystack)) return 'COMMODITY';
+  if (/(^|\s)(FX|FOREX)(\s|$)/.test(haystack)) return 'FOREX';
+  if (/EQUITY|STOCK/.test(haystack)) return 'EQUITY';
+  if (/INDEX/.test(haystack)) return 'INDEX';
+
+  // Marked TradFi by the exchange but carrying no finer subtype — report instead of guessing.
+  return null;
 }
 
 /**
- * Checks if the underlying traditional financial market is currently in an open trading session
- * US Equities & Indices: 9:30 AM to 4:00 PM EST (14:30 - 21:00 UTC) Monday - Friday
- * Forex: 22:00 UTC Sunday to 22:00 UTC Friday (24/5)
- * Gold / Commodities: 24/7 on crypto perps / spot, regular trading hours on COMEX
+ * Refreshes the TradFi registry from Binance `exchangeInfo`.
+ * Never force-adds a symbol: if discovery returns nothing, the registry is empty and the caller must
+ * treat TradFi monitoring as unavailable.
  */
-export function isTradfiMarketOpen(category: 'EQUITY' | 'INDEX' | 'COMMODITY' | 'FOREX'): boolean {
-  if (category === 'COMMODITY') {
-    // Gold spot & crypto perpetuals trade 24/7 on Binance
+export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
+  const now = Date.now();
+  if (TRADFI_ASSETS.length > 0 && now - tradfiRegistryRefreshedAt < TRADFI_REGISTRY_TTL_MS) {
+    return TRADFI_ASSETS;
+  }
+
+  const discovered: TradfiAsset[] = [];
+  const unclassified: string[] = [];
+
+  try {
+    const { data } = await fetchWithFallback(() => '/fapi/v1/exchangeInfo');
+    const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
+
+    for (const s of symbols) {
+      // Only contracts that are actively trading can produce signals.
+      if (s?.status && String(s.status).toUpperCase() !== 'TRADING') continue;
+
+      const category = classifyTradfiContract(s);
+      if (!category) {
+        if (String(s?.contractType || '').toUpperCase() === 'TRADIFI_PERPETUAL') {
+          unclassified.push(s.symbol);
+        }
+        continue;
+      }
+
+      discovered.push({
+        symbol: s.symbol,
+        name: s.symbol,
+        baseAsset: String(s.baseAsset || ''),
+        quoteAsset: String(s.quoteAsset || 'USDT'),
+        tradfiCategory: category,
+        contractType: String(s.contractType || 'PERPETUAL'),
+        classificationSource: {
+          contractType: s.contractType,
+          underlyingType: s.underlyingType,
+          underlyingSubType: s.underlyingSubType
+        }
+      });
+    }
+
+    addBinanceLog(
+      'INFO',
+      'REST_API',
+      `TradFi: ${discovered.length} contrato(s) descoberto(s) via exchangeInfo${unclassified.length > 0 ? ` (${unclassified.length} TRADIFI_PERPETUAL não classificado(s): ${unclassified.join(', ')})` : ''}.`
+    );
+  } catch (err: any) {
+    addBinanceLog('WARN', 'REST_API', `Falha ao carregar exchangeInfo para TradFi: ${err?.message}. Registro mantido vazio (sem lista hardcoded).`);
+  }
+
+  // Mutate in place so existing importers keep observing the same array binding.
+  TRADFI_ASSETS.length = 0;
+  TRADFI_ASSETS.push(...discovered);
+  tradfiRegistryRefreshedAt = now;
+  tradfiContractsCache = new Set(discovered.map(a => a.symbol));
+  return TRADFI_ASSETS;
+}
+
+/**
+ * Backwards-compatible accessor: the set of discovered TradFi symbols.
+ * Unlike the previous implementation it performs no force-add, so an empty set means "none found".
+ */
+export async function fetchBinanceTradfiContracts(): Promise<Set<string>> {
+  if (tradfiContractsCache && Date.now() - tradfiRegistryRefreshedAt < TRADFI_REGISTRY_TTL_MS) {
+    return tradfiContractsCache;
+  }
+  await refreshTradfiRegistry();
+  return tradfiContractsCache || new Set<string>();
+}
+
+export function getTradfiAsset(symbol: string): TradfiAsset | undefined {
+  const clean = String(symbol || '').toUpperCase();
+  return TRADFI_ASSETS.find(a => a.symbol === clean);
+}
+
+/**
+ * Local time in America/New_York for an instant, reduced to a weekday index and minute-of-day.
+ * Using an IANA zone makes the US equity session DST-correct.
+ */
+function newYorkClock(at: Date): { weekday: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hourCycle: 'h23',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).formatToParts(at);
+
+  const get = (type: string) => parts.find(p => p.type === type)?.value || '';
+  const weekdays: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const hour = Number(get('hour'));
+  const minute = Number(get('minute'));
+
+  return {
+    weekday: weekdays[get('weekday')] ?? 0,
+    minutes: (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0)
+  };
+}
+
+/**
+ * Local time in America/New_York for an instant, reduced to a weekday index and minute-of-day.
+ * Using an IANA zone makes the US equity session DST-correct.
+ */
+
+// ---------------------------------------------------------------------------------------------
+// R-11 — `GET /fapi/v1/tradingSchedule` (cache diário) cruzado com `isTradfiMarketOpen`.
+// O relógio puro de America/New_York não modela feriados nem horários reduzidos. O endpoint
+// oficial da exchange devolve `marketSchedules` por mercado (EQUITY, COMMODITY, FX, CN_EQUITY,
+// ...) com sessões `{ startTime, endTime, type }` — formato verificado contra a API real
+// (tipos observados: REGULAR, NO_TRADING, PRE_MARKET, AFTER_MARKET, OVERNIGHT). Quando o
+// endpoint responde, ele é a autoridade; quando não responde, mantemos o cálculo por
+// America/New_York e registramos a suposição em `assumptions` (fallback documentado).
+// ---------------------------------------------------------------------------------------------
+
+export type TradingSessionType = 'REGULAR' | 'NO_TRADING' | 'PRE_MARKET' | 'AFTER_MARKET' | 'OVERNIGHT';
+
+export interface TradingSession {
+  startTime: number;
+  endTime: number;
+  type: TradingSessionType;
+}
+
+export interface TradingMarketSchedule {
+  sessions: TradingSession[];
+}
+
+export type TradingSchedule = Record<string, TradingMarketSchedule>;
+
+/** Categorias TradFi do projeto → chaves de mercado do endpoint. */
+const TRADFI_CATEGORY_TO_SCHEDULE_MARKET: Record<TradfiCategory, string> = {
+  EQUITY: 'EQUITY',
+  INDEX: 'EQUITY',   // índices seguem o mesmo calendário de equities (observado na API real)
+  COMMODITY: 'COMMODITY',
+  FOREX: 'FX'
+};
+
+const TRADING_SCHEDULE_TTL_MS = 24 * 60 * 60 * 1000; // cache diário
+
+let tradingScheduleCache: TradingSchedule | null = null;
+let tradingScheduleFetchedAt = 0;
+let tradingScheduleLastError: string | null = null;
+const tradingScheduleAssumptions: Array<{ reason: string; since: number }> = [];
+
+function recordScheduleAssumption(reason: string): void {
+  const last = tradingScheduleAssumptions[tradingScheduleAssumptions.length - 1];
+  if (last && last.reason === reason) {
+    last.since = Date.now(); // mesma suposição vigente: atualiza o instante
+    return;
+  }
+  tradingScheduleAssumptions.push({ reason, since: Date.now() });
+  if (tradingScheduleAssumptions.length > 10) tradingScheduleAssumptions.shift();
+}
+
+/**
+ * Busca (ou re-busca após o TTL de 24h) o calendário oficial da exchange.
+ * `force` ignora o TTL. Retorna `true` quando existe calendário válido em cache após a chamada.
+ * Falha NUNCA propaga: o fallback por relógio é registrado e o trading continua degradado,
+ * não quebrado.
+ */
+export async function refreshTradingSchedule(force: boolean = false): Promise<boolean> {
+  const now = Date.now();
+  if (!force && tradingScheduleCache && now - tradingScheduleFetchedAt < TRADING_SCHEDULE_TTL_MS) {
     return true;
   }
 
-  const now = new Date();
-  const day = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
-  const utcHours = now.getUTCHours();
-  const utcMinutes = now.getUTCMinutes();
-  const timeInMinutes = utcHours * 60 + utcMinutes;
+  try {
+    const { data } = await fetchWithFallback(() => '/fapi/v1/tradingSchedule');
+    const markets = data?.marketSchedules;
+    if (!markets || typeof markets !== 'object') {
+      throw new Error('resposta sem marketSchedules');
+    }
 
-  if (category === 'FOREX') {
-    // Forex runs from Sunday 22:00 UTC to Friday 22:00 UTC
-    if (day === 6) return false; // Saturday closed
-    if (day === 0 && timeInMinutes < 22 * 60) return false; // Sunday before 22:00 UTC closed
-    if (day === 5 && timeInMinutes > 22 * 60) return false; // Friday after 22:00 UTC closed
+    const cleaned: TradingSchedule = {};
+    for (const [market, schedule] of Object.entries(markets as Record<string, any>)) {
+      if (!schedule || !Array.isArray(schedule.sessions)) continue;
+      const sessions = (schedule.sessions as any[]).filter(
+        s => Number.isFinite(Number(s?.startTime)) && Number.isFinite(Number(s?.endTime))
+      ).map(s => ({
+        startTime: Number(s.startTime),
+        endTime: Number(s.endTime),
+        type: (String(s.type || 'REGULAR').toUpperCase()) as TradingSessionType
+      }));
+      if (sessions.length > 0) cleaned[market] = { sessions };
+    }
+
+    if (Object.keys(cleaned).length === 0) {
+      throw new Error('marketSchedules veio vazio');
+    }
+
+    tradingScheduleCache = cleaned;
+    tradingScheduleFetchedAt = Date.now();
+    tradingScheduleLastError = null;
+    recordFeedSuccess('tradingSchedule');
     return true;
-  }
-
-  // US Equities & Indices (NYSE / NASDAQ)
-  if (day === 0 || day === 6) {
+  } catch (err: any) {
+    recordFeedFailure('tradingSchedule', err?.message || String(err));
+    tradingScheduleLastError = err?.message || String(err);
+    // Um calendário anterior ainda dentro de 2× TTL continua utilizável (aviso sem derrubar o gate).
+    const usable = tradingScheduleCache !== null && now < tradingScheduleFetchedAt + TRADING_SCHEDULE_TTL_MS * 2;
+    if (!usable) {
+      tradingScheduleCache = null;
+      recordScheduleAssumption(
+        `tradingSchedule indisponível (${tradingScheduleLastError}); fechamento/abertura por America/New_York sem feriados.`
+      );
+    }
     return false;
   }
+}
 
-  // NYSE/NASDAQ open: 14:30 UTC to 21:00 UTC (9:30 AM to 4:00 PM EST)
-  const marketOpen = 14 * 60 + 30; // 14:30 UTC
-  const marketClose = 21 * 60;     // 21:00 UTC
+/** Estado observável do calendário, para operador e diagnóstico (R-13 consome o mesmo dado). */
+export function getTradingScheduleStatus(): {
+  active: 'EXCHANGE_SCHEDULE' | 'CLOCK_FALLBACK';
+  lastFetchedAt: number | null;
+  expiresAt: number | null;
+  markets: string[];
+  lastError: string | null;
+  assumptions: Array<{ reason: string; since: number }>;
+} {
+  return {
+    active: tradingScheduleCache !== null ? 'EXCHANGE_SCHEDULE' : 'CLOCK_FALLBACK',
+    lastFetchedAt: tradingScheduleFetchedAt || null,
+    expiresAt: tradingScheduleFetchedAt ? tradingScheduleFetchedAt + TRADING_SCHEDULE_TTL_MS : null,
+    markets: tradingScheduleCache ? Object.keys(tradingScheduleCache) : [],
+    lastError: tradingScheduleLastError,
+    assumptions: [...tradingScheduleAssumptions]
+  };
+}
 
-  return timeInMinutes >= marketOpen && timeInMinutes <= marketClose;
+/**
+ * Veredito pelo calendário oficial da exchange para uma categoria em um instante.
+ * `null` significa "sem schedule aplicável" (cache ausente/mercado ausente) — o chamador
+ * decide o fallback; aqui não inventamos fechamento.
+ */
+function exchangeScheduleSaysOpen(category: TradfiCategory, at: Date): boolean | null {
+  if (!tradingScheduleCache) return null;
+  const marketKey = TRADFI_CATEGORY_TO_SCHEDULE_MARKET[category];
+  const schedule = tradingScheduleCache[marketKey];
+  if (!schedule) return null; // mercado não coberto pelo endpoint → relógio de NY
+
+  const t = at.getTime();
+  const session = schedule.sessions.find(s => t >= s.startTime && t < s.endTime);
+  if (!session) return false; // fora de qualquer sessão declarada: fechado
+  // Sessões produtivas: REGULAR cobre o pregão; OVERNIGHT é a extensão contínua de alguns mercados.
+  return session.type === 'REGULAR' || session.type === 'OVERNIGHT';
+}
+
+/** Test-only: injeta fixture de calendário sem rede. */
+export function __applyTradingScheduleForTests(schedule: TradingSchedule, fetchedAt: number = Date.now()): void {
+  tradingScheduleCache = schedule;
+  tradingScheduleFetchedAt = fetchedAt;
+  tradingScheduleLastError = null;
+}
+
+/** Test-only: limpa cache, erro e suposições do calendário. */
+export function __resetTradingScheduleForTests(): void {
+  tradingScheduleCache = null;
+  tradingScheduleFetchedAt = 0;
+  tradingScheduleLastError = null;
+  tradingScheduleAssumptions.length = 0;
+}
+
+/**
+ * Checks whether the underlying traditional market for a category is currently open.
+ *
+ * R-11: quando o calendário oficial (`/fapi/v1/tradingSchedule`, cache diário) está disponível
+ * e cobre a categoria, ELE decide — modela feriados e horários reduzidos que o relógio puro
+ * não enxerga. Sem resposta, mantemos o cálculo por America/New_York e a suposição fica
+ * registrada em `getTradingScheduleStatus().assumptions`.
+ *
+ * - COMMODITY (sem schedule): gold tokens/perpetuals trade around the clock, so always open.
+ * - FOREX (sem schedule): Sunday 22:00 to Friday 22:00 America/New_York (24/5).
+ * - EQUITY / INDEX (sem schedule): 09:30–16:00 America/New_York, Monday–Friday.
+ *
+ * The previous implementation hardcoded a 14:30–21:00 UTC window, which is 09:30–16:00 EST only — it
+ * was an hour wrong for the whole of US daylight saving time. Using the IANA zone fixes that.
+ *
+ * `at` is injectable so this is unit-testable.
+ */
+export function isTradfiMarketOpen(category: TradfiCategory, at: Date = new Date()): boolean {
+  const scheduleVerdict = exchangeScheduleSaysOpen(category, at);
+  if (scheduleVerdict !== null) return scheduleVerdict;
+
+  if (category === 'COMMODITY') return true;
+
+  const { weekday, minutes } = newYorkClock(at);
+
+  if (category === 'FOREX') {
+    if (weekday === 6) return false;                        // Saturday: closed
+    if (weekday === 0) return minutes >= 22 * 60;          // Sunday: opens 22:00 NY
+    if (weekday === 5) return minutes < 22 * 60;           // Friday: closes 22:00 NY
+    return true;
+  }
+
+  if (weekday === 0 || weekday === 6) return false;
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
 
 // Helper to fetch JSON safely with timeout, User-Agent, and detailed logging
 async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => string): Promise<{ data: any; endpoint: string }> {
-  // Check if rate limiter has active cooldown
-  if (!BinanceRateLimiter.isAllowed()) {
-    const remaining = Math.round(BinanceRateLimiter.getRemainingCooldownMs() / 1000);
-    throw new Error(`Binance API em cooldown preventivo contra 429/418 (${remaining}s restantes).`);
-  }
+  // Check if rate limiter has active cooldown (same semantics as requestJsonLimited)
+  BinanceRateLimiter.assertAllowed();
 
   // Start trying from current working endpoint index, then wrap around
   for (let offset = 0; offset < REST_ENDPOINTS.length; offset++) {
@@ -206,6 +504,7 @@ export async function fetchBinanceFuturesTickers(symbolsToFilter?: string[]): Pr
     const matchedFromWS = Object.values(wsTickers).filter((t: any) => targetSet.has(t.symbol));
     if (matchedFromWS.length >= Math.min(3, targetSymbols.length * 0.3)) {
       // Return all matched tickers plus all live tickers so callers find any active monitored pair
+      recordFeedSuccess('ticker');
       return Object.values(wsTickers);
     }
   }
@@ -216,11 +515,17 @@ export async function fetchBinanceFuturesTickers(symbolsToFilter?: string[]): Pr
     if (Array.isArray(data)) {
       const targetSet = new Set(targetSymbols);
       const filtered = data.filter(item => item.symbol && (targetSet.has(item.symbol) || item.symbol.endsWith('USDT')));
-      if (filtered.length > 0) return filtered;
+      if (filtered.length > 0) {
+        recordFeedSuccess('ticker');
+        return filtered;
+      }
+      recordFeedSuccess('ticker');
       return data;
     }
+    recordFeedFailure('ticker', 'resposta de tickers vazia/malformada');
     return [];
   } catch (err: any) {
+    recordFeedFailure('ticker', err?.message || 'tickers REST inacessível');
     const now = Date.now();
     if (now - lastFallbackNoticeLogged > 30000) {
       addBinanceLog(
@@ -271,14 +576,25 @@ export async function fetchOpenInterest(symbol: string): Promise<{
   let currentOI = 0;
   let fetchedOI = false;
 
-  for (const base of futuresEndpoints) {
+  // R-5: fail closed while the limiter is in preventive cooldown — the symbol
+  // degrades to CACHE/isDegraded instead of bypassing weight control.
+  let limiterInCooldown = false;
+  try {
+    BinanceRateLimiter.assertAllowed();
+  } catch {
+    limiterInCooldown = true;
+  }
+
+  if (!limiterInCooldown) for (const base of futuresEndpoints) {
     try {
-      const res = await requestJson<{ openInterest?: string }>(`${base}/fapi/v1/openInterest?symbol=${symbol}`, { timeoutMs: 3000 });
+      // R-5: limiter-aware (weight accounting + 429/418 backoff)
+      const res = await requestJsonLimited<{ openInterest?: string }>(`${base}/fapi/v1/openInterest?symbol=${symbol}`, { timeoutMs: 3000 });
       if (res.data?.openInterest) {
         const val = parseFloat(res.data.openInterest);
         if (!isNaN(val) && val > 0) {
           currentOI = val;
           fetchedOI = true;
+          recordFeedSuccess('openInterest');
           break;
         }
       }
@@ -286,6 +602,8 @@ export async function fetchOpenInterest(symbol: string): Promise<{
       // Try next endpoint
     }
   }
+  // R-13: o fetch inteiro falhou (limiter em cooldown ou todos os endpoints) — conta como falha de feed.
+  if (!fetchedOI) recordFeedFailure('openInterest', 'openInterest indisponível para ' + symbol);
 
   // Fetch real historical OI to compute actual 1h and 24h change
   let change1h = cached?.change1h || 0;
@@ -294,7 +612,7 @@ export async function fetchOpenInterest(symbol: string): Promise<{
   if (fetchedOI) {
     for (const base of futuresEndpoints) {
       try {
-        const histRes = await requestJson<Array<{ sumOpenInterest?: string; timestamp?: number }>>(
+        const histRes = await requestJsonLimited<Array<{ sumOpenInterest?: string; timestamp?: number }>>(
           `${base}/futures/data/openInterestHist?symbol=${symbol}&period=1h&limit=25`,
           { timeoutMs: 2500 }
         );
@@ -344,6 +662,47 @@ export async function fetchOpenInterest(symbol: string): Promise<{
 }
 
 /**
+ * Documented fallback when the exchange does not publish a contract-specific funding interval.
+ * 8h is the Binance USDⓈ-M default; it is a *default*, not a measurement (Phase 2.5.3).
+ */
+export const DEFAULT_FUNDING_INTERVAL_HOURS = 8;
+
+// Global cache of contract-specific funding intervals (Phase 2.5.3).
+// The interval is published by GET /fapi/v1/fundingInfo (an array for all symbols), NOT by
+// /fapi/v1/premiumIndex — reading it from premiumIndex silently always produced the 8h default.
+const fundingIntervalCache: { map: Record<string, number>; timestamp: number } = { map: {}, timestamp: 0 };
+const FUNDING_INTERVAL_TTL_MS = 60 * 60 * 1000; // 1h
+
+export async function getFundingIntervals(): Promise<Record<string, number>> {
+  const now = Date.now();
+  if (Object.keys(fundingIntervalCache.map).length > 0 && now - fundingIntervalCache.timestamp < FUNDING_INTERVAL_TTL_MS) {
+    return fundingIntervalCache.map;
+  }
+
+  try {
+    const { data } = await fetchWithFallback(() => '/fapi/v1/fundingInfo');
+    if (Array.isArray(data)) {
+      const map: Record<string, number> = {};
+      for (const item of data) {
+        const hours = Number(item?.fundingIntervalHours);
+        if (item?.symbol && Number.isFinite(hours) && hours > 0) {
+          map[item.symbol] = hours;
+        }
+      }
+      if (Object.keys(map).length > 0) {
+        fundingIntervalCache.map = map;
+        fundingIntervalCache.timestamp = now;
+        return map;
+      }
+    }
+  } catch {
+    // Non-fatal: keep the previous map (or the documented default) rather than failing the tick.
+  }
+
+  return fundingIntervalCache.map;
+}
+
+/**
  * Fetches Premium Index & Funding Rate with contract-specific funding interval
  */
 export async function fetchFundingRate(symbol: string): Promise<{
@@ -370,16 +729,15 @@ export async function fetchFundingRate(symbol: string): Promise<{
     'https://fapi3.binance.com'
   ];
 
-  for (const base of futuresEndpoints) {
+  {
     try {
-      const res = await requestJson<{
-        lastFundingRate?: string;
-        fundingIntervalHours?: number;
-      }>(`${base}/fapi/v1/premiumIndex?symbol=${symbol}`, { timeoutMs: 3000 });
+      const res = await fetchWithFallback(() => `/fapi/v1/premiumIndex?symbol=${symbol}`);
 
       if (res.data?.lastFundingRate) {
         const val = parseFloat(res.data.lastFundingRate);
-        const intervalHours = Number(res.data.fundingIntervalHours) || 8;
+        // Phase 2.5.3: resolve the real interval from /fapi/v1/fundingInfo.
+        const intervals = await getFundingIntervals();
+        const intervalHours = intervals[symbol] || cached?.intervalHours || DEFAULT_FUNDING_INTERVAL_HOURS;
         if (!isNaN(val)) {
           fundingCache[symbol] = {
             value: val,
@@ -387,6 +745,7 @@ export async function fetchFundingRate(symbol: string): Promise<{
             source: 'REST',
             intervalHours
           };
+          recordFeedSuccess('funding');
           return {
             fundingRate: val,
             fundingIntervalHours: intervalHours,
@@ -395,16 +754,17 @@ export async function fetchFundingRate(symbol: string): Promise<{
           };
         }
       }
-    } catch {
-      // Try next endpoint
+    } catch (err: any) {
+      recordFeedFailure('funding', err?.message || 'premiumIndex falhou para ' + symbol);
+      // Fall through to the cached value below (and report isDegraded)
     }
   }
 
   return {
     fundingRate: cached?.value ?? 0,
-    fundingIntervalHours: cached?.intervalHours || 8,
+    fundingIntervalHours: cached?.intervalHours || DEFAULT_FUNDING_INTERVAL_HOURS,
     source: 'CACHE',
-    isDegraded: !cached
+    isDegraded: cached === undefined
   };
 }
 
@@ -412,13 +772,29 @@ export async function fetchFundingRate(symbol: string): Promise<{
 const lsCache: Record<string, { data: LongShortRatioData; timestamp: number }> = {};
 
 /**
- * Fetches Long/Short account and position ratios from Binance Futures
- * with fallback to synthetic model estimation if endpoints are geo-blocked
+ * Fetches Long/Short account and position ratios from Binance Futures.
+ *
+ * Phase 2.5.2: returns `null` when every upstream endpoint fails. Previously this fabricated
+ * "realistic" positioning with a sine wave, which then fed the Trapped Traders Index and awarded
+ * real confluence points on invented data. Fabrication now requires ALLOW_SYNTHETIC_DATA='true'.
  */
-export async function fetchLongShortRatio(symbol: string, currentPrice?: number): Promise<LongShortRatioData> {
+export async function fetchLongShortRatio(symbol: string, currentPrice?: number): Promise<LongShortRatioData | null> {
   const cleanSymbol = symbol.toUpperCase();
-  const cached = lsCache[cleanSymbol];
   const now = Date.now();
+
+  // R-5 (fail closed): durante o cooldown do limiter (429/418) nenhum caminho de
+  // leitura deve servir dados — nem cache, nem o fallback sintético opt-in. Antes
+  // o cache era consultado primeiro, então um endpoint "em castigo" ainda devolvia
+  // posicionamento, mascarando o bloqueio.
+  let limiterInCooldown = false;
+  try {
+    BinanceRateLimiter.assertAllowed();
+  } catch {
+    limiterInCooldown = true;
+  }
+  if (limiterInCooldown) return null;
+
+  const cached = lsCache[cleanSymbol];
   if (cached && now - cached.timestamp < 45000) {
     return cached.data;
   }
@@ -444,7 +820,7 @@ export async function fetchLongShortRatio(symbol: string, currentPrice?: number)
   for (const base of futuresBases) {
     try {
       // 1. Global Account Long/Short Ratio
-      const globalRes = await requestJson<any[]>(
+      const globalRes = await requestJsonLimited<any[]>(
         `${base}/futures/data/globalLongShortAccountRatio?symbol=${cleanSymbol}&period=15m&limit=1`,
         { timeoutMs: 2500 }
       );
@@ -457,7 +833,7 @@ export async function fetchLongShortRatio(symbol: string, currentPrice?: number)
       }
 
       // 2. Top Trader Position Ratio
-      const topPosRes = await requestJson<any[]>(
+      const topPosRes = await requestJsonLimited<any[]>(
         `${base}/futures/data/topLongShortPositionRatio?symbol=${cleanSymbol}&period=15m&limit=1`,
         { timeoutMs: 2500 }
       );
@@ -470,7 +846,7 @@ export async function fetchLongShortRatio(symbol: string, currentPrice?: number)
       }
 
       // 3. Taker Buy/Sell Volume Ratio
-      const takerRes = await requestJson<any[]>(
+      const takerRes = await requestJsonLimited<any[]>(
         `${base}/futures/data/takerlongshortRatio?symbol=${cleanSymbol}&period=15m&limit=1`,
         { timeoutMs: 2500 }
       );
@@ -488,28 +864,19 @@ export async function fetchLongShortRatio(symbol: string, currentPrice?: number)
     }
   }
 
-  // If remote was unreachable, generate realistic synthetic positioning
+  // If remote was unreachable: fail closed. Fabrication is opt-in only.
   if (!fetchedAny) {
-    const seed = cleanSymbol.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    const cycle = Math.sin(seed + now / 180000);
-    const retailBias = 0.52 + cycle * 0.18; // 34% to 70% long
-    longAccountPct = Number((retailBias * 100).toFixed(1));
-    shortAccountPct = Number(((1 - retailBias) * 100).toFixed(1));
-    globalRatio = Number((retailBias / (1 - retailBias)).toFixed(2));
+    recordFeedFailure('longShort', 'longShortRatio indisponível para ' + cleanSymbol);
+    if (process.env.ALLOW_SYNTHETIC_DATA !== 'true') {
+      return null;
+    }
 
-    // Smart Money often fades extreme retail crowding
-    const smartBias = retailBias > 0.60 ? retailBias - 0.22 : retailBias < 0.40 ? retailBias + 0.22 : 0.50;
-    topTraderLongPositionPct = Number((smartBias * 100).toFixed(1));
-    topTraderShortPositionPct = Number(((1 - smartBias) * 100).toFixed(1));
-    topTraderPositionRatio = Number((smartBias / (1 - smartBias)).toFixed(2));
-
-    const takerBias = 0.50 + cycle * 0.12;
-    takerRatio = Number((takerBias / (1 - takerBias)).toFixed(2));
-    const baseUsd = currentPrice ? currentPrice * 1500 : 2500000;
-    takerBuyVolUsd = Math.round(baseUsd * takerBias);
-    takerSellVolUsd = Math.round(baseUsd * (1 - takerBias));
+    const simulated = simulateLongShortRatio(cleanSymbol, currentPrice, now);
+    lsCache[cleanSymbol] = { data: simulated, timestamp: now };
+    return simulated;
   }
 
+  recordFeedSuccess('longShort');
   const result: LongShortRatioData = {
     symbol: cleanSymbol,
     globalRatio,
@@ -722,9 +1089,11 @@ export async function fetchKlines(
         takerBuyVolume: parseFloat(k[9]) || parseFloat(k[5]) * 0.52
       }));
       klineCache[cacheKey] = { candles, timestamp: now, isSynthetic: false };
+      recordFeedSuccess('klines');
       return candles;
     }
   } catch (err: any) {
+    recordFeedFailure('klines', err?.message || 'klines falhou para ' + symbol);
     addBinanceLog('WARN', 'REST_API', `Falha ao obter klines para ${symbol} (${interval}): ${err?.message || err}`);
   }
 
@@ -743,31 +1112,6 @@ export async function fetchKlines(
 
   // Fail-closed: return empty array rather than fabricating prices
   return [];
-}
-
-/**
- * Generates synthetic realistic candles if live API times out or rate limits
- */
-export function generateFallbackKlines(symbol: string, limit: number = 50): KlineCandle[] {
-  const candles: KlineCandle[] = [];
-  let basePrice = getBenchmarkPrice(symbol);
-  const now = Date.now();
-  const intervalMs = 15 * 60 * 1000;
-
-  for (let i = limit - 1; i >= 0; i--) {
-    const ts = now - i * intervalMs;
-    const variation = (Math.sin(i / 3) + (Math.random() - 0.48)) * (basePrice * 0.008);
-    const open = basePrice;
-    const close = basePrice + variation;
-    const high = Math.max(open, close) + Math.random() * (basePrice * 0.004);
-    const low = Math.min(open, close) - Math.random() * (basePrice * 0.004);
-    const volume = (Math.random() * 50 + 20) * (basePrice > 1000 ? 50 : 5000);
-    const takerBuyVolume = volume * (0.45 + Math.random() * 0.12);
-
-    candles.push({ timestamp: ts, open, high, low, close, volume, takerBuyVolume });
-    basePrice = close;
-  }
-  return candles;
 }
 
 /**
@@ -1201,8 +1545,9 @@ export async function fetchOrderBookDepth(
 
     for (const url of endpoints) {
       try {
-        const res = await requestJson<{ bids?: string[][]; asks?: string[][] }>(url, { timeoutMs: 2500 });
+        const res = await requestJsonLimited<{ bids?: string[][]; asks?: string[][] }>(url, { timeoutMs: 2500 });
         if (res.data?.bids && res.data?.asks && res.data.bids.length > 0 && res.data.asks.length > 0) {
+          recordFeedSuccess('depth');
           return processDepthData(cleanSymbol, res.data.bids, res.data.asks, now);
         }
       } catch {
@@ -1211,5 +1556,7 @@ export async function fetchOrderBookDepth(
     }
   }
 
+  // R-13: caiu no depth simulado — o feed real de book não respondeu.
+  recordFeedFailure('depth', 'book depth indisponível para ' + cleanSymbol + ' (usando simulado)');
   return generateSimulatedDepth(cleanSymbol, currentPrice, limit, now);
 }

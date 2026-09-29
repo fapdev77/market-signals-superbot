@@ -1,13 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import {
   TRADFI_ASSETS,
   isTradfiMarketOpen,
-  fetchBinanceTradfiContracts
+  fetchBinanceTradfiContracts,
+  classifyTradfiContract
 } from '../server/binanceService.js';
 import { BinanceRateLimiter } from '../server/utils/binanceRateLimiter.js';
 import { processTickerState, buildTradeSignal } from '../server/signalEngine.js';
 import { BacktestEngine } from '../server/services/BacktestEngine.js';
 import { KlineCandle, IndicatorWeights } from '../src/types.js';
+import { seedBacktestKlines, alignedNow } from './helpers/backtestSeed.js';
 
 describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 Backtest, 2.4 TradFi)', () => {
   const sampleWeights: IndicatorWeights = {
@@ -23,6 +25,12 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
     volumeProfileRange: 24,
     minRiskRewardRatio: 2.0
   };
+
+  beforeAll(async () => {
+    // Candles determinísticos no banco isolado do worker — os testes de backtest
+    // abaixo não dependem de rede nem do data/superbot.sqlite real.
+    await seedBacktestKlines(['BTCUSDT', 'ETHUSDT'], 10);
+  });
 
   // -------------------------------------------------------------
   // 2.1 INGESTÃO
@@ -137,7 +145,12 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
       if (tickerState) {
         tickerState.signalType = 'LONG';
         tickerState.confluenceScore = 75;
-        const signal = buildTradeSignal(tickerState, mockCandles, 2.0, 'INTRADAY');
+        // R-7: cap ATR altíssimo para não interferir no contrato original
+        // (stop ancorado nos fundos dos candles) que este teste valida.
+        const signal = buildTradeSignal(tickerState, mockCandles, 2.0, 'INTRADAY', undefined, undefined, {
+          ...sampleWeights,
+          maxStopLossAtrMultiple: 1000
+        });
         expect(signal).not.toBeNull();
         if (signal) {
           const minLow = Math.min(...mockCandles.map(k => k.low));
@@ -177,12 +190,18 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
     }, 25000);
 
     it('produces identical deterministic results given the same random seed', async () => {
+      // `asOf` congelado: sem ele cada run recalcula a âncora de 15 min a partir
+      // do relógio, e atravessar uma fronteira de candle troca a janela lida
+      // (mesma seed, resultados diferentes) — o bug que este teste deve pegar.
+      const asOf = alignedNow();
+
       const run1 = await BacktestEngine.runBacktest({
         symbol: 'ETHUSDT',
         days: 3,
         profile: 'scalp',
         weights: sampleWeights,
-        seed: 777
+        seed: 777,
+        asOf
       }, false);
 
       const run2 = await BacktestEngine.runBacktest({
@@ -190,7 +209,8 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
         days: 3,
         profile: 'scalp',
         weights: sampleWeights,
-        seed: 777
+        seed: 777,
+        asOf
       }, false);
 
       expect(run1.totalTrades).toBe(run2.totalTrades);
@@ -203,55 +223,114 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
   // -------------------------------------------------------------
   // 2.4 TRADFI REAL
   // -------------------------------------------------------------
-  describe('2.4 TradFi Real: TRADIFI_PERPETUAL, trading schedule, and closed session signal suppression', () => {
-    it('defines TradFi assets and categories including gold commodities, forex, and tokenized equities', () => {
-      expect(TRADFI_ASSETS.length).toBeGreaterThanOrEqual(7);
-      const gold = TRADFI_ASSETS.find(a => a.symbol === 'PAXGUSDT');
-      expect(gold).toBeDefined();
-      expect(gold?.tradfiCategory).toBe('COMMODITY');
-
-      const fx = TRADFI_ASSETS.find(a => a.symbol === 'EURUSDT');
-      expect(fx).toBeDefined();
-      expect(fx?.tradfiCategory).toBe('FOREX');
+  describe('2.4/2.5.5 TradFi: exchangeInfo discovery, DST-aware schedule, closed session suppression', () => {
+    it('is an empty registry until discovery runs (no hardcoded symbol list)', () => {
+      // Phase 2.5.5: the registry is populated only by `refreshTradfiRegistry`. A hardcoded list here
+      // would mean invented symbols could reach the tick loop even when exchangeInfo fails.
+      expect(Array.isArray(TRADFI_ASSETS)).toBe(true);
+      const hardcodedSuspects = ['NVDABUSDT', 'TSLABUSDT', 'AAPLBUSDT', 'SPYBUSDT', 'QQQBUSDT'];
+      for (const suspect of hardcodedSuspects) {
+        expect(TRADFI_ASSETS.some(a => a.symbol === suspect)).toBe(false);
+      }
     });
 
-    it('correctly evaluates open/closed market sessions for Commodities, Forex, and Equities', () => {
-      // Commodities trade 24/7 on Binance perpetuals
-      expect(isTradfiMarketOpen('COMMODITY')).toBe(true);
-
-      // Function executes without throwing and returns boolean
-      const equityOpen = isTradfiMarketOpen('EQUITY');
-      const forexOpen = isTradfiMarketOpen('FOREX');
-      expect(typeof equityOpen).toBe('boolean');
-      expect(typeof forexOpen).toBe('boolean');
+    it('classifies contracts from their exchangeInfo fields', () => {
+      // Commodity-backed base assets are a genuine classification.
+      expect(classifyTradfiContract({ symbol: 'PAXGUSDT', baseAsset: 'PAXG', contractType: 'PERPETUAL' })).toBe('COMMODITY');
+      // Fiat base assets are FOREX.
+      expect(classifyTradfiContract({ symbol: 'EURUSDT', baseAsset: 'EUR', contractType: 'PERPETUAL' })).toBe('FOREX');
+      // The exchange marking a contract as TradFi with an equity subtype.
+      expect(classifyTradfiContract({
+        symbol: 'TSLAUSDT', baseAsset: 'TSLA', contractType: 'TRADIFI_PERPETUAL', underlyingSubType: ['EQUITY']
+      })).toBe('EQUITY');
+      // A plain crypto perpetual is NOT TradFi.
+      expect(classifyTradfiContract({ symbol: 'BTCUSDT', baseAsset: 'BTC', contractType: 'PERPETUAL', underlyingType: 'COIN' })).toBeNull();
+      // TradFi-marked but with no usable subtype is reported as unclassifiable rather than guessed.
+      expect(classifyTradfiContract({ symbol: 'MYSTERYUSDT', baseAsset: 'MYSTERY', contractType: 'TRADIFI_PERPETUAL' })).toBeNull();
     });
 
-    it('discovers and caches real TradFi contracts from exchangeInfo', async () => {
+    it('never force-adds a symbol when discovery fails', async () => {
+      // Network is unavailable in this environment, so discovery yields nothing. The important property
+      // is that the previous implementation's `TRADFI_ASSETS.forEach(add)` force-add is gone.
       const contracts = await fetchBinanceTradfiContracts();
       expect(contracts).toBeDefined();
       expect(contracts instanceof Set).toBe(true);
-      expect(contracts.has('PAXGUSDT')).toBe(true);
-      expect(contracts.has('EURUSDT')).toBe(true);
+      for (const suspect of ['NVDABUSDT', 'TSLABUSDT', 'SPYBUSDT', 'QQQBUSDT']) {
+        expect(contracts.has(suspect)).toBe(false);
+      }
+    });
+
+    it('evaluates the US equity session in New York time (DST-correct)', () => {
+      // 2026-03-10 is after the US DST switch: 14:30 UTC is 10:30 EDT, i.e. inside the session.
+      // The previous fixed UTC window would have said "open" from 14:30 UTC regardless of DST.
+      const dstInside = new Date('2026-03-10T15:00:00Z'); // 11:00 EDT — open
+      const dstBeforeOpen = new Date('2026-03-10T13:00:00Z'); // 09:00 EDT — closed
+      expect(isTradfiMarketOpen('EQUITY', dstInside)).toBe(true);
+      expect(isTradfiMarketOpen('EQUITY', dstBeforeOpen)).toBe(false);
+
+      // 2026-01-13 is EST (UTC-5): 14:00 UTC is 09:00 EST — still closed.
+      const estBeforeOpen = new Date('2026-01-13T14:00:00Z');
+      expect(isTradfiMarketOpen('EQUITY', estBeforeOpen)).toBe(false);
+
+      // Weekend is always closed.
+      expect(isTradfiMarketOpen('EQUITY', new Date('2026-03-14T15:00:00Z'))).toBe(false); // Saturday
+    });
+
+    it('treats commodities as always open and Forex as 24/5', () => {
+      expect(isTradfiMarketOpen('COMMODITY', new Date('2026-03-14T03:00:00Z'))).toBe(true);
+
+      // Saturday 12:00 NY -> Forex closed.
+      expect(isTradfiMarketOpen('FOREX', new Date('2026-03-14T16:00:00Z'))).toBe(false);
+      // Wednesday 12:00 NY -> Forex open.
+      expect(isTradfiMarketOpen('FOREX', new Date('2026-03-11T16:00:00Z'))).toBe(true);
+    });
+
+    it('correctly evaluates open/closed market sessions for Commodities, Forex, and Equities', () => {
+      expect(isTradfiMarketOpen('COMMODITY')).toBe(true);
+      expect(typeof isTradfiMarketOpen('EQUITY')).toBe('boolean');
+      expect(typeof isTradfiMarketOpen('FOREX')).toBe('boolean');
     });
 
     it('suppresses trading signals on TradFi contracts when market session is closed', () => {
-      // When equity market is closed, processTickerState forces signal to NEUTRAL
-      const rawTicker = {
+      // Este teste dependia de duas coisas fora do nosso controle:
+      //  (1) o registro TradFi é populado por descoberta via exchangeInfo, e AAPLBUSDT não está
+      //      listado pela exchange — sem ele, o ramo de supressão nem roda;
+      //  (2) a sessão de equities precisava estar fechada no relógio da parede, então a asserção
+      //      era silenciosamente pulada durante o pregão (e falhava fora dele).
+      // Agora o contrato é injetado no registro e o relógio é congelado em um sábado.
+      const injected = {
         symbol: 'AAPLBUSDT',
-        lastPrice: '235.50',
-        priceChangePercent: '1.5',
-        updatedAt: Date.now()
+        name: 'Apple Perpetual',
+        baseAsset: 'AAPL',
+        quoteAsset: 'USDT',
+        tradfiCategory: 'EQUITY' as const,
+        contractType: 'TRADIFI_PERPETUAL'
       };
+      TRADFI_ASSETS.push(injected);
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-14T15:00:00Z')); // sábado, 11:00 em NY — Equity fechado
 
-      const candles: KlineCandle[] = [
-        { timestamp: 1000, open: 230, high: 236, low: 230, close: 235.5, volume: 5000, takerBuyVolume: 3500 }
-      ];
+      try {
+        const rawTicker = {
+          symbol: 'AAPLBUSDT',
+          lastPrice: '235.50',
+          priceChangePercent: '1.5',
+          updatedAt: Date.now()
+        };
 
-      const state = processTickerState(rawTicker, candles, 5000000, 0.0001, sampleWeights);
-      expect(state).not.toBeNull();
-      if (!isTradfiMarketOpen('EQUITY')) {
+        const candles: KlineCandle[] = [
+          { timestamp: 1000, open: 230, high: 236, low: 230, close: 235.5, volume: 5000, takerBuyVolume: 3500 }
+        ];
+
+        const state = processTickerState(rawTicker, candles, 5000000, 0.0001, sampleWeights);
+        expect(state).not.toBeNull();
+        expect(isTradfiMarketOpen('EQUITY')).toBe(false);
         expect(state?.signalType).toBe('NEUTRAL');
         expect(state?.signalReason).toContain('fechado');
+      } finally {
+        vi.useRealTimers();
+        const idx = TRADFI_ASSETS.indexOf(injected);
+        if (idx >= 0) TRADFI_ASSETS.splice(idx, 1);
       }
     });
   });

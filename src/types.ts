@@ -27,7 +27,7 @@ export interface TickerData {
   fundingRateDaily: number;         // e.g. 0.0003 (0.03% diário)
   fundingRateAnnualized: number;    // % annualized
   fundingRateAnalysis?: {
-    status: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE';
+    status: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE' | 'UNAVAILABLE';
     pressure: 'PRESSÃO COMPRADORA EXTREMA (RISCO LONG FLUSH)' | 'PRESSÃO COMPRADORA MODERADA' | 'NEUTRO / EQUILIBRADO' | 'PRESSÃO VENDEDORA MODERADA' | 'PRESSÃO VENDEDORA EXTREMA (POTENCIAL SHORT SQUEEZE)';
     bias: 'BUY' | 'SELL' | 'NEUTRAL';
     description: string;
@@ -92,7 +92,9 @@ export interface TickerData {
     isLive: boolean;
     isDegraded: boolean;
     lastPriceAgeMs: number;
-    source: 'WS' | 'REST' | 'CACHE' | 'SYNTHETIC';
+    source: 'WS' | 'REST' | 'CACHE' | 'SYNTHETIC' | 'STALE';
+    /** Factors whose upstream feed was unavailable this tick (Phase 2.5.2). Never scored as neutral. */
+    unavailableFactors?: string[];
   };
 
   updatedAt: number;                // timestamp
@@ -128,6 +130,8 @@ export interface LiquidationSummary {
   netLiqUSD: number;                 // buyLiq - sellLiq
   recentEvents: LiquidationEvent[];
   lastSpikeAt?: number;
+  /** True only when ALLOW_SYNTHETIC_DATA=true forced a modelled estimate instead of real events. */
+  isSimulated?: boolean;
 }
 
 export interface TrappedTradersData {
@@ -231,7 +235,23 @@ export interface TradeSignal {
   expirationReason?: string;        // Razão de encerramento (ex: "TTL Expirado", "Stop Loss", "Alvo 2", "Invalidação Técnica")
   isBreakevenActive?: boolean;      // True se atingiu Alvo 1 e o Stop Loss foi movido para o preço de entrada
   status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
+
+  /**
+   * R-2: proveniência do sinal. `DEMO` só é gravado quando o sinal nasceu de dado
+   * sintético (ALLOW_SYNTHETIC_DATA='true'); ausente em registros anteriores = `LIVE`.
+   */
+  origin?: DataOrigin;
 }
+
+/**
+ * R-2 — proveniência persistida:
+ *  - `LIVE`: dado de mercado (REST/WS/cache);
+ *  - `DEMO`: dado gerado localmente (só existe com ALLOW_SYNTHETIC_DATA='true').
+ */
+export type DataOrigin = 'LIVE' | 'DEMO';
+
+/** Filtro das leituras. `ALL` é explícito e reservado ao motor, que gerencia tudo o que criou. */
+export type OriginFilter = DataOrigin | 'ALL';
 
 export type MarketRegimeType = 'CALM' | 'NORMAL' | 'VOLATILE' | 'EXTREME';
 
@@ -292,6 +312,7 @@ export interface IndicatorWeights {
   minRiskRewardRatio: number;       // default 2.5
   minConfluenceScore?: number;      // default 65
   volumeProfileRange: number;       // default 50 (resolução em linhas/bins de preço)
+  maxStopLossAtrMultiple?: number;  // R-7: cap da distância do stop em múltiplos do ATR% (default 2.5)
   volumeProfileTimeframe?: string;  // default '30m'
   volumeProfileCandles?: number;    // default 48 (48 * 30m = 24h)
 }
@@ -382,12 +403,39 @@ export interface AIModelConfig {
   };
 }
 
+/**
+ * R-10: rolling walk-forward framing. Windows are derived from TIME (train → test, sliding by the
+ * step), never from how many candles happened to be loaded, so the in-sample/out-of-sample boundary
+ * is stable and the tuner can be restricted to the training slice alone.
+ */
+export interface WalkForwardOptions {
+  /** In-sample (training) window length, in days. */
+  trainDays?: number;
+  /** Out-of-sample (validation) window length, in days. */
+  testDays?: number;
+  /** How far to slide between consecutive windows, in days (defaults to testDays). */
+  stepDays?: number;
+}
+
 export interface BacktestConfig {
   symbol: string;
   days?: number;
   profile?: TradingProfile;
   weights: IndicatorWeights;
   seed?: number;
+  /**
+   * Analyse as of this timestamp instead of the wall clock (Phase 2.5.4). Pinning it makes a run
+   * reproducible; when omitted the window is aligned to the candle boundary so repeated runs of the
+   * same config select the same candles.
+   */
+  asOf?: number;
+  /** R-10: rolling window framing for the walk-forward metrics. */
+  walkForward?: WalkForwardOptions;
+  /**
+   * R-10 (internal): stop the simulation at this timestamp, so a candidate is scored on the training
+   * slice only. Used by the auto-tuner to keep out-of-sample data out of parameter selection.
+   */
+  isOnlyUntil?: number;
 }
 
 export interface EquityPoint {
@@ -455,9 +503,29 @@ export interface BacktestResult {
     inSampleProfit: number;
     outOfSampleWinRate: number;
     outOfSampleProfit: number;
+    /** Out-of-sample profit per trade divided by in-sample profit per trade. 0 when not computable. */
     overfitRatio: number;
     isRobust: boolean;
+    /** R-10: rolling windows evaluated (train → test). */
+    windows?: number;
+    /** R-10: total trades taken after the initial training window (the validation slice). */
+    outOfSampleTrades?: number;
+    /** R-10: per-window out-of-sample breakdown. */
+    windowResults?: Array<{
+      index: number;
+      isStart: number;
+      oosStart: number;
+      oosEnd: number;
+      isTrades: number;
+      oosTrades: number;
+      oosWinRate: number;
+      oosProfitPct: number;
+    }>;
   };
+  /** Confluence factors that could not be backtested on the available history (Phase 2.5.4). */
+  disabledFactors?: string[];
+  /** Cost/parameter assumptions baked into the simulation, surfaced so results are not over-read. */
+  assumptions?: string[];
 }
 
 export interface LiquidityBucket {
@@ -506,11 +574,17 @@ export interface AutoTuneResult {
   profile: TradingProfile;
   iterations: number;
   bestWeights: IndicatorWeights;
+  /** R-10: scored on the training slice only (`isOnlyUntil`), never on the whole series. */
   initialResult: BacktestResult;
+  /** R-10: the best training-slice candidate. */
   bestResult: BacktestResult;
   fitnessHistory: AutoTuneIteration[];
   tuningSummary: string;
   createdAt: number;
+  /** R-10: honest validation of the chosen weights on the unseen remainder of the series. */
+  oosValidation?: BacktestResult;
+  /** R-10: timestamp the training slice ends at (parameters are only fitted before it). */
+  trainedUntil?: number;
 }
 
 // ============================================
@@ -571,12 +645,16 @@ export interface ScreenerScanSummary {
   favoritesCount: number;
   dynamicCount: number;
   excludedCount?: number;            // Total assets currently in the exclusion list
-  topGainer: { symbol: string; change: number };
-  topVolume: { symbol: string; quoteVolume: number };
-  topOiSurge: { symbol: string; oiChange: number };
-  highestFundingRate: { symbol: string; rate: number };
+  // Phase 2.5.6: these leaders are derived from a completed scan. They stay undefined when no scan has
+  // produced them, instead of being filled with invented symbols and rates.
+  topGainer?: { symbol: string; change: number };
+  topVolume?: { symbol: string; quoteVolume: number };
+  topOiSurge?: { symbol: string; oiChange: number };
+  highestFundingRate?: { symbol: string; rate: number };
   lastScanDurationMs: number;
   timestamp: number;
+  /** True when the scan could not reach the exchange; leaders above are absent rather than simulated. */
+  dataUnavailable?: boolean;
 }
 
 export interface UserPriceAlert {

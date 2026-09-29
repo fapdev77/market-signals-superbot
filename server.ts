@@ -1,35 +1,107 @@
 import './server/utils/bootstrap.js';
 import express from 'express';
-import cors from 'cors';
 import path from 'path';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import { createServer as createViteServer } from 'vite';
-import { DEFAULT_SYMBOLS, TRADFI_ASSETS, isTradfiMarketOpen, fetchBinanceFuturesTickers, fetchOpenInterest, fetchFundingRate, fetchKlines, fetchLongShortRatio } from './server/binanceService.js';
-import { initBinanceWebSocket, getWebSocketStatus } from './server/binanceWebsocket.js';
+import {
+  DEFAULT_SYMBOLS,
+  getTradfiAsset,
+  isTradfiMarketOpen,
+  refreshTradfiRegistry,
+  refreshTradingSchedule,
+  fetchBinanceFuturesTickers,
+  fetchOpenInterest,
+  fetchFundingRate,
+  fetchKlines,
+  fetchLongShortRatio,
+  DEFAULT_FUNDING_INTERVAL_HOURS
+} from './server/binanceService.js';
+import { initBinanceWebSocket } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
-import { saveSignal, getIndicatorWeights, getActiveSignalsBySymbol, updateSignalStatus, updateSignal, getAIModels, expireStaleSignals, expireActiveSignalsByCategory, expireAllActiveSignals, recordAuditLog } from './server/db.js';
+import {
+  saveSignal,
+  getIndicatorWeights,
+  getActiveSignalsBySymbol,
+  updateSignalStatus,
+  updateSignal,
+  getAIModels,
+  expireStaleSignals,
+  expireActiveSignalsByCategory,
+  expireAllActiveSignals,
+  getActiveSignals,
+  flushDbSave
+} from './server/db.js';
 import { marketScreener } from './server/services/MarketScreenerService.js';
-import { TickerData, BotState, IndicatorWeights, StrategyCategory } from './src/types.js';
-import { createMarketRouter } from './server/routes/marketRoutes.js';
-import { createAIRouter } from './server/routes/aiRoutes.js';
-import { createBacktestRouter } from './server/routes/backtestRoutes.js';
-import { createSystemRouter } from './server/routes/systemRoutes.js';
+import { TickerData, BotState, IndicatorWeights, LongShortRatioData } from './src/types.js';
 import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
-import { requireAuth, getEffectiveAuthToken, validateTokenConstantTime } from './server/middleware/auth.js';
 import { canGenerateSignals, canEvaluateActiveTrades } from './server/services/DataGate.js';
+import { resolveRawTicker, resolveMarketInputs, evaluatePositionManagement } from './server/services/TickProcessor.js';
+import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted } from './server/services/RiskManager.js';
+import { createApp } from './server/app.js';
+// R-15: logger estruturado + métricas em memória.
+import { logJson } from './server/utils/logger.js';
+import { incrementMetric, METRIC_NAMES } from './server/utils/metrics.js';
 
-// Prevent unhandled internal runtime assertions (e.g. Node 24 undici socket parser ERR_ASSERTION: false == true) from crashing the server
+// correlationId do tick corrente (logs do tick carregam o mesmo id — critério 1).
+let currentTickId = '';
+
+// Phase 3.3: a process-level handler must not silently absorb arbitrary failures.
+//
+// The previous version logged *every* uncaught exception and carried on, which leaves the process in an
+// undefined state (half-written state, dead sockets, stale caches) while still claiming to run. Only the
+// one known upstream Node/undici socket-parser assertion is tolerated, because it is benign and frequent;
+// anything else exits so a supervisor can restart the process cleanly.
+const TOLERATED_ASSERTION_SIGNATURE = 'false == true';
+
+function isToleratedUndiciAssertion(err: any): boolean {
+  if (err?.code !== 'ERR_ASSERTION') return false;
+  const stack = String(err?.stack || '');
+  const message = String(err?.message || '');
+  return stack.includes('undici') && message.includes(TOLERATED_ASSERTION_SIGNATURE);
+}
+
 process.on('uncaughtException', (err: any) => {
-  if (err?.code === 'ERR_ASSERTION' && (err?.stack?.includes('undici') || String(err?.message || '').includes('false == true'))) {
+  if (isToleratedUndiciAssertion(err)) {
     console.warn('⚠️ [Node.js Engine Guard] Intercepted internal Undici socket assertion (false == true); process preserved.');
     return;
   }
-  console.error('❌ [Uncaught Exception]:', err);
+
+  console.error('❌ [FATAL] Uncaught Exception — terminating so the process can be restarted cleanly:', err);
+  // Give the log a chance to flush before exiting — including any pending DB write,
+  // which is debounced and would otherwise be lost.
+  setTimeout(() => {
+    try {
+      flushDbSave();
+    } catch (flushErr) {
+      console.error('Failed to flush pending DB write before exit:', flushErr);
+    }
+    process.exit(1);
+  }, 100);
 });
 
 process.on('unhandledRejection', (reason: any) => {
-  console.warn('⚠️ [Unhandled Promise Rejection]:', reason?.message || reason);
+  console.error('❌ [Unhandled Promise Rejection]:', reason?.message || reason);
+});
+
+// Database writes are coalesced behind a debounce timer, so a graceful shutdown must
+// flush the last image to disk explicitly — otherwise the most recent state is lost.
+function flushDbAndExit(signal: string, exitCode: number): void {
+  console.log(`🛑 [Shutdown] ${signal} recebido — gravando estado pendente do banco em disco...`);
+  try {
+    flushDbSave();
+  } catch (err) {
+    console.error('Failed to flush pending DB write during shutdown:', err);
+  }
+  process.exit(exitCode);
+}
+
+process.on('SIGINT', () => flushDbAndExit('SIGINT', 0));
+process.on('SIGTERM', () => flushDbAndExit('SIGTERM', 0));
+process.on('beforeExit', () => {
+  try {
+    flushDbSave();
+  } catch (err) {
+    console.error('Failed to flush pending DB write on exit:', err);
+  }
 });
 
 async function startServer() {
@@ -39,107 +111,9 @@ async function startServer() {
     process.exit(1);
   }
 
-  const app = express();
   // Environment constraint: Dev server must run on port 3000 in AI Studio
   const PORT = process.env.NODE_ENV === 'production' ? (Number(process.env.PORT) || 3000) : 3000;
   const HOST = process.env.HOST || '0.0.0.0';
-
-  // S2: Enable trust proxy (essential for Cloud Run, reverse proxies and rate-limiting)
-  app.set('trust proxy', 1);
-
-  // S2: Configured CORS middleware
-  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
-  const allowedOrigins = allowedOriginsEnv
-    ? allowedOriginsEnv.split(',').map(o => o.trim())
-    : ['http://localhost:3000', 'http://127.0.0.1:3000'];
-
-  app.use(cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, same-origin iframe in dev)
-      if (!origin) return callback(null, true);
-      // In dev/preview environments, allow same host or explicit origins
-      if (process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin) || origin.endsWith('.run.app')) {
-        return callback(null, true);
-      }
-      callback(new Error('Bloqueado por política de CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-token']
-  }));
-
-  // S2: Hardening HTTP Headers via Helmet (with iframe & WASM support)
-  app.use(helmet({
-    contentSecurityPolicy: false, // Vite Dev & preview iframe compatibility
-    crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: { policy: 'cross-origin' }
-  }));
-
-  // S2: Body payload limit (100 kb max)
-  app.use(express.json({ limit: '100kb' }));
-
-  // S2: Rate limiters
-  const globalApiLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too Many Requests', message: 'Limite de requisições excedido. Aguarde 1 minuto.' }
-  });
-
-  const strictSensitiveLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 45,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too Many Requests', message: 'Limite de requisições para operações sensíveis atingido.' }
-  });
-
-  const authBruteForceLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 15, // Max 15 token verifications per minute to stop brute-force
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too Many Requests', message: 'Muitas tentativas de validação de token. Aguarde 1 minuto.' }
-  });
-
-  app.use('/api', globalApiLimiter);
-  app.use('/api/ai', strictSensitiveLimiter);
-  app.use('/api/system/factory-reset', strictSensitiveLimiter);
-  app.use('/api/system/table-clear', strictSensitiveLimiter);
-  app.use('/api/auth/verify', authBruteForceLimiter);
-
-  // Health check endpoint (Public, unauthenticated for probes)
-  app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
-  app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
-
-  // Auth Status & Verification (Public)
-  app.get('/api/auth/status', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    let providedToken = '';
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      providedToken = authHeader.slice(7).trim();
-    } else if (req.headers['x-api-token']) {
-      providedToken = String(req.headers['x-api-token']).trim();
-    }
-    const effectiveToken = getEffectiveAuthToken();
-    const isValid = Boolean(providedToken && validateTokenConstantTime(providedToken, effectiveToken));
-
-    res.json({
-      authenticated: isValid,
-      hasExplicitTokenConfigured: Boolean(process.env.API_AUTH_TOKEN)
-    });
-  });
-
-  app.post('/api/auth/verify', (req, res) => {
-    const { token } = req.body || {};
-    const effectiveToken = getEffectiveAuthToken();
-    const isValid = Boolean(token && validateTokenConstantTime(String(token).trim(), effectiveToken));
-    res.json({ valid: isValid });
-  });
-
-  // S1: Authentication enforcement on all other API endpoints
-  app.use('/api', requireAuth);
 
   // Default indicator weights and models for immediate startup
   const defaultWeights: IndicatorWeights = getDefaultIndicatorWeights();
@@ -174,10 +148,18 @@ async function startServer() {
   async function runMarketTick(forced = false) {
     if ((!botState.isMonitoring && !forced) || isMarketTickRunning) return;
     isMarketTickRunning = true;
+    currentTickId = `tick-${Date.now()}`;
+    const startedAt = Date.now();
 
     try {
       // Periodic institutional TTL sweep across all active signals
       await expireStaleSignals();
+
+      // Phase 3.4: risk posture is evaluated once per tick. `openSignals` is kept in sync as new signals
+      // are emitted so the concurrency and exposure limits hold within the same tick.
+      // R-2: o motor enxerga todas as origens — se ele gerou um sinal DEMO, tem que gerenciá-lo.
+      const openSignals = await getActiveSignals('ALL');
+      const tradingHalted = isTradingHalted();
 
       // 1. Fetch live Binance Futures 24h Tickers
       const activeSymbols = marketScreener.getMonitoredSymbols();
@@ -192,61 +174,56 @@ async function startServer() {
         await Promise.allSettled(batch.map(async (symbol) => {
           try {
             const existingCache = tickerStateCache[symbol];
-            let raw = rawFutures.find((t: any) => t.symbol === symbol);
-            
-            if (!raw && existingCache) {
-              raw = {
-                symbol,
-                lastPrice: String(existingCache.price),
-                priceChangePercent: String(existingCache.priceChangePercent24h),
-                highPrice: String(existingCache.high24h),
-                lowPrice: String(existingCache.low24h),
-                volume: String(existingCache.volume24h),
-                quoteVolume: String(existingCache.quoteVolume24h)
-              };
-            }
-
-            if (!raw) {
+            // Phase 2.5.1: a quote rebuilt from cache keeps its original timestamp and is marked STALE
+            // so the DataGate rejects it instead of treating a frozen price as fresh.
+            const resolved = resolveRawTicker(
+              symbol,
+              rawFutures.find((t: any) => t.symbol === symbol),
+              existingCache
+            );
+            if (!resolved) {
               return;
             }
+            const { raw } = resolved;
 
             // Fetch live Kline data (15m timeframe, 60 candles)
             const klines = await fetchKlines(symbol, '15m', 60);
 
             // Fetch live Open Interest with real change tracking (Phase 2.2)
             const oiData = await fetchOpenInterest(symbol);
-            const liveOI = (oiData && oiData.openInterest > 0) 
-              ? oiData.openInterest 
-              : (existingCache?.openInterest || 0);
-            const realOiChange = {
-              change24h: oiData?.change24h ?? existingCache?.openInterestChange24h,
-              change1h: oiData?.change1h ?? existingCache?.openInterestChange1h
-            };
 
-            // Fetch live Funding Rate with contract interval (Phase 2.2)
+            // Fetch live Funding Rate with contract interval (Phase 2.2 / 2.5.3)
             const fundingData = await fetchFundingRate(symbol);
-            const liveFunding = fundingData ? fundingData.fundingRate : (existingCache?.fundingRate || 0.0001);
-            const fundingIntervalHours = fundingData?.fundingIntervalHours || existingCache?.fundingIntervalHours || 8;
 
-            // Fetch Long/Short Ratio
-            let lsData = undefined;
+            // Fetch Long/Short Ratio. Null means "unavailable" — it is never fabricated (Phase 2.5.2).
+            let lsData: LongShortRatioData | null = null;
             try {
               lsData = await fetchLongShortRatio(symbol, raw?.lastPrice ? parseFloat(raw.lastPrice) : undefined);
             } catch {
               // Non-blocking
             }
 
+            // Phase 2.5.2: carry per-factor provenance instead of coercing missing feeds to 0.
+            const inputs = resolveMarketInputs({
+              cached: existingCache,
+              oiData,
+              fundingData,
+              longShortData: lsData,
+              defaultFundingIntervalHours: DEFAULT_FUNDING_INTERVAL_HOURS
+            });
+
             // D3/D5 & Phase 2.2: Process ticker state strictly from real live data
             const processed = processTickerState(
               raw,
               klines,
-              liveOI,
-              liveFunding,
+              inputs.openInterest,
+              inputs.fundingRate,
               weights,
-              lsData,
+              inputs.longShortData,
               undefined,
-              realOiChange,
-              fundingIntervalHours
+              inputs.realOiChange,
+              inputs.fundingIntervalHours,
+              inputs.availability
             );
             if (!processed) {
               return;
@@ -262,23 +239,41 @@ async function startServer() {
             const activeConfigs = resolveActiveStrategies(weights);
 
             for (const stratConfig of activeConfigs) {
-              const strategyWeights = configToWeights(stratConfig);
               const targetCategory = stratConfig.category;
               const targetTimeframe = stratConfig.timeframe;
 
-              const activeSignalsForCategory = await getActiveSignalsBySymbol(symbol, targetCategory);
+              // R-2: mesmo motivo do openSignals acima — o motor deduplica contra tudo que ele criou.
+              const activeSignalsForCategory = await getActiveSignalsBySymbol(symbol, targetCategory, 'ALL');
 
               if (activeSignalsForCategory.length === 0) {
                 const minScore = weights.minConfluenceScore ?? 65;
-                
-                // Phase 2.4: Ensure underlying TradFi market is open before emitting signals
-                const tradfiAsset = TRADFI_ASSETS.find(a => a.symbol === symbol);
+
+                // Phase 2.4/2.5.5: Ensure underlying TradFi market is open before emitting signals.
+                // Classification comes from the exchangeInfo-discovered registry, not a hardcoded list.
+                const tradfiAsset = getTradfiAsset(symbol);
                 const isTradfiAllowed = !tradfiAsset || isTradfiMarketOpen(tradfiAsset.tradfiCategory);
 
-                if (gateDecision.allow && isTradfiAllowed && processed.confluenceScore >= minScore) {
+                // Phase 3.4: the kill-switch and the portfolio limits gate emission.
+                const risk = evaluatePortfolioRisk(openSignals, DEFAULT_RISK_LIMITS, { category: targetCategory });
+                if (tradingHalted && processed.confluenceScore >= minScore) {
+                  // R-15 (critério 2): bloqueios do kill-switch viram métrica.
+                  incrementMetric(METRIC_NAMES.signalsSuppressedKillswitch);
+                  logJson('INFO', 'tick', 'Sinal suprimido pelo kill-switch', { symbol, category: targetCategory, correlationId: currentTickId });
+                  console.log(`⛔ [KILL-SWITCH] Sinal ${symbol}/${targetCategory} suprimido (trading suspenso).`);
+                } else if (!risk.allowed && processed.confluenceScore >= minScore) {
+                  incrementMetric(METRIC_NAMES.signalsBlockedRiskLimit);
+                  logJson('INFO', 'tick', 'Sinal suprimido por limite de risco', { symbol, category: targetCategory, reasons: risk.reasons, correlationId: currentTickId });
+                  console.log(`⛔ [RISK LIMIT] Sinal ${symbol}/${targetCategory} suprimido: ${risk.reasons.join(' ')}`);
+                } else if (!gateDecision.allow && processed.confluenceScore >= minScore) {
+                  incrementMetric(METRIC_NAMES.signalsBlockedDatagate);
+                  logJson('INFO', 'tick', 'Sinal bloqueado pelo DataGate', { symbol, category: targetCategory, gateReason: gateDecision.reason, correlationId: currentTickId });
+                } else if (!isTradfiAllowed && processed.confluenceScore >= minScore) {
+                  incrementMetric(METRIC_NAMES.tradingScheduleBlocks);
+                  logJson('INFO', 'tick', 'Sinal bloqueado: mercado TradFi subjacente fechado', { symbol, category: targetCategory, correlationId: currentTickId });
+                } else if (gateDecision.allow && isTradfiAllowed && processed.confluenceScore >= minScore) {
                   const newSignal = buildTradeSignal(
-                    processed, 
-                    klines, 
+                    processed,
+                    klines,
                     stratConfig.minRiskRewardRatio,
                     targetCategory,
                     targetTimeframe,
@@ -286,57 +281,35 @@ async function startServer() {
                   );
                   if (newSignal) {
                     await saveSignal(newSignal);
+                    // Keep the in-tick risk snapshot current so limits hold for the rest of this tick.
+                    openSignals.push(newSignal);
                     botState.signalsGenerated24h++;
+                    incrementMetric(METRIC_NAMES.signalsEmitted);
+                    logJson('INFO', 'tick', 'Novo sinal emitido', { symbol, category: targetCategory, direction: newSignal.direction, score: newSignal.confluenceScore, origin: newSignal.origin, correlationId: currentTickId });
                     console.log(`⚡ [NEW ${targetCategory} SIGNAL] ${symbol} ${newSignal.direction} Score: ${newSignal.confluenceScore}% RR: 1:${newSignal.riskRewardRatio}`);
                   }
                 }
               } else if (activeTradeGate.allow) {
                 // Monitor active trades for targets, stop-loss or breakeven updates
-                for (const activeSignal of activeSignalsForCategory) {
-                  let signalModified = false;
-
-                  if (activeSignal.direction === 'LONG') {
-                    // Check if Target 1 reached -> Activate Breakeven
-                    if (!activeSignal.isBreakevenActive && processed.price >= activeSignal.target1) {
-                      activeSignal.isBreakevenActive = true;
-                      activeSignal.stopLoss = activeSignal.entryZone[0];
-                      signalModified = true;
-                      console.log(`🛡️ [BREAKEVEN ACTIVATED] Long ${symbol} hit Target 1. Stop raised to entry: ${activeSignal.stopLoss}`);
-                    }
-
-                    if (processed.price >= activeSignal.target2) {
-                      await updateSignalStatus(activeSignal.id, 'TARGET_REACHED', 'Alvo 2 atingido (+100% expansão de lucro)');
-                      console.log(`🎯 [TARGET 2 HIT] Long ${symbol} hit final take profit: ${activeSignal.target2}`);
-                    } else if (processed.price <= activeSignal.stopLoss) {
-                      const reason = activeSignal.isBreakevenActive 
-                        ? 'Saída no Breakeven (Risco Zero)' 
-                        : 'Stop Loss Atingido';
-                      await updateSignalStatus(activeSignal.id, 'STOPPED_OUT', reason);
-                      console.log(`🛑 [STOPPED OUT] Long ${symbol} hit stop at ${activeSignal.stopLoss} (${reason})`);
-                    } else if (signalModified) {
-                      await updateSignal(activeSignal);
-                    }
-                  } else if (activeSignal.direction === 'SHORT') {
-                    // Check if Target 1 reached -> Activate Breakeven
-                    if (!activeSignal.isBreakevenActive && processed.price <= activeSignal.target1) {
-                      activeSignal.isBreakevenActive = true;
-                      activeSignal.stopLoss = activeSignal.entryZone[1];
-                      signalModified = true;
-                      console.log(`🛡️ [BREAKEVEN ACTIVATED] Short ${symbol} hit Target 1. Stop lowered to entry: ${activeSignal.stopLoss}`);
-                    }
-
-                    if (processed.price <= activeSignal.target2) {
-                      await updateSignalStatus(activeSignal.id, 'TARGET_REACHED', 'Alvo 2 atingido (+100% expansão de lucro)');
-                      console.log(`🎯 [TARGET 2 HIT] Short ${symbol} hit final take profit: ${activeSignal.target2}`);
-                    } else if (processed.price >= activeSignal.stopLoss) {
-                      const reason = activeSignal.isBreakevenActive 
-                        ? 'Saída no Breakeven (Risco Zero)' 
-                        : 'Stop Loss Atingido';
-                      await updateSignalStatus(activeSignal.id, 'STOPPED_OUT', reason);
-                      console.log(`🛑 [STOPPED OUT] Short ${symbol} hit stop at ${activeSignal.stopLoss} (${reason})`);
-                    } else if (signalModified) {
-                      await updateSignal(activeSignal);
-                    }
+                // Phase 2.5.1: decision logic lives in the unit-tested TickProcessor module.
+                // Phase 3.1: also pass the forming candle's range so a stop or target touched between
+                // ticks is not missed.
+                const lastKline = klines.length > 0 ? klines[klines.length - 1] : undefined;
+                const positionActions = evaluatePositionManagement(
+                  activeSignalsForCategory,
+                  processed.price,
+                  lastKline ? { high: lastKline.high, low: lastKline.low, openTime: lastKline.timestamp } : undefined
+                );
+                for (const action of positionActions) {
+                  if (action.type === 'HIT_TARGET2') {
+                    await updateSignalStatus(action.signalId, 'TARGET_REACHED', action.reason);
+                    console.log(`🎯 [TARGET 2 HIT] ${symbol} hit final take profit.`);
+                  } else if (action.type === 'STOPPED_OUT') {
+                    await updateSignalStatus(action.signalId, 'STOPPED_OUT', action.reason);
+                    console.log(`🛑 [STOPPED OUT] ${symbol} (${action.reason})`);
+                  } else {
+                    console.log(`🛡️ [BREAKEVEN ACTIVATED] ${symbol} stop moved to entry.`);
+                    await updateSignal(action.signal);
                   }
                 }
               }
@@ -349,7 +322,15 @@ async function startServer() {
 
       botState.ticksProcessed++;
       botState.lastTickTime = Date.now();
+      incrementMetric(METRIC_NAMES.ticksProcessed);
+      logJson('INFO', 'tick', 'Tick concluído', {
+        symbols: activeSymbols.length,
+        durationMs: Date.now() - startedAt,
+        correlationId: currentTickId
+      });
     } catch (tickErr) {
+      incrementMetric('tick_errors');
+      logJson('ERROR', 'tick', 'Exceção no tick de mercado', { error: String(tickErr), correlationId: currentTickId });
       console.error('Market tick scan exception:', tickErr);
     } finally {
       isMarketTickRunning = false;
@@ -368,14 +349,8 @@ async function startServer() {
     await runMarketTick(true);
   };
 
-  const getBotState = () => botState;
-  const getTickerCache = () => tickerStateCache;
-
-  // Mount Application Routes
-  app.use('/api', createMarketRouter(getBotState, getTickerCache, triggerMarketScan));
-  app.use('/api/ai', createAIRouter(getBotState, getTickerCache));
-  app.use('/api/backtest', createBacktestRouter(getBotState));
-  app.use('/api/system', createSystemRouter(getBotState, triggerMarketScan));
+  // Phase 2.5.9: build the real Express application (middleware, CORS, limiters, auth, routers).
+  const app = createApp({ botState, tickerStateCache, triggerMarketScan });
 
   // VITE MIDDLEWARE (Dev) / STATIC FILES (Prod)
   if (process.env.NODE_ENV !== 'production') {
@@ -405,6 +380,25 @@ async function startServer() {
     } catch (wsErr) {
       console.warn('WebSocket init warning:', wsErr);
     }
+
+    // Phase 2.5.5: discover TradFi instruments from exchangeInfo at boot. Until this resolves the
+    // registry is empty, which means no TradFi signal gating is applied to unknown symbols.
+    refreshTradfiRegistry()
+      .then(assets => console.log(`📊 Registro TradFi: ${assets.length} contrato(s) descoberto(s).`))
+      .catch(err => console.warn('TradFi registry discovery warning:', err));
+
+    // R-11: calendário oficial de feriados/horários reduzidos (cache diário). Sem isso o gate
+    // TradFi decide só pelo relógio de NY, que trata feriado como dia útil.
+    const refreshScheduleLoop = () => {
+      refreshTradingSchedule()
+        .then(ok => {
+          if (ok) console.log('🗓️ Calendário de trading da exchange carregado (cache diário).');
+          else console.warn('⚠️ tradingSchedule indisponível — TradFi usando relógio America/New_York (sem feriados).');
+        })
+        .catch(() => {}); // refreshTradingSchedule não propaga, mas o loop não pode morrer
+    };
+    refreshScheduleLoop();
+    setInterval(refreshScheduleLoop, 6 * 60 * 60 * 1000).unref(); // re-tenta a cada 6h (TTL 24h
 
     runMarketTick();
     setInterval(runMarketTick, 4000);

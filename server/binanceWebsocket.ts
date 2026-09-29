@@ -1,5 +1,9 @@
 import WebSocket from 'ws';
 import { LiquidationEvent, LiquidationSummary } from '../src/types.js';
+// R-2: simulação de liquidações isolada em server/demo/.
+import { simulateLiquidationSummary } from './demo/syntheticMarket.js';
+// R-13: health por feed.
+import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
 
 export interface WSStatus {
   connected: boolean;
@@ -82,32 +86,11 @@ export function getLiquidationsSummary(symbol: string, currentPrice?: number): L
     }
   });
 
-  // If buffer is empty (e.g. freshly started or regional block), provide high-fidelity model estimate
-  if (recent.length === 0 && currentPrice && currentPrice > 0) {
-    const seed = cleanSymbol.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    const now = Date.now();
-    const cycle = Math.sin(seed + now / 120000);
-    const baseLiq = currentPrice > 1000 ? 850000 : currentPrice > 100 ? 320000 : 95000;
-
-    const simSellLiq = Math.max(15000, Math.round(baseLiq * (1 + cycle * 0.6)));
-    const simBuyLiq = Math.max(15000, Math.round(baseLiq * (1 - cycle * 0.6)));
-
-    return {
-      totalBuyLiqUSD: simBuyLiq,
-      totalSellLiqUSD: simSellLiq,
-      netLiqUSD: simBuyLiq - simSellLiq,
-      recentEvents: [
-        {
-          symbol: cleanSymbol,
-          side: cycle > 0 ? 'SELL' : 'BUY',
-          price: currentPrice * (cycle > 0 ? 0.996 : 1.004),
-          qty: parseFloat(((baseLiq * 0.4) / currentPrice).toFixed(3)),
-          usdValue: Math.round(baseLiq * 0.4),
-          timestamp: now - 3 * 60 * 1000
-        }
-      ],
-      lastSpikeAt: now - 3 * 60 * 1000
-    };
+  // Phase 2.5.2: an empty buffer means "no liquidations observed", not "invent a plausible number".
+  // The old sine-wave estimate was presented to the operator as real flow. It is now opt-in and
+  // explicitly flagged as simulated so the UI can label it.
+  if (recent.length === 0 && currentPrice && currentPrice > 0 && process.env.ALLOW_SYNTHETIC_DATA === 'true') {
+    return simulateLiquidationSummary(cleanSymbol, currentPrice);
   }
 
   const lastSpike = recent.length > 0 ? recent[0].timestamp : undefined;
@@ -203,6 +186,7 @@ export function initBinanceWebSocket() {
       wsStatus.lastConnectedAt = Date.now();
       wsStatus.lastTickAt = Date.now();
       wsStatus.lastError = null;
+      recordFeedSuccess('ws');
 
       addBinanceLog('SUCCESS', 'WEBSOCKET', `Conexão WebSocket estabelecida com sucesso com Binance Futures (${wsUrl})`);
     });
@@ -252,6 +236,7 @@ export function initBinanceWebSocket() {
 
     wsInstance.on('error', (err: any) => {
       wsStatus.lastError = err.message || 'Erro de rede desconhecido no WebSocket';
+      recordFeedFailure('ws', wsStatus.lastError);
       addBinanceLog('ERROR', 'WEBSOCKET', `Erro na conexão WebSocket: ${wsStatus.lastError}`);
     });
 

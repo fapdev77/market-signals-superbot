@@ -1,8 +1,8 @@
-import { db } from '../backtest_db';
-import { historicalKlines } from '../backtest_db/schema';
-import { eq, desc, and, sql, gte, lte } from 'drizzle-orm';
-import { requestJson } from '../utils/httpClient.js';
-import { getBenchmarkPrice } from '../../src/utils/benchmarkPrices.js';
+import { historicalKlinesDao, type HistoricalKlineRow } from '../backtest_db/index.js';
+import { requestJsonLimited } from '../utils/httpClient.js';
+import { BinanceRateLimiter } from '../utils/binanceRateLimiter.js';
+// R-2: a geração de candles fabricados foi movida para server/demo/.
+import { generateSynthetic1mKlineRows } from '../demo/syntheticKlines.js';
 
 export interface SyncProgress {
   symbol: string;
@@ -20,20 +20,7 @@ export class HistoricalDataService {
 
   static async getStats(symbol: string) {
     try {
-      const stats = await db
-        .select({
-          count: sql<number>`count(*)`,
-          minTime: sql<number>`min(open_time)`,
-          maxTime: sql<number>`max(open_time)`
-        })
-        .from(historicalKlines)
-        .where(eq(historicalKlines.symbol, symbol));
-
-      return {
-        count: stats[0]?.count || 0,
-        minTime: stats[0]?.minTime || null,
-        maxTime: stats[0]?.maxTime || null
-      };
+      return await historicalKlinesDao.stats(symbol);
     } catch (err) {
       console.error('Error fetching stats:', err);
       return { count: 0, minTime: null, maxTime: null };
@@ -46,8 +33,12 @@ export class HistoricalDataService {
     syncStates[symbol] = { symbol, progress: 0, status: 'SYNCING' };
 
     try {
+      // R-5: the klines sync is the heaviest Binance consumer (1000 candles per
+      // request, looping). It must refuse to run while the limiter is in
+      // cooldown instead of hammering the API outside of weight control.
+      BinanceRateLimiter.assertAllowed();
       if (forceFull) {
-        await db.delete(historicalKlines).where(eq(historicalKlines.symbol, symbol));
+        await historicalKlinesDao.deleteBySymbol(symbol);
       }
 
       const now = Date.now();
@@ -56,20 +47,9 @@ export class HistoricalDataService {
 
       if (!forceFull) {
         // Check if we have recent data
-        const latestKlines = await db
-          .select({ openTime: historicalKlines.openTime })
-          .from(historicalKlines)
-          .where(
-            and(
-              eq(historicalKlines.symbol, symbol),
-              eq(historicalKlines.interval, '1m')
-            )
-          )
-          .orderBy(desc(historicalKlines.openTime))
-          .limit(1);
-
-        if (latestKlines.length > 0 && latestKlines[0].openTime > startTime) {
-          fetchTime = latestKlines[0].openTime + 60000;
+        const latestOpenTime = await historicalKlinesDao.getLatestOpenTime(symbol, '1m');
+        if (latestOpenTime !== null && latestOpenTime > startTime) {
+          fetchTime = latestOpenTime + 60000;
         }
       }
 
@@ -94,7 +74,7 @@ export class HistoricalDataService {
         for (const ep of endpoints) {
           try {
             const url = `${ep}?symbol=${symbol}&interval=1m&limit=1000&startTime=${fetchTime}`;
-            const res = await requestJson(url, { timeoutMs: 4000 });
+            const res = await requestJsonLimited(url, { timeoutMs: 4000 });
             if (Array.isArray(res.data) && res.data.length > 0) {
               fetchedData = res.data;
               break;
@@ -107,15 +87,22 @@ export class HistoricalDataService {
         if (!fetchedData || fetchedData.length === 0) {
           attemptsFailed++;
           if (attemptsFailed > 2) {
-            // If network calls fail, seed synthetic historical klines so backtest works offline
-            await this.seedSyntheticKlines(symbol, fetchTime, now);
+            // Revisão R-2: fabricar histórico é opt-in como todo o resto do dado sintético
+            // (BacktestEngine, fetchKlines, screener e WS fazem o mesmo gate). Sem a flag o sync
+            // termina sem inventar candles — o backtest falha fechado mais tarde, em vez de
+            // rodar sobre séries fabricadas que o operador pediu para serem reais.
+            if (process.env.ALLOW_SYNTHETIC_DATA === 'true') {
+              await this.seedSyntheticKlines(symbol, fetchTime, now);
+            } else {
+              console.warn(`⚠️ [HIST] Sem resposta da exchange para ${symbol}; histórico sintético não gerado (ALLOW_SYNTHETIC_DATA !== 'true').`);
+            }
             break;
           }
           await new Promise(r => setTimeout(r, 500));
           continue;
         }
 
-        const rowsToInsert = fetchedData.map((k: any) => ({
+        const rowsToInsert: HistoricalKlineRow[] = fetchedData.map((k: any) => ({
           symbol,
           interval: '1m',
           openTime: k[0],
@@ -131,7 +118,8 @@ export class HistoricalDataService {
           takerBuyQuoteVolume: parseFloat(k[10]) || parseFloat(k[7]) * 0.5,
         }));
 
-        await db.insert(historicalKlines).values(rowsToInsert).onConflictDoNothing();
+        // R-2: candles baixados da Binance são proveniência LIVE.
+        await historicalKlinesDao.insertMany(rowsToInsert, 'LIVE');
 
         fetchTime = fetchedData[fetchedData.length - 1][6] + 1;
         
@@ -151,75 +139,25 @@ export class HistoricalDataService {
   }
 
   /**
-   * Generates realistic synthetic 1m klines into database if remote API is blocked
+   * Generates realistic synthetic 1m klines into database when the remote API is unavailable.
+   * R-2: tudo aqui é gravado com `origin = 'DEMO'` — dado fabricado nunca se passa por mercado.
+   * O chamador é responsável pelo gate `ALLOW_SYNTHETIC_DATA === 'true'` (regra do diretório em
+   * `server/demo/`); BacktestEngine e o fallback do syncSymbol fazem esse gate.
    */
   public static async seedSyntheticKlines(symbol: string, startTime: number, endTime: number): Promise<void> {
-    let basePrice = getBenchmarkPrice(symbol);
-    const intervalMs = 60 * 1000; // 1 minute
-    const rows: any[] = [];
-    let curTime = startTime;
+    const rows = generateSynthetic1mKlineRows(symbol, startTime, endTime);
 
-    while (curTime <= endTime) {
-      const variation = (Math.sin(curTime / 300000) + (Math.random() - 0.495)) * (basePrice * 0.002);
-      const open = basePrice;
-      const close = basePrice + variation;
-      const high = Math.max(open, close) + Math.random() * (basePrice * 0.001);
-      const low = Math.min(open, close) - Math.random() * (basePrice * 0.001);
-      
-      // Generate volume with realistic periodic spikes (representing breakout sessions)
-      let volume = Math.random() * 20 + 5;
-      if (Math.random() < 0.08) {
-        volume = volume * (2.0 + Math.random() * 3.0);
-      }
-      
-      // Generate realistic wide distribution for taker buy volume (CVD)
-      const takerBuyBaseVolume = volume * (0.33 + Math.random() * 0.34);
-
-      rows.push({
-        symbol,
-        interval: '1m',
-        openTime: curTime,
-        closeTime: curTime + intervalMs - 1,
-        open,
-        high,
-        low,
-        close,
-        volume,
-        quoteAssetVolume: volume * close,
-        trades: Math.floor(Math.random() * 150) + 20,
-        takerBuyBaseVolume,
-        takerBuyQuoteVolume: takerBuyBaseVolume * close
-      });
-
-      basePrice = close;
-      curTime += intervalMs;
-
-      // Insert in chunks of 500
-      if (rows.length >= 500) {
-        await db.insert(historicalKlines).values(rows).onConflictDoNothing();
-        rows.length = 0;
-      }
-    }
-
-    if (rows.length > 0) {
-      await db.insert(historicalKlines).values(rows).onConflictDoNothing();
+    // Insert in chunks of 500 (a 30-day window is ~43k rows; one statement per row is far slower).
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      await historicalKlinesDao.insertMany(rows.slice(i, i + CHUNK), 'DEMO');
     }
   }
 
-  public static async getTradeCandles(symbol: string, startTime: number, endTime: number): Promise<any[]> {
+  public static async getTradeCandles(symbol: string, startTime: number, endTime: number): Promise<HistoricalKlineRow[]> {
     try {
-      const gteTime = startTime - 15 * 60 * 1000; // 15 mins padding before
-      const lteTime = endTime + 15 * 60 * 1000;   // 15 mins padding after
-      return await db.select().from(historicalKlines)
-        .where(
-          and(
-            eq(historicalKlines.symbol, symbol),
-            eq(historicalKlines.interval, '1m'),
-            gte(historicalKlines.openTime, gteTime),
-            lte(historicalKlines.openTime, lteTime)
-          )
-        )
-        .orderBy(historicalKlines.openTime);
+      const paddingMs = 15 * 60 * 1000; // 15 mins padding on both ends
+      return await historicalKlinesDao.getBySymbolAndRange(symbol, '1m', startTime, endTime, paddingMs);
     } catch (err) {
       console.error('Error fetching trade candles:', err);
       return [];

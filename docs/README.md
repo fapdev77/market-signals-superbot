@@ -18,12 +18,17 @@
 | **🤖 08. Skills & Prompts de IA** | [`SKILLS_E_PROMPTS_IA.md`](./SKILLS_E_PROMPTS_IA.md) | Prompting institucional, JSON Schemas estruturados, travas de coerência matemática e auditoria via Gemini GenAI. |
 | **🖥️ 09. Interface & Ferramentas** | [`FUNCIONALIDADES_E_INTERFACE.md`](./FUNCIONALIDADES_E_INTERFACE.md) | Manual completo de telas: Cockpit, HUD de Sinais, Radar de Presos, Divergências RSI, Risk Dashboard, Position Sizer e Auto-Tuner. |
 | **🎨 10. Sistema de Temas** | [`SISTEMA_DE_TEMAS.md`](./SISTEMA_DE_TEMAS.md) | Guia dos temas visuais integrados (Cyberpunk Neon, Matrix Terminal, Bloomberg Terminal, Dark Minimal). |
+| **🔒 11. Segurança & Integridade** | [`SEGURANCA.md`](./SEGURANCA.md) | Autenticação fail-closed, anti-SSRF, auditoria, DataGate, proveniência de dados por feed, kill-switch e postura de risco. |
+
+> **Especificações por fase (SDD, com critérios de aceitação verificados):** [`/specs`](../specs) —
+> `phase-1-security-and-data-integrity.md`, `phase-1-1-hotfix.md`, `phase-2.md`,
+> `phase-2-5 and phase-3.md` e o plano de pendências `phase-4-remaining-gaps.md`.
 
 ---
 
 ## 🎯 Filosofia de Trading da Plataforma
 
-O **Market Signals SuperBot** combina a mecânica do **Order Flow de Criptoativos e TradFi** (CVD, Open Interest, Funding Rate, Volume Profile) com a **Análise de Estrutura de Mercado** (Golden Pocket Fibonacci, Fair Value Gaps, BOS), **Modelagem Temporal de Alpha (TTL)** e validação em tempo real por **Inteligência Artificial Gemini**.
+O **Market Signals SuperBot** combina a mecânica do **Order Flow de Criptoativos** (CVD, Open Interest, Funding Rate, Volume Profile) com a **Análise de Estrutura de Mercado** (Golden Pocket Fibonacci, Fair Value Gaps, BOS), **Modelagem Temporal de Alpha (TTL)** e validação em tempo real por **Inteligência Artificial** (Gemini, OpenRouter, Anthropic ou Ollama local). Contratos TradFi da Binance (ações/FX/commodities) entram no universo quando existem no `exchangeInfo` — descoberta dinâmica, sem listas fixas.
 
 ### Os 4 Pilares de Operação
 1. **Confluência Algorítmica Rígida:** Nenhum sinal é gerado por um único indicador isolado. Exige-se o alinhamento simultâneo de múltiplos fatores quantitativos independentes.

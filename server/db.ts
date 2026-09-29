@@ -1,13 +1,152 @@
-import initSqlJs, { Database } from 'sql.js';
+import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import { TradeSignal, IndicatorWeights, AIAuditReport, AIModelConfig, ScreenerSettings } from '../src/types.js';
+import {
+  TradeSignal,
+  IndicatorWeights,
+  AIAuditReport,
+  AIModelConfig,
+  ScreenerSettings,
+  DataOrigin,
+  OriginFilter
+} from '../src/types.js';
 import { getDefaultStrategyConfigs } from '../src/constants/strategyPresets.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
+import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/index.js';
 
 let db: Database | null = null;
-const dbFilePath = path.join(process.cwd(), 'data', 'superbot.sqlite');
+const DEFAULT_DB_FILE_PATH = path.join(process.cwd(), 'data', 'superbot.sqlite');
+// R-14/R-3 test hook: tests may redirect the unified database file BEFORE the
+// first getDb() call (used by the backtest DAO suite to avoid touching real data).
+let dbFilePathOverride: string | null = null;
+
+/** Test-only: redirects the unified SQLite file before the first getDb() use. */
+export function setDatabaseFilePathForTests(filePath: string): void {
+  if (db) {
+    throw new Error('setDatabaseFilePathForTests só pode ser chamado antes do primeiro getDb().');
+  }
+  dbFilePathOverride = filePath;
+}
+
+function currentDbFilePath(): string {
+  return dbFilePathOverride ?? DEFAULT_DB_FILE_PATH;
+}
+
+// R-14: one-time import of the legacy drizzle/libsql backtest.db into the
+// unified database. Runs synchronously inside getDb() using the same already-
+// initialised sql.js instance (race-free, unlike the old fire-and-forget).
+// Dedup is file+data based: the legacy file is archived as .migrated-bak after
+// import, and the step is skipped whenever historical_klines already has rows.
+const LEGACY_BACKTEST_DB_PATH = path.join(process.cwd(), 'data', 'backtest.db');
+
+/**
+ * Inserts rows in multi-row chunks inside a single transaction. A per-row
+ * prepared statement for ~288k klines blocks the event loop for tens of
+ * seconds; batching keeps the one-time import to a few seconds.
+ */
+function insertRowsChunked(
+  target: Database,
+  table: string,
+  columns: string,
+  rows: any[][]
+): number {
+  if (rows.length === 0) return 0;
+  const columnCount = columns.split(',').length;
+  // Stay under SQLite's default 999 bound-variable limit.
+  const chunkSize = Math.max(1, Math.floor(900 / columnCount));
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const slice = rows.slice(i, i + chunkSize);
+    const valuesSql = slice
+      .map(() => `(${new Array(columnCount).fill('?').join(', ')})`)
+      .join(', ');
+    target.run(
+      `INSERT OR IGNORE INTO ${table} (${columns}) VALUES ${valuesSql}`,
+      slice.flat()
+    );
+  }
+  return rows.length;
+}
+
+function importLegacyBacktestDb(target: Database, SQL: SqlJsStatic): void {
+  if (dbFilePathOverride !== null) return; // never inside redirected test databases
+  // Tests use isolated, purpose-built databases: importing production data (and
+  // blocking the event loop for seconds) is both wrong and unnecessary there.
+  if (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') return;
+  if (!fs.existsSync(LEGACY_BACKTEST_DB_PATH)) return;
+
+  let existingRows = 0;
+  try {
+    const res = target.exec('SELECT count(*) FROM historical_klines');
+    existingRows = res.length && res[0].values.length ? Number(res[0].values[0][0]) : 0;
+  } catch {
+    existingRows = 0;
+  }
+  if (existingRows > 0) {
+    console.log(
+      `📦 [MIGRATION 005] historical_klines já contém ${existingRows} registros; import do backtest.db legado desnecessário.`
+    );
+    try {
+      fs.renameSync(LEGACY_BACKTEST_DB_PATH, `${LEGACY_BACKTEST_DB_PATH}.migrated-bak`);
+      console.log('📦 [MIGRATION 005] backtest.db legado arquivado como backtest.db.migrated-bak.');
+    } catch {
+      /* best effort */
+    }
+    return;
+  }
+
+  console.log('📦 [MIGRATION 005] Importando dados do backtest.db legado para o banco unificado (one-time, sync)...');
+  try {
+    const legacy = new SQL.Database(fs.readFileSync(LEGACY_BACKTEST_DB_PATH));
+    const hasLegacyTable = (table: string): boolean => {
+      const res = legacy.exec(
+        `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '${table}'`
+      );
+      return res.length > 0 && res[0].values.length > 0 && Number(res[0].values[0][0]) > 0;
+    };
+    const dumpLegacyTable = (table: string): any[][] => {
+      if (!hasLegacyTable(table)) return [];
+      const res = legacy.exec(`SELECT ${LEGACY_IMPORT_TABLES[table as keyof typeof LEGACY_IMPORT_TABLES].columns} FROM ${table}`);
+      return res.length && res[0].values ? res[0].values : [];
+    };
+
+    const klineRows = dumpLegacyTable('historical_klines');
+    const resultRows = dumpLegacyTable('backtest_results'); // pode faltar em arquivos muito antigos
+    legacy.close();
+
+    target.run('BEGIN TRANSACTION');
+    let importedKlines = 0;
+    let importedResults = 0;
+    try {
+      importedKlines = insertRowsChunked(
+        target,
+        'historical_klines',
+        LEGACY_IMPORT_TABLES.historical_klines.columns,
+        klineRows
+      );
+      importedResults = insertRowsChunked(
+        target,
+        'backtest_results',
+        LEGACY_IMPORT_TABLES.backtest_results.columns,
+        resultRows
+      );
+      target.run('COMMIT');
+    } catch (err) {
+      target.run('ROLLBACK');
+      throw err;
+    }
+
+    fs.renameSync(LEGACY_BACKTEST_DB_PATH, `${LEGACY_BACKTEST_DB_PATH}.migrated-bak`);
+    console.log(
+      `📦 [MIGRATION 005] Import concluído: ${importedKlines} klines e ${importedResults} backtest_results. Legado arquivado como backtest.db.migrated-bak.`
+    );
+  } catch (err: any) {
+    console.error(
+      '📦 [MIGRATION 005] Falha ao importar backtest.db legado — seguindo o boot sem os dados históricos:',
+      err?.message || err
+    );
+  }
+}
 
 export async function getDb(): Promise<Database> {
   if (db) return db;
@@ -16,19 +155,19 @@ export async function getDb(): Promise<Database> {
   const SQL = await initSqlJs({
     locateFile: file => path.join(wasmPath, file)
   });
-  const dirPath = path.dirname(dbFilePath);
+  const filePath = currentDbFilePath();
+  const dirPath = path.dirname(filePath);
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
 
-  if (fs.existsSync(dbFilePath)) {
-    const filebuffer = fs.readFileSync(dbFilePath);
+  if (fs.existsSync(filePath)) {
+    const filebuffer = fs.readFileSync(filePath);
     db = new SQL.Database(filebuffer);
   } else {
     db = new SQL.Database();
   }
-
-  // Initialize Tables
+  // Initialize Tables (baseline schema; everything else is versioned below)
   db.run(`
     CREATE TABLE IF NOT EXISTS ticker_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,67 +257,124 @@ export async function getDb(): Promise<Database> {
     );
   `);
 
-  // Safe table migrations for new columns
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN validated_at INTEGER;`);
-  } catch {
-    // Column may already exist
-  }
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN rejected_at INTEGER;`);
-  } catch {
-    // Column may already exist
-  }
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN strategy_category TEXT;`);
-  } catch {
-    // Column may already exist
-  }
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN expires_at INTEGER;`);
-  } catch {
-    // Column may already exist
-  }
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN ttl_minutes INTEGER;`);
-  } catch {
-    // Column may already exist
-  }
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN expiration_reason TEXT;`);
-  } catch {
-    // Column may already exist
-  }
-  try {
-    db.run(`ALTER TABLE trade_signals ADD COLUMN is_breakeven_active INTEGER;`);
-  } catch {
-    // Column may already exist
+  // R-3: versioned migrations. Replaces the old per-boot `try { ALTER ... } catch {}`
+  // blocks and the silent HIST-* purge: each migration now runs exactly once and is
+  // recorded in schema_migrations, tracked by PRAGMA user_version.
+  const applied = applyMigrations(db);
+  if (applied.length > 0) {
+    console.log(
+      `🗄️ [DB] ${applied.length} migração(ões) aplicada(s): v${applied.join(', v')} (user_version=${MIGRATIONS.length}).`
+    );
   }
 
-  // Phase 1 Security & Data Integrity: Purge any fabricated historical signals (HIST-*)
-  try {
-    db.run(`DELETE FROM trade_signals WHERE id LIKE 'HIST-%';`);
-  } catch {
-    // ignore
-  }
+  // R-14: legacy import runs AFTER applyMigrations because historical_klines /
+  // backtest_results are created by migrations 003/004.
+  importLegacyBacktestDb(db, SQL);
 
   saveDbToDisk();
 
   return db;
 }
 
+/**
+ * Coalescing layer for disk persistence.
+ *
+ * sql.js keeps the whole database in memory, so `saveDbToDisk()` serialises the full
+ * image and rewrites the file. With the unified database at ~140 MB that is a 2-3 s
+ * synchronous stall, which is far too expensive to pay on every mutation. State writes
+ * (signals, settings, audit logs, klines, ...) therefore go through `scheduleDbSave()`:
+ * at most one write per window, and a burst of writes collapses into a single one.
+ *
+ * Operational paths that must observe the file immediately (VACUUM, clear table,
+ * factory reset, DB stats) and the shutdown path call `flushDbSave()` instead.
+ */
+const DB_SAVE_DEBOUNCE_MS = 1500;
+let debouncedSaveTimer: NodeJS.Timeout | null = null;
+
+/** Schedules a coalesced disk write; repeated calls inside the window collapse into one. */
+export function scheduleDbSave(): void {
+  if (!db || debouncedSaveTimer) return;
+  debouncedSaveTimer = setTimeout(() => {
+    debouncedSaveTimer = null;
+    saveDbToDisk();
+  }, DB_SAVE_DEBOUNCE_MS);
+  // A pending flush must never keep the process alive on its own.
+  if (typeof debouncedSaveTimer.unref === 'function') debouncedSaveTimer.unref();
+}
+
+/** True while a coalesced write is queued but not yet on disk. */
+export function isDbSavePending(): boolean {
+  return debouncedSaveTimer !== null;
+}
+
+/** Cancels any pending coalesced write and persists the current in-memory image now. */
+export function flushDbSave(): void {
+  if (debouncedSaveTimer) {
+    clearTimeout(debouncedSaveTimer);
+    debouncedSaveTimer = null;
+  }
+  saveDbToDisk();
+}
+
+/**
+ * Blocking sleep used between rename attempts. `Atomics.wait` parks the thread without
+ * burning CPU; the busy-loop fallback exists only if the runtime forbids waiting.
+ */
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) { /* spin */ }
+  }
+}
+
+const RENAME_MAX_ATTEMPTS = 4;
+/** Transient on Windows: antivirus/indexer holds a handle on the freshly written .tmp. */
+const RENAME_RETRYABLE_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/**
+ * Renames the temp image onto the live file, retrying the transient Windows failures
+ * (EPERM/EACCES/EBUSY) that a scanner or indexer can cause on a just-written 140 MB file.
+ * Non-retryable errors and the last attempt propagate to the caller.
+ */
+function renameWithRetry(tempPath: string, targetPath: string): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      fs.renameSync(tempPath, targetPath);
+      if (attempt > 1) {
+        console.warn(`⚠️ [DB] rename bem-sucedido na tentativa ${attempt} (${attempt - 1} EPERM/EBUSY transitório).`);
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (!code || !RENAME_RETRYABLE_CODES.has(code) || attempt >= RENAME_MAX_ATTEMPTS) {
+        throw err;
+      }
+      console.warn(`⚠️ [DB] rename falhou (${code}); nova tentativa ${attempt + 1}/${RENAME_MAX_ATTEMPTS}...`);
+      sleepSync(25 * attempt);
+    }
+  }
+}
+
 export function saveDbToDisk() {
   if (!db) return;
+  if (debouncedSaveTimer) {
+    // An explicit write supersedes the scheduled one: never pay for the same image twice.
+    clearTimeout(debouncedSaveTimer);
+    debouncedSaveTimer = null;
+  }
   try {
     const data = db.export();
     const buffer = Buffer.from(data);
-    const dirPath = path.dirname(dbFilePath);
+    const targetPath = currentDbFilePath();
+    const dirPath = path.dirname(targetPath);
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
-    const tempPath = `${dbFilePath}.tmp`;
+    const tempPath = `${targetPath}.tmp`;
     fs.writeFileSync(tempPath, buffer);
-    fs.renameSync(tempPath, dbFilePath);
+    renameWithRetry(tempPath, targetPath);
   } catch (err) {
     console.error('Failed to save SQLite DB to disk:', err);
   }
@@ -218,8 +414,19 @@ export function rowToTradeSignal(columns: string[], row: any[]): TradeSignal {
     expiresAt: obj.expires_at || undefined,
     expirationReason: obj.expiration_reason || undefined,
     isBreakevenActive: obj.is_breakeven_active === 1,
-    status: obj.status
+    status: obj.status,
+    // R-2: linhas anteriores à migração 006 não têm a coluna; o default aprovado é LIVE.
+    origin: obj.origin === 'DEMO' ? 'DEMO' : 'LIVE'
   };
+}
+
+/**
+ * R-2 — fragmento SQL de proveniência.
+ * `ALL` é sempre explícito (nunca default) e os valores vêm de um union fechado, então a
+ * interpolação é segura.
+ */
+function originClause(origin: OriginFilter): string {
+  return origin === 'ALL' ? '' : ` AND origin = '${origin}'`;
 }
 
 export async function saveSignal(signal: TradeSignal) {
@@ -230,8 +437,8 @@ export async function saveSignal(signal: TradeSignal) {
       current_price, stop_loss, target1, target2, risk_reward, confluence_score,
       confluence_factors, timeframe, validation_status, validation_stage, 
       candle_1m_confirmed, candle_5m_confirmed, ai_review, ai_confidence, created_at, validated_at, rejected_at, status, strategy_category,
-      expires_at, ttl_minutes, expiration_reason, is_breakeven_active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      expires_at, ttl_minutes, expiration_reason, is_breakeven_active, origin
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       signal.id,
       signal.symbol,
@@ -262,28 +469,48 @@ export async function saveSignal(signal: TradeSignal) {
       signal.expiresAt || null,
       signal.ttlMinutes || null,
       signal.expirationReason || null,
-      signal.isBreakevenActive ? 1 : 0
+      signal.isBreakevenActive ? 1 : 0,
+      resolveSignalOrigin(signal)
     ]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
-export async function getActiveSignals(): Promise<TradeSignal[]> {
+/**
+ * R-2 — proveniência gravada de um sinal. `DEMO` exige que o sinal tenha sido marcado como tal
+ * na criação (só acontece a partir de ticker sintético, que por sua vez exige a flag); qualquer
+ * outra coisa é `LIVE`. Nunca inferimos DEMO do ambiente: a flag permite gerar dado sintético,
+ * mas não transforma um sinal real em demo.
+ */
+export function resolveSignalOrigin(signal: Pick<TradeSignal, 'origin'>): DataOrigin {
+  return signal.origin === 'DEMO' ? 'DEMO' : 'LIVE';
+}
+
+/** `origin` default = LIVE: leituras de operador não veem dado demo sem pedido explícito. */
+export async function getActiveSignals(origin: OriginFilter = 'LIVE'): Promise<TradeSignal[]> {
   const database = await getDb();
-  const res = database.exec(`SELECT * FROM trade_signals WHERE status = 'ACTIVE'`);
+  const res = database.exec(`SELECT * FROM trade_signals WHERE status = 'ACTIVE'${originClause(origin)}`);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
   return res[0].values.map(row => rowToTradeSignal(columns, row));
 }
 
-export async function getActiveSignalsBySymbol(symbol: string, category?: string): Promise<TradeSignal[]> {
+export async function getActiveSignalsBySymbol(
+  symbol: string,
+  category?: string,
+  origin: OriginFilter = 'LIVE'
+): Promise<TradeSignal[]> {
   const database = await getDb();
-  let query = `SELECT * FROM trade_signals WHERE symbol = '${symbol}' AND status = 'ACTIVE'`;
+  // Revisão R-2: symbol/category eram interpolados direto na SQL. Hoje os callers passam
+  // valores controlados, mas o contrato correto é parametrizado (mesma disciplina de saveSignal).
+  let query = `SELECT * FROM trade_signals WHERE symbol = ? AND status = 'ACTIVE'${originClause(origin)}`;
+  const params: Array<string> = [symbol];
   if (category) {
-    query += ` AND (strategy_category = '${category}' OR (strategy_category IS NULL AND '${category}' = 'INTRADAY'))`;
+    query += ` AND (strategy_category = ? OR (strategy_category IS NULL AND ? = 'INTRADAY'))`;
+    params.push(category, category);
   }
-  const res = database.exec(query);
+  const res = database.exec(query, params);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
@@ -305,13 +532,13 @@ export async function expireActiveSignalsByCategory(category: string) {
     `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = 'Estratégia Redefinida' WHERE (strategy_category = ? OR (strategy_category IS NULL AND ? = 'INTRADAY')) AND status = 'ACTIVE'`,
     [category, category]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function expireAllActiveSignals() {
   const database = await getDb();
   database.run(`UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = 'Reset Manual de Sinais' WHERE status = 'ACTIVE'`);
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 /**
@@ -326,7 +553,7 @@ export async function expireStaleSignals(now: number = Date.now()): Promise<numb
       `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = 'TTL Expirado (Tempo Limite Atingido)' WHERE status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?`,
       [now]
     );
-    saveDbToDisk();
+    scheduleDbSave();
   }
   return count;
 }
@@ -338,7 +565,7 @@ export async function updateSignalStatus(id: string, status: string, reason?: st
   } else {
     database.run(`UPDATE trade_signals SET status = ? WHERE id = ?`, [status, id]);
   }
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function updateSignal(signal: TradeSignal) {
@@ -346,9 +573,14 @@ export async function updateSignal(signal: TradeSignal) {
   await saveSignal(signal);
 }
 
-export async function getRecentSignals(limit: number = 50): Promise<TradeSignal[]> {
+export async function getRecentSignals(limit: number = 50, origin: OriginFilter = 'LIVE'): Promise<TradeSignal[]> {
   const database = await getDb();
-  const res = database.exec(`SELECT * FROM trade_signals ORDER BY created_at DESC LIMIT ${limit}`);
+  // Revisão R-2: limit interpolado — parametrizado para não herdar fragilidade se um caller
+  // passar valor dinâmico no futuro.
+  const res = database.exec(
+    `SELECT * FROM trade_signals WHERE 1 = 1${originClause(origin)} ORDER BY created_at DESC LIMIT ?`,
+    [limit]
+  );
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
@@ -369,7 +601,7 @@ export async function saveAIAudit(audit: AIAuditReport) {
       audit.timestamp
     ]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function getLatestAIAudit(): Promise<AIAuditReport | null> {
@@ -393,7 +625,7 @@ export async function saveIndicatorWeights(weights: IndicatorWeights) {
     `INSERT OR REPLACE INTO strategy_settings (id, weights, updated_at) VALUES (1, ?, ?)`,
     [JSON.stringify(weights), Date.now()]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function getIndicatorWeights(): Promise<IndicatorWeights> {
@@ -499,7 +731,7 @@ export async function saveAIModels(models: AIModelConfig[]) {
     `INSERT OR REPLACE INTO ai_models_settings (id, models, updated_at) VALUES (1, ?, ?)`,
     [JSON.stringify(models), Date.now()]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function getAIModels(): Promise<AIModelConfig[]> {
@@ -590,7 +822,7 @@ export async function toggleFavoriteSymbol(symbol: string, forceStatus?: boolean
        updated_at = excluded.updated_at`,
     [symbol, newStatus ? 1 : 0, now, now]
   );
-  saveDbToDisk();
+  scheduleDbSave();
   return newStatus;
 }
 
@@ -606,13 +838,13 @@ export async function setWatchedSymbol(symbol: string, isFavorite: boolean, sour
        updated_at = excluded.updated_at`,
     [symbol, isFavorite ? 1 : 0, source, sector, now, now]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function removeNonFavoriteWatchedSymbol(symbol: string) {
   const database = await getDb();
   database.run(`DELETE FROM watched_symbols WHERE symbol = ? AND is_favorite = 0`, [symbol]);
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export const DEFAULT_EXCLUDED_SYMBOLS: string[] = [
@@ -683,7 +915,7 @@ export async function saveScreenerSettings(settings: ScreenerSettings) {
     `INSERT OR REPLACE INTO screener_settings (id, settings, updated_at) VALUES (1, ?, ?)`,
     [JSON.stringify(settingsToSave), Date.now()]
   );
-  saveDbToDisk();
+  scheduleDbSave();
 }
 
 export async function toggleExcludedSymbol(symbol: string, shouldExclude?: boolean): Promise<string[]> {
@@ -713,10 +945,15 @@ export async function resetExcludedSymbols(): Promise<string[]> {
 /**
  * Returns trade signals generated within the last N days (or between start & end timestamps)
  */
-export async function getSignalsByDateRange(startTime: number, endTime: number): Promise<TradeSignal[]> {
+export async function getSignalsByDateRange(
+  startTime: number,
+  endTime: number,
+  origin: OriginFilter = 'LIVE'
+): Promise<TradeSignal[]> {
   const database = await getDb();
-  const query = `SELECT * FROM trade_signals WHERE created_at >= ${startTime} AND created_at <= ${endTime} ORDER BY created_at ASC`;
-  const res = database.exec(query);
+  // Revisão R-2: bounds interpolados — parametrizado pela mesma disciplina de getRecentSignals.
+  const query = `SELECT * FROM trade_signals WHERE created_at >= ? AND created_at <= ?${originClause(origin)} ORDER BY created_at ASC`;
+  const res = database.exec(query, [startTime, endTime]);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
@@ -740,7 +977,7 @@ export async function recordAuditLog(action: string, route: string, actor: strin
       `INSERT INTO audit_logs (action, route, actor, details, created_at) VALUES (?, ?, ?, ?, ?)`,
       [action, route, actor, detailsStr, Date.now()]
     );
-    saveDbToDisk();
+    scheduleDbSave();
   } catch (err) {
     console.error('Failed to record audit log:', err);
   }
@@ -806,10 +1043,13 @@ const TABLE_DESCRIPTIONS: Record<string, { desc: string; clearable: boolean }> =
 
 export async function getDatabaseStats(): Promise<DatabaseStats> {
   const database = await getDb();
+  // Stats report the on-disk footprint, so a queued write must land before measuring.
+  // (No pending write → no extra full-image rewrite just to answer a read.)
+  if (isDbSavePending()) flushDbSave();
   let fileSizeBytes = 0;
   try {
-    if (fs.existsSync(dbFilePath)) {
-      fileSizeBytes = fs.statSync(dbFilePath).size;
+    if (fs.existsSync(currentDbFilePath())) {
+      fileSizeBytes = fs.statSync(currentDbFilePath()).size;
     }
   } catch (err) {
     console.warn('Error reading SQLite file stat:', err);
@@ -904,8 +1144,8 @@ export async function getDatabaseStats(): Promise<DatabaseStats> {
   const mem = process.memoryUsage();
 
   return {
-    filePath: dbFilePath,
-    fileName: path.basename(dbFilePath),
+    filePath: currentDbFilePath(),
+    fileName: path.basename(currentDbFilePath()),
     fileSizeBytes,
     fileSizeFormatted: formatBytes(fileSizeBytes),
     sqliteVersion: 'SQLite 3.x (WebAssembly via sql.js)',
@@ -937,17 +1177,17 @@ export async function vacuumDatabase(): Promise<{
   const database = await getDb();
   let oldSizeBytes = 0;
   try {
-    if (fs.existsSync(dbFilePath)) oldSizeBytes = fs.statSync(dbFilePath).size;
+    if (fs.existsSync(currentDbFilePath())) oldSizeBytes = fs.statSync(currentDbFilePath()).size;
   } catch (err) {
     console.warn('Error reading old size:', err);
   }
 
   database.run('VACUUM;');
-  saveDbToDisk();
+  flushDbSave();
 
   let newSizeBytes = 0;
   try {
-    if (fs.existsSync(dbFilePath)) newSizeBytes = fs.statSync(dbFilePath).size;
+    if (fs.existsSync(currentDbFilePath())) newSizeBytes = fs.statSync(currentDbFilePath()).size;
   } catch (err) {
     console.warn('Error reading new size:', err);
   }
@@ -996,7 +1236,7 @@ export async function clearTable(tableName: string): Promise<{
 
   database.run(`DELETE FROM ${tableName};`);
   database.run('VACUUM;');
-  saveDbToDisk();
+  flushDbSave();
 
   return {
     success: true,
@@ -1096,7 +1336,7 @@ export async function factoryResetDatabase(
 
   // 5. Compact database file
   database.run('VACUUM;');
-  saveDbToDisk();
+  flushDbSave();
 
   console.log(`✅ [FACTORY RESET] Global reset completed successfully.`);
 

@@ -1,96 +1,201 @@
-# Revisão das Fases 1, 1.1 e 2 (commit `e022a58`)
+# Fase 2.5 (Hotfix de Integridade) + Fase 3 (Institucional) — Especificação SDD
 
-**Veredito:** a Fase 1.1 está boa. A Fase 2 está **parcial**: 2.1 e 2.3 avançaram bastante, mas 2.2 e 2.4 estão incompletas. Ainda há dois bugs de integridade que anulam parte do que foi construído, e o build está quebrado.
+> **Reescrita em formato SDD.** A versão anterior deste arquivo era a revisão da Fase 1/1.1/2 (veredito +
+> plano), sem critérios de aceitação próprios. O veredito histórico foi preservado na seção 1; os requisitos
+> da 2.5 e da Fase 3 ganham tabelas com verificação executável e status medido.
+>
+> **Última verificação:** 2026-09-29 · `npx tsc --noEmit` 0 erros · `npx vitest run` 19 arquivos / 154
+> testes OK · `npm run build` OK · `npm audit --omit=dev` 0 vulnerabilidades.
+>
+> **Estado geral:** Fase 2.5 **completa**. Fase 3: 3.1 e 3.4 **implementadas**; 3.2, 3.3 e 3.5
+> **pendentes** → `phase-4-remaining-gaps.md`.
+
+---
+
+## 1. Veredito histórico da revisão (commit `e022a58`) — preservado
 
 **Como verifiquei:** li os diffs, rodei `tsc`, testes e `npm audit`, e subi o servidor real com `curl`.
+`tsc` passava e os 99 testes passavam. `npm audit` limpo após `npm install`.
 
-- `tsc` passa e os 99 testes passam.
-- O servidor respondeu como esperado: 401 sem token em `/api/tickers`, `ai-models` e `database-export`; `/api/auth/status` não vaza mais token; as chaves de IA saem mascaradas; `factory-reset` exige `RESET`.
-- `npm audit`: 0 vulnerabilidades no meu `npm install`.
+**Limites declarados:** o sandbox recebeu `403` em todos os hosts `fapi` — o feed real da Binance **não**
+foi testado; o frontend (`AuthModal`) e o interior do auto-tune não foram lidos.
 
-**Limites:** o sandbox recebeu 403 em todos os hosts `fapi`, então **não testei o feed real da Binance**. Também não li o frontend (`AuthModal`) nem o interior do auto-tune.
+**Falhas encontradas na época** (todas tratadas pela 2.5, salvo indicação):
 
-**Sobre as specs:** `specs/phase-1-1-hotfix.md` e `specs/phase-2.md` são cópias das minhas mensagens, sem critérios de aceitação próprios. Sem eles, "pronto" fica subjetivo. Vale reescrevê-las no formato SDD.
+| Falha | Gravidade | Resolução |
+|-------|-----------|-----------|
+| Cache reconstruído sem `updatedAt` → DataGate via idade 0; `canEvaluateActiveTrades` ignorava `isDegraded` | 🔴 | 2.5.1 ✅ |
+| `isDegraded`/`source` de OI/funding/LSR ignorados; ausência coagida a `0` e pontuada | 🟠 | 2.5.2 ✅ |
+| Screener fabricava preços/leaders de fallback sem flag | 🟠 | 2.5.6 ✅ |
+| `npm ci` quebrado (lock sem `cors`), `bun.lock` de volta, sem CI/Dockerfile/engines | 🟠 | 2.5.7 ✅ |
+| CORS aceitava qualquer `*.run.app` em produção | 🟡 | 2.5.8 ✅ |
+| `validateOutboundAIUrlWithDns` aplicada nos 4 caminhos de IA + test-connection + POST de modelos | 🟡 | ✅ R-1 |
+| Purge `HIST-*` a cada boot (não migração versionada), ator `'ADMIN'`, colunas `origin` ausentes | 🟡 | ator ✅ (2.5.8); migração ✅ R-3 (one-time); `origin` ✅ R-2 (migração 006 + `server/demo/`) |
+| Testes HTTP contra Express montado no teste | 🟡 | 2.5.9 ✅ (`createApp`) |
+| Limiter não cobria OI/funding/LSR/depth (`requestJson` direto) | 🟠 | ✅ R-5 (Fase 3.2) |
+| Funding interval lido de `premiumIndex` (inexistente) → sempre 8h | 🟠 | 2.5.3 ✅ |
+| Backtest: lookahead, slippage duplo, `overfitRatio` default `0.85`, OI inventado, janela/cache instáveis | 🔴/🟠 | 2.5.4 ✅ (walk-forward rolante ✅ R-10; parciais ✅ R-9) |
+| TradFi: lista inventada, force-add, horário UTC fixo | 🔴 | 2.5.5 ✅ (`tradingSchedule` ⚠️ R-11) |
 
-## Fase 1 / 1.1
+---
 
-**Concluído ✅**
+## 2. Fase 2.5 — Hotfix de integridade
 
-- Auth fail-closed com token aleatório no boot, sem token hardcoded e sem vazamento em `/auth/status`.
-- Redação de segredos e confirmação em rotas destrutivas.
-- `trust proxy`, limitador anti-força-bruta em `/auth/verify` e limite em `table-clear`.
-- SSRF: a política agora é aplicada no `aiMotor` (3 caminhos) e ao salvar modelos.
-- Seed falso removido; `ALLOW_SYNTHETIC_DATA` agora é lido de verdade (klines, DataGate, backtest).
+### 2.5.1 Cache nunca é dado fresco + TickProcessor
 
-**Ainda com falhas**
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.1.1 | Ticker ausente da resposta da exchange é reconstruído do cache **com o `updatedAt` original** | `resolveRawTicker` em `server/services/TickProcessor.ts` | ✅ |
+| 2.5.1.2 | Ticker reconstruído do cache é marcado `source:'STALE'` | `tests/phase2-5-hotfix.test.ts` → "carries the cached timestamp and marks STALE…" | ✅ |
+| 2.5.1.3 | `canEvaluateActiveTrades` rejeita `STALE` e `isDegraded` (e klines ausentes) | `server/services/DataGate.ts` + testes "propagates STALE + degraded…" e "blocks position management on a degraded (but not STALE) quote" | ✅ |
+| 2.5.1.4 | Decisões de posição extraídas para função pura testável | `evaluatePositionManagement` no `TickProcessor`; `server.ts` consome as três funções | ✅ |
+| 2.5.1.5 | `dataQuality.source` aceita o valor `'STALE'` | `src/types.ts` (união `WS\|REST\|CACHE\|SYNTHETIC\|STALE`) | ✅ |
 
-- **🔴 Cache tratado como dado fresco.** No tick (`server.ts` ~193), quando o símbolo não vem em `rawFutures`, o `raw` é reconstruído do cache **sem `updatedAt`**. O `processTickerState` então usa `Date.now()`, o gate vê idade zero e um preço velho pode gerar sinal e avaliar stops. Além disso, `canEvaluateActiveTrades` ignora `isDegraded` e klines ausentes.
-- **🟠 Proveniência incompleta.** `fetchOpenInterest` e `fetchFundingRate` devolvem `isDegraded` e `source`, mas o `server.ts` ignora ambos. Se o histórico de OI ou o funding falham, o valor cai para `0` e entra no score como dado real.
-- **🟠 Screener ainda fabrica dados.** `generateFallbackRawTickers()` não checa a flag e usa preços de referência fixos. O resumo de fallback traz um funding inventado (PEPEUSDT 0,00045). O painel mostra isso como real.
-- **🟠 Build quebrado.** `npm ci` **falha** (faltam `cors` e `@types/cors` no lock). O `bun.lock` **voltou**, contrariando sua decisão 4. Segue sem CI, Dockerfile ou `engines`.
-- **🟡 CORS permissivo.** Fora de produção aceita qualquer origem; em produção aceita **qualquer `*.run.app`**, de qualquer dono. `HOST` continua `0.0.0.0` por padrão e a CSP está desligada.
-- **🟡 Detalhes de SSRF.** Existe `validateOutboundAIUrlWithDns`, mas as chamadas que vi usam a versão síncrona. Um Ollama remoto agora só funciona se estiver em `ALLOWED_AI_HOSTS` (mudança de comportamento).
-- **🟡 Outros.** O purge de `HIST-%` roda a cada boot (não é migração versionada), o ator de auditoria é fixo `'ADMIN'`, o token é impresso no log (aceitável em dev) e as colunas `origin`/DEMO não existem.
-- Os testes HTTP usam um Express **montado no teste**, e não o app do `server.ts`. Ordem de middlewares e limitadores reais só foram cobertos pelo meu smoke test.
+### 2.5.2 Proveniência por fator
 
-## Fase 2
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.2.1 | OI/funding/LSR indisponíveis são **excluídos** do score (não pontuados como `0`) | `processTickerState(..., availability)` em `server/signalEngine.ts`; testes "reports Open Interest as unavailable…", "does not award Open Interest points…" | ✅ |
+| 2.5.2.2 | Funding indisponível → `status:'UNAVAILABLE'` (não "mercado neutro") | `src/types.ts` + teste "marks funding UNAVAILABLE in the engine…" | ✅ |
+| 2.5.2.3 | Trapped Traders não roda sem dado real de long/short | `fetchLongShortRatio` retorna `null` na falha; teste "treats a null long/short response as unavailable…" | ✅ |
+| 2.5.2.4 | `unavailableFactors` listado em `dataQuality` | `src/types.ts` + `signalEngine.ts` | ✅ |
+| 2.5.2.5 | LSR sine-wave e liquidações fabricadas só com `ALLOW_SYNTHETIC_DATA='true'` | `binanceService.ts` / `binanceWebsocket.ts` (`isSimulated`) | ✅ |
 
-**2.1 Ingestão: ✅ com ressalvas**
+### 2.5.3 Intervalo de funding real
 
-- Endpoints só `fapi`, com rate limiter (peso, 429/418, backoff) e testes unitários.
-- **Cobertura parcial:** o limiter só protege `fetchWithFallback`. OI, funding, long/short e depth usam `requestJson` direto e ficam fora do controle de peso.
-- **Consequência:** sem os fallbacks spot, uma região com geo-bloqueio (403/451) resulta em dashboard vazio. Isso é coerente com "sem dado sintético", mas precisa de decisão de deploy.
-- O WebSocket não foi alterado.
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.3.1 | Intervalo lido de `/fapi/v1/fundingInfo` (não de `premiumIndex`) | `getFundingIntervals()` em `server/binanceService.ts`, cache 1h | ✅ |
+| 2.5.3.2 | Fallback explícito de 8h quando o contrato não está na resposta | `DEFAULT_FUNDING_INTERVAL_HOURS = 8` | ✅ |
+| 2.5.3.3 | ⚠️ Formato real da resposta validado contra a Binance | sandbox sem rede para `fapi` — validação pendente em produção | ⚠️ **R-12** |
 
-**2.2 Motor de sinais: ⚠️ parcial**
+### 2.5.4 Backtest sem trapaça
 
-- ✅ OI real (1h/24h via `openInterestHist`) e stop ancorado em swing.
-- 🟠 **Funding por contrato provavelmente não funciona:** o código lê `fundingIntervalHours` de `premiumIndex`. Pelo que sei, esse campo vem de `/fapi/v1/fundingInfo`, então cairia sempre em 8h. Não consegui confirmar contra a API; valide com uma resposta real.
-- 🟠 O stop agora é o **mais distante** entre swing, suporte e ATR%, sem teto. Após uma vela volátil, o stop fica muito largo e o R:R e o tamanho implícito do risco mudam.
-- ❌ **Não implementados (nada no diff):** validação real 1m/5m, confirmação de entrada, avaliação de stop/alvo por high/low de candle no live e recalibração do score (o código morto continua).
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.4.1 | Entrada no open do candle **seguinte** ao sinal | `pendingEntry` em `server/services/BacktestEngine.ts` | ✅ |
+| 2.5.4.2 | Slippage contado **uma** vez | `roundtripFee = feePct * 2` | ✅ |
+| 2.5.4.3 | `overfitRatio` = OOS/IS por trade, `0` quando não computável (sem default `0.85`) | bloco "robustness is measured on profit per trade…" | ✅ |
+| 2.5.4.4 | OI/funding/LSR não inventados no motor real | `backtestAvailability = { openInterest:false, funding:false, longShort:false }` + `disabledFactors` | ✅ |
+| 2.5.4.5 | Premissas declaradas no resultado (funding baseline plano, fatores off) | `assumptions` em `BacktestResult` | ✅ |
+| 2.5.4.6 | Janela alinhada ao boundary de 15m ou `config.asOf` | `BACKTEST_CANDLE_MS` + `BacktestConfig.asOf` | ✅ |
+| 2.5.4.7 | Chave de cache inclui `days`, `seed`, `asOf` | `generateStrategyId` | ✅ |
+| 2.5.4.8 | Seed sintético determinístico | `seedSyntheticKlines` com PRNG mulberry por símbolo+startTime | ✅ |
+| 2.5.4.9 | Walk-forward com tuning restrito ao in-sample e janelas rolantes | `buildWalkForwardWindows` (janelas por tempo) + `aggregateWalkForward` (IS/OOS por janela) + `runAutoTune` limitado ao IS por `isOnlyUntil`; `tests/walkForwardRolling.test.ts` | ✅ |
+| 2.5.4.10 | TP1 modela parcial + runner (como no live) | `resolveBacktestPosition`: 50% em TP1 (slippage) + breakeven + runner de 50% até TP2; `tests/backtestPositionResolution.test.ts` | ✅ |
 
-**2.3 Backtest: ⚠️ avançou, com falhas de fidelidade**
+### 2.5.5 TradFi real
 
-- ✅ Reusa `processTickerState`/`buildTradeSignal`, checa cada candle, stop primeiro, taxas/slippage/funding no PnL, semente fixa, recusa dado sintético.
-- 🔴 **Lookahead:** o sinal usa o `close` do candle *i*, e a entrada é no `open` do mesmo candle.
-- 🔴 **`isRobust` pode ser falso-positivo:** `overfitRatio` vira `0.85` fixo quando algum lucro é ≤ 0, então um OOS perdedor passa se o win rate for ≥ 45%.
-- 🟠 **Entradas fabricadas no motor real:** OI simulado (`volume·close·2.5`), OI change fixo (+1,2%/+0,4%), funding fixo e sem long/short. Esses fatores viram constantes e o backtest não reproduz o live.
-- 🟠 **Walk-forward é só um corte 70/30 dentro de uma única execução.** Não encontrei no diff o tuning restrito ao in-sample.
-- 🟡 Slippage contado duas vezes (no preço e no `roundtripFee`). O TP1 fecha tudo, sem modelar parcial + runner com breakeven como no live. A janela é de 41 candles contra 60 no live. `(config as any)` no lugar de tipos.
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.5.1 | Zero símbolos hardcoded; registro vazio até a descoberta | `TRADFI_ASSETS` mutável vazio + `refreshTradfiRegistry()` no boot (`server.ts`) | ✅ |
+| 2.5.5.2 | Descoberta via `exchangeInfo` com classificação estrita (null em vez de adivinhar) | `classifyTradfiContract()` | ✅ |
+| 2.5.5.3 | Horário correto com DST americano (injetável para teste) | `isTradfiMarketOpen(category, at?)` via `Intl.DateTimeFormat('America/New_York')`; `tests/phase2Complete.test.ts` | ✅ |
+| 2.5.5.4 | ⚠️ Linhas reais de TradFi confirmadas contra `exchangeInfo` de produção | sem rede no sandbox | ⚠️ **R-12** |
 
-**2.4 TradFi: ❌ não funcional**
+### 2.5.6 Screener honesto
 
-- Os símbolos `NVDABUSDT`, `TSLABUSDT`, `AAPLBUSDT`, `SPYBUSDT`, `QQQBUSDT`, `EURUSDT`, `GBPUSDT` e `JPYUSDT` parecem inventados. Fontes públicas citam perpétuos de ações como `TSLAUSDT` e `PATHUSDT`, e ouro como `XAUUSDT`; os perpétuos de FX anunciados têm subjacente USD/BRL. Confirme com o `exchangeInfo` real.
-- `fetchBinanceTradfiContracts()` **nunca é chamada** e, mesmo se fosse, adiciona à força todos os símbolos hardcoded ao conjunto, anulando a validação.
-- Nada inscreve esses ativos nos símbolos monitorados.
-- O horário está fixo em UTC (14:30–21:00), ignora horário de verão e feriados, e `/fapi/v1/tradingSchedule` não foi usado, como a spec pedia.
-- O README ainda cita PETR4, VALE3 e EUR/USD.
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.6.1 | Fallback fabricado só com a flag | `MarketScreenerService.ts` (`ALLOW_SYNTHETIC_DATA`) | ✅ |
+| 2.5.6.2 | Resumo sem dado informa `dataUnavailable` e omite leaders (em vez de inventar) | `buildFallbackSummary()` + `ScreenerScanSummary` com campos opcionais em `src/types.ts` | ✅ |
+| 2.5.6.3 | UI não estoura em leaders ausentes | `ScreenerDashboard.tsx` com optional chaining | ✅ |
 
-## Próxima etapa
+### 2.5.7 Build, CI, Docker
 
-**Fase 2.5 (hotfix), antes de qualquer novidade.** Testes falhando primeiro:
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.7.1 | `npm ci` limpo; só `package-lock.json` | executado de `node_modules` limpo; `D bun.lock` | ✅ |
+| 2.5.7.2 | `engines.node` + scripts `typecheck`/`audit:prod`/`ci` | `package.json` | ✅ |
+| 2.5.7.3 | CI: `npm ci` → typecheck → testes → build (Node 20/22) + audit de produção | `.github/workflows/ci.yml` | ✅ |
+| 2.5.7.4 | Dockerfile multi-stage non-root com volume e healthcheck | `Dockerfile` + `.dockerignore` | ✅ |
 
-1. **Cache/gate:** propagar `updatedAt` e `source` do cache, marcar `STALE`, e fazer `canEvaluateActiveTrades` respeitar `isDegraded`. Extrair o tick para um `TickProcessor` testável.
-2. **Proveniência:** usar `isDegraded` de OI/funding/long-short e não pontuar valor ausente como `0`.
-3. **Funding:** ler o intervalo de `/fapi/v1/fundingInfo`, com teste sobre resposta gravada.
-4. **Backtest:** entrada no candle seguinte, `overfitRatio` sem default, walk-forward real (tuning só no in-sample, janelas rolantes), slippage contado uma vez, OI/funding históricos reais ou fatores desativados e reportados, e um `TradeManager` compartilhado entre live e backtest.
-5. **TradFi:** descobrir contratos pelo `exchangeInfo` (`contractType`) no boot, remover a lista hardcoded e o "force-add", usar `tradingSchedule` e corrigir o README.
-6. **Screener:** remover ou gatear o fallback fabricado.
-7. **Build:** regenerar o lock, remover `bun.lock`, criar CI (`npm ci`, `tsc`, vitest, audit) e Dockerfile.
-8. **CORS/rede:** allowlist exata, `HOST` documentado e ator de auditoria real.
-9. **Testes:** extrair `createApp()` do `server.ts` e testar o app real.
+### 2.5.8 CORS, auditoria e app real
 
-**Fase 3 (institucional), depois do 2.5:**
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 2.5.8.1 | Produção aceita **apenas** `ALLOWED_ORIGINS` (sem sufixo `*.run.app`) | `server/app.ts` + `tests/appHttp.test.ts` | ✅ |
+| 2.5.8.2 | Ator de auditoria real (`token:<sha256[:8]>@<ip>`) em todas as rotas | `getAuditActor` em `marketRoutes` (2×) e `systemRoutes` (4×) | ✅ |
+| 2.5.8.3 | `createApp()` extraído; contrato HTTP testado contra o app real | `server/app.ts` + `tests/appHttp.test.ts` (11 testes: 401, headers, CORS, 413, `x-powered-by`) | ✅ |
 
-- **3.1 Motor:** o que sobrou da 2.2 (validação 1m/5m real, confirmação de entrada, stop/alvo por candle, recalibração do score).
-- **3.2 Ingestão:** WebSocket como fonte principal (kline, markPrice, liquidações, depth) e limiter único para todas as chamadas.
-- **3.3 Confiabilidade:** banco único com migrações versionadas, remover o guard que engole exceções (crash + restart supervisionado), healthcheck por feed, logs estruturados e métricas.
-- **3.4 Risco:** position sizing, limites de exposição, kill-switch e biblioteca decimal para cálculo financeiro.
-- **3.5 Evidência:** 60–90 dias de paper trading, calibração do score por faixa, expectativa e drawdown, com estatísticas só de dados reais.
+---
 
-## Decisões que preciso de você
+## 3. Fase 3 — Institucional
 
-1. Aprova o **2.5 completo** antes da Fase 3? R: Sim, aprovado.
-2. **Onde vai rodar em produção?** Se a região tiver geo-bloqueio, preciso de uma variável de hosts `fapi` configuráveis ou proxy, e de um estado "sem feed" claro na UI. R: Nao existe geo-bloqueio
-3. O OI histórico da Binance cobre só ~30 dias; aceita que o fator OI seja backtestado apenas nesse período (ou que fique desativado além dele)? R: Backtest dentro do periodo disponível e aviso ao usuario sobre o periodo que pode ser testado.
-4. Reescrevo as specs no formato SDD com critérios de aceitação verificáveis? R: Sim
+### 3.1 Motor de sinais (resíduos da 2.2)
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 3.1.1 | Sem dados 1m/5m suficientes, o sinal fica `PENDING_VALIDATION` com flags false (sem bypass) | `buildTradeSignal`; `tests/phase3.test.ts` → "does NOT auto-confirm a signal…" | ✅ |
+| 3.1.2 | Com dados suficientes, a validação multi-timeframe real roda | teste "runs the real multi-timeframe validation…" | ✅ |
+| 3.1.3 | Stop avaliado **antes** dos alvos | `evaluatePositionManagement` (ordem stop → T1 → T2) | ✅ |
+| 3.1.4 | Alvo tocado entre ticks (via high/low do candle) é detectado | testes "detects a target touched between ticks…", "mirrors the range logic for SHORT" | ✅ |
+| 3.1.5 | Candle que toca stop **e** alvo resolve como stop | teste "prefers the stop when a candle touches both…" | ✅ |
+| 3.1.6 | Ignora o range do candle em que a posição foi aberta | teste "ignores the candle range for a position opened inside that same candle" | ✅ |
+| 3.1.7 | T1 ajusta breakeven a partir do high/low real do candle | `evaluatePositionManagement(range)` em `server.ts` com o candle em formação | ✅ |
+| 3.1.8 | Teto para o stop em volatilidade extrema | `maxStopLossAtrMultiple` (default 2,5×) aplicado antes dos alvos, com R:R recalculado; `tests/stopLossCap.test.ts` | ✅ |
+
+### 3.2 Ingestão — WebSocket primário + limiter único
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 3.2.1 | WebSocket como fonte principal (kline, `markPrice`, liquidações, depth) | `binanceWebsocket.ts` inalterado; REST é a fonte de fato | ⚠️ **R-6** |
+| 3.2.2 | Limiter único cobre **todas** as chamadas REST (OI, funding, LSR, depth incluídos) | `requestJsonLimited` em todos; OI degrada para CACHE e LSR devolve `null` em cooldown; `tests/rateLimiterCoverage.test.ts` | ✅ |
+| 3.2.3 | Health por feed com estado observável | não implementado | ⚠️ **R-13** |
+
+### 3.3 Confiabilidade
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 3.3.1 | Nenhum handler engole exceção fatal; crash + restart supervisionado | `server.ts`: só o assertion do undici é tolerado; demais → log + `process.exit(1)`; `unhandledRejection` idem | ✅ |
+| 3.3.2 | Migrações versionadas (`PRAGMA user_version`) substituem `ALTER` em try/catch vazio | `server/migrations/` v1–v5 + `schema_migrations`/`user_version`; `tests/migrations.test.ts` | ✅ |
+| 3.3.3 | Um único driver SQLite (sem sql.js + libsql em paralelo) | sql.js único; `@libsql/client`/drizzle removidos; DAO unificada em `server/backtest_db/` | ✅ |
+| 3.3.4 | Logs estruturados e métricas | não implementado | ⚠️ **R-15** |
+| 3.3.5 | Aviso de `SQLITE_BUSY` observado em teste é tratado (serialização/WAL) | `runWithRetry`/`isBusyError` (`server/utils/dbRetry.ts`) + isolamento de banco por worker; `tests/dbRetry.test.ts` | ✅ |
+
+### 3.4 Risco e aritmética
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 3.4.1 | Aritmética decimal exata (sem drift de ponto flutuante) | `server/utils/decimal.ts` (BigInt 8-dp); `tests/phase3.test.ts` → "avoids binary floating point drift…" | ✅ |
+| 3.4.2 | Position sizing derivado da distância ao stop, com mínimo tradável | `computePositionSize`; testes "sizes from the stop distance…", "refuses a position below the tradable minimum" | ✅ |
+| 3.4.3 | Limites de portfólio (concorrência, cap por categoria, orçamento de risco) | `evaluatePortfolioRisk` + `DEFAULT_RISK_LIMITS`; testes "blocks new signals once the concurrency limit…" etc. | ✅ |
+| 3.4.4 | Kill-switch com motivo obrigatório e auditoria | `setKillSwitch` (reason ≥ 3) + `POST /api/system/kill-switch` (`KILL_SWITCH` audited) | ✅ |
+| 3.4.5 | `GET /api/system/risk-status` expõe a postura de risco | `systemRoutes.ts` | ✅ |
+| 3.4.6 | Emissão de sinal gated por kill-switch + limites no tick | `server.ts` → `isTradingHalted()` + `evaluatePortfolioRisk` antes de emitir; `openSignals` sincronizado | ✅ |
+| 3.4.7 | Kill-switch observável na UI (não só via API) | não implementado | ⚠️ **R-17** |
+
+### 3.5 Evidência / calibração
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| 3.5.1 | 60–90 dias de paper trading com estatísticas só de dado real | não implementado (não há backend de paper trading) | ⚠️ **R-18** |
+| 3.5.2 | Calibração do score por faixa com dado real | não implementado (limiares mortos permanecem) | ⚠️ **R-8** |
+| 3.5.3 | Expectativa e drawdown calculados de dados reais | `BacktestDashboard` expõe métricas do backtest; não há trilha de paper trading real | ⚠️ **R-18** |
+
+---
+
+## 4. Decisões aprovadas
+
+| # | Decisão | Resposta | Status |
+|---|---------|----------|--------|
+| 1 | Executar a 2.5 completa antes da Fase 3 | sim | ✅ |
+| 2 | Geo-bloqueio | **não existe** (sem variável de hosts/proxy) | ✅ (decisão aplicada: sem fallback spot) |
+| 3 | Backtest limitado ao período de OI disponível | sim, com aviso ao usuário sobre o período testável | ✅ (`assumptions`) |
+| 4 | Specs reescritas em formato SDD | sim | ✅ (esta rodada) |
+
+---
+
+## 5. Pendências consolidadas
+
+Todas as ⚠️ desta spec estão rastreadas com plano em `specs/phase-4-remaining-gaps.md`.
+**Entregues em 2026-09-29:** R-1 (DNS SSRF), R-3 (migrações), R-5 (limiter total), R-7 (teto de stop),
+R-9 (parciais no backtest), R-10 (walk-forward rolante), R-14 (driver único) e R-16 (`SQLITE_BUSY`).
+R-2 (`origin`/`server/demo/`) foi entregue na sequência do mesmo dia e re-verificado por revisão de código
+(revisão corrigiu: gate `ALLOW_SYNTHETIC_DATA` faltando no fallback do sync; SQL parametrizada nas leituras de sinais).
+R-11 (`tradingSchedule` como autoridade do gate TradFi) e R-13 (health por feed com
+`GET /api/system/feed-health` + badges reais) fecharam o mesmo dia, seguidos de R-15 (logger JSON
+com redação de segredos + métricas em `GET /api/system/metrics`) e R-17 (painel de kill-switch e
+postura de risco no dashboard e na aba de risco). Suíte: 263/263, 33 arquivos.
+**Ainda abertas:** R-6 (WS primário), R-8 (calibração do score), R-12 (validação contra API real)
+e R-18 (paper trading/evidência).

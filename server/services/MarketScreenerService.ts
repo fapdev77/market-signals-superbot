@@ -3,7 +3,8 @@ import { requestJson } from '../utils/httpClient.js';
 import { addBinanceLog } from '../binanceWebsocket.js';
 import { getFavoriteSymbols, getScreenerSettings, saveScreenerSettings, getActiveSignals, setWatchedSymbol, DEFAULT_EXCLUDED_SYMBOLS } from '../db.js';
 import { DEFAULT_SYMBOLS } from '../binanceService.js';
-import { getBenchmarkPrice } from '../../src/utils/benchmarkPrices.js';
+// R-2: o universo de triagem fabricado vive em server/demo/.
+import { generateFallbackRawTickers } from '../demo/syntheticTickers.js';
 
 // Classification mapping for sectors
 const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
@@ -137,7 +138,9 @@ export class MarketScreenerService {
     try {
       const settings: ScreenerSettings = await getScreenerSettings();
       const favorites = await getFavoriteSymbols();
-      const activeSignals = await getActiveSignals();
+      // R-2: o screener não deve repropor símbolos que já têm trade aberto — incluindo DEMO,
+      // que o motor também gerencia.
+      const activeSignals = await getActiveSignals('ALL');
       const symbolsWithActiveTrades = new Set(activeSignals.map(s => s.symbol));
 
       // Excluded symbols set (case-insensitive normalized)
@@ -170,8 +173,12 @@ export class MarketScreenerService {
       // Filter only valid USDT pairs
       const usdtTickers = rawTickers.filter(t => t.symbol && t.symbol.endsWith('USDT'));
 
-      // If remote failed or empty, fallback with rich data
-      const candidates = usdtTickers.length > 0 ? usdtTickers : this.generateFallbackRawTickers();
+      // Phase 2.5.6: never fabricate a screening universe. When the exchange returns nothing the scan
+      // reports zero candidates instead of presenting a fixed reference-price list as live market data.
+      // Fabrication remains available only behind the explicit ALLOW_SYNTHETIC_DATA opt-in.
+      const candidates = usdtTickers.length > 0
+        ? usdtTickers
+        : (process.env.ALLOW_SYNTHETIC_DATA === 'true' ? generateFallbackRawTickers() : []);
 
       // 2. Compute RVOL, Volatility, and Composite Score
       const processed: ScreenerAsset[] = candidates.map(ticker => {
@@ -383,44 +390,24 @@ export class MarketScreenerService {
     }
   }
 
+  /**
+   * Phase 2.5.6: this used to report invented leaders (SUIUSDT +12.4%, PEPEUSDT funding 0.00045) as
+   * though they were observed, and the UI rendered them as live. It now reports only what is actually
+   * known: the cached asset list and the monitored-symbol counts. Leader fields stay undefined when no
+   * scan has produced them.
+   */
   private buildFallbackSummary(): ScreenerScanSummary {
     return {
-      totalAssetsAvailable: this.cachedScreenerAssets.length || 24,
-      totalMonitored: this.activeMonitoredSymbols.length || 12,
-      favoritesCount: 5,
-      dynamicCount: 7,
-      excludedCount: 6,
-      topGainer: { symbol: 'SUIUSDT', change: 12.4 },
-      topVolume: { symbol: 'BTCUSDT', quoteVolume: 4200000000 },
-      topOiSurge: { symbol: 'SOLUSDT', oiChange: 8.5 },
-      highestFundingRate: { symbol: 'PEPEUSDT', rate: 0.00045 },
-      lastScanDurationMs: 120,
+      totalAssetsAvailable: this.cachedScreenerAssets.length,
+      totalMonitored: this.activeMonitoredSymbols.length,
+      favoritesCount: this.cachedScreenerAssets.filter(a => a.isFavorite).length,
+      dynamicCount: this.activeMonitoredSymbols.length,
+      excludedCount: this.cachedScreenerAssets.filter(a => a.isExcluded).length,
+      lastScanDurationMs: 0,
       timestamp: Date.now()
     };
   }
 
-  private generateFallbackRawTickers(): any[] {
-    const symbols = [
-      ...DEFAULT_SYMBOLS,
-      'APTUSDT', 'RENDERUSDT', 'TAOUSDT', 'INJUSDT', 'TIAUSDT', 'SEIUSDT', 'ARBUSDT', 'OPUSDT', 'PENDLEUSDT',
-      // Stablecoin pairs in fallback dataset to demonstrate exclusion list
-      'USDCUSDT', 'USDGUSDT', 'PYUSDUSDT', 'FDUSDUSDT', 'EURUSDT'
-    ];
-    return symbols.map(sym => {
-      const p = getBenchmarkPrice(sym);
-      const isLow = p < 1;
-      const decimals = isLow ? 6 : 2;
-      return {
-        symbol: sym,
-        lastPrice: p.toFixed(decimals),
-        priceChangePercent: ((Math.sin(sym.length * 2.5) * 4.5)).toFixed(2),
-        volume: '150000',
-        quoteVolume: (50000000 + (sym.length * 15000000)).toString(),
-        highPrice: (p * 1.025).toFixed(decimals),
-        lowPrice: (p * 0.975).toFixed(decimals)
-      };
-    });
-  }
 }
 
 export const marketScreener = MarketScreenerService.getInstance();

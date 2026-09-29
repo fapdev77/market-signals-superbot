@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { BacktestEngine } from '../server/services/BacktestEngine.js';
 import { IndicatorWeights, BacktestConfig } from '../src/types.js';
+import { seedBacktestKlines } from './helpers/backtestSeed.js';
 
 describe('Backtest Simulation & Quantitative Engine Suite', () => {
   const sampleWeights: IndicatorWeights = {
@@ -14,6 +15,12 @@ describe('Backtest Simulation & Quantitative Engine Suite', () => {
     volumeProfileRange: 20,
     minRiskRewardRatio: 2.5
   };
+
+  beforeAll(async () => {
+    // Banco isolado + candles sintéticos determinísticos: a suíte não faz rede
+    // e lê sempre o mesmo dataset.
+    await seedBacktestKlines(['BTCUSDT', 'ETHUSDT'], 10);
+  });
 
   it('runs quantitative backtest on BTCUSDT and returns structured performance metrics', async () => {
     const config: BacktestConfig = {

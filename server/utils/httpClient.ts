@@ -1,6 +1,7 @@
 import https from 'node:https';
 import http from 'node:http';
 import { URL } from 'node:url';
+import { BinanceRateLimiter } from './binanceRateLimiter.js';
 
 export interface HttpRequestOptions {
   headers?: Record<string, string>;
@@ -99,4 +100,37 @@ export function requestJson<T = any>(urlStr: string, options: HttpRequestOptions
       reject(err);
     }
   });
+}
+
+/**
+ * R-5 — Limiter-aware requestJson.
+ *
+ * Todas as chamadas REST à Binance passam por aqui (antes só fetchWithFallback
+ * era protegido; OI, OI histórico, long/short, depth e o sync de klines usavam
+ * requestJson direto e podiam estourar o peso sem que o limiter soubesse).
+ *
+ * - Recusa a chamada enquanto o cooldown preventivo contra 429/418 está ativo;
+ * - registra o peso (`x-mbx-used-weight-1m`) e o `retry-after` dos headers;
+ * - dispara o backoff exponencial do limiter em 429/418 e repassa o erro.
+ */
+export async function requestJsonLimited<T = any>(
+  urlStr: string,
+  options: HttpRequestOptions = {}
+): Promise<HttpResponse<T>> {
+  // Throws a descriptive cooldown error instead of silently hammering the API.
+  BinanceRateLimiter.assertAllowed();
+
+  try {
+    const response = await requestJson<T>(urlStr, options);
+    BinanceRateLimiter.updateFromHeaders(response.headers);
+    BinanceRateLimiter.recordSuccess();
+    return response;
+  } catch (err: any) {
+    const status = err?.status || 0;
+    if (status === 429 || status === 418) {
+      BinanceRateLimiter.triggerBackoff(status);
+      BinanceRateLimiter.updateFromHeaders(err?.headers || {});
+    }
+    throw err;
+  }
 }

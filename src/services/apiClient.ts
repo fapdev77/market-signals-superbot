@@ -161,7 +161,74 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return response.json();
 }
 
+// R-13: tipos do health por feed (espelham server/services/feedHealth.ts).
+export type FeedStatus = 'OK' | 'DEGRADED' | 'STALE' | 'UNKNOWN';
+
+export interface FeedHealthEntry {
+  status: FeedStatus;
+  consecutiveFailures: number;
+  lastSuccessAt: number | null;
+  lastFailureAt: number | null;
+  lastLatencyMs: number | null;
+  lastError: string | null;
+}
+
+export interface FeedHealthPayload {
+  generatedAt: number;
+  feeds: Record<string, FeedHealthEntry>;
+  summary: { totalFeeds: number; ok: number; degraded: number; stale: number; unknown: number };
+  ws?: {
+    connected: boolean;
+    lastTickAt: number | null;
+    lastError: string | null;
+    messagesReceived: number;
+    [key: string]: unknown;
+  };
+  tradingSchedule?: {
+    active: 'EXCHANGE_SCHEDULE' | 'CLOCK_FALLBACK';
+    assumptions: Array<{ reason: string; since: number }>;
+    [key: string]: unknown;
+  };
+}
+
 export const apiClient = {
+  // --- Risk Posture & Kill-Switch (R-17) ---
+  getRiskStatus: (): Promise<{
+    killSwitch: { enabled: boolean; reason: string | null; activatedAt: number | null; activatedBy: string | null };
+    limits: {
+      maxConcurrentSignals: number;
+      maxSignalsPerCategory: number;
+      maxPortfolioRiskPct: number;
+      riskPerTradePct: number;
+      accountEquity: number;
+      [key: string]: unknown;
+    };
+    portfolio: {
+      allowed: boolean;
+      reasons: string[];
+      concurrentCount: number;
+      categoryCounts: Record<string, number>;
+      openRiskPct: number;
+    };
+  }> => {
+    return request('/api/system/risk-status');
+  },
+
+  setKillSwitch: (enabled: boolean, reason?: string): Promise<{
+    success: boolean;
+    killSwitch: { enabled: boolean; reason: string | null; activatedAt: number | null; activatedBy: string | null };
+  }> => {
+    return request('/api/system/kill-switch', {
+      method: 'POST',
+      body: JSON.stringify({ enabled, reason })
+    });
+  },
+
+  // --- System Health (R-13) ---
+  getFeedHealth: (): Promise<FeedHealthPayload> => {
+    return request<FeedHealthPayload>('/api/system/feed-health');
+  },
+
   // --- Tickers & Market ---
   getTickers: (): Promise<TickerData[]> => {
     return request<TickerData[]>('/api/tickers');

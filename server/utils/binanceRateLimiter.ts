@@ -114,4 +114,18 @@ export class BinanceRateLimiter {
     const now = Date.now();
     return Math.max(0, state.throttleUntil - now);
   }
+
+  /**
+   * R-5: throws a descriptive error when Binance calls must not proceed
+   * (preventive cooldown against 429/418). Used by every limiter-aware caller
+   * so that "silently hitting the API anyway" becomes impossible.
+   */
+  static assertAllowed(): void {
+    if (!BinanceRateLimiter.isAllowed()) {
+      const remaining = Math.round(BinanceRateLimiter.getRemainingCooldownMs() / 1000);
+      throw new Error(
+        `Binance API em cooldown preventivo contra 429/418 (${remaining}s restantes).`
+      );
+    }
+  }
 }

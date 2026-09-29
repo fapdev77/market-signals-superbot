@@ -19,6 +19,7 @@ import {
 import { AIModelConfig, BotState } from '../types';
 import { WSClientStatus } from '../hooks/useBinanceWebSocket';
 import { Tooltip } from './Tooltip';
+import { apiClient, FeedHealthPayload } from '../services/apiClient';
 
 interface FeedHealthItem {
   id: string;
@@ -49,12 +50,30 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
 }) => {
   const [isBenchmarking, setIsBenchmarking] = useState(false);
   const [lastBenchmarkedAt, setLastBenchmarkedAt] = useState<number>(Date.now());
+  const [serverFeedHealth, setServerFeedHealth] = useState<FeedHealthPayload | null>(null);
   const [liveTicks, setLiveTicks] = useState({
     binancePing: 14,
     orderFlowPing: 4,
     aiPing: 320,
     dbPing: 1
   });
+
+  // R-13: estado real dos feeds vem do servidor (GET /api/system/feed-health),
+  // que agrega o registro de sucesso/falha de cada fonte de dado.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      apiClient.getFeedHealth()
+        .then(h => { if (!cancelled) setServerFeedHealth(h); })
+        .catch(() => { /* widget mantém a visão estática quando o endpoint falha */ });
+    };
+    load();
+    const timer = setInterval(load, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   // Live jitter effect
   useEffect(() => {
@@ -83,12 +102,29 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
       ? clientWsStatus.connected 
       : clientWsStatus !== 'DISCONNECTED';
 
+    // R-13: quando o servidor responde, o estado real do feed substitui o estático.
+    // Mapeamento: feed id do widget → FeedName do registro do servidor.
+    const serverStatus = (widgetId: string): FeedHealthItem['status'] | null => {
+      if (!serverFeedHealth?.feeds) return null;
+      const map: Record<string, string> = {
+        binance_futures_ws: 'ws',
+        order_flow_aggregator: 'ticker',
+        ai_reasoning_pipeline: 'tradingSchedule',
+        sqlite_persistence: 'klines'
+      };
+      const entry = serverFeedHealth.feeds[map[widgetId]];
+      if (!entry) return null;
+      if (entry.status === 'OK') return 'ONLINE';
+      if (entry.status === 'DEGRADED' || entry.status === 'STALE') return 'DEGRADED';
+      return null; // UNKNOWN: sem registro no servidor — mantém o estático
+    };
+
     const feeds: FeedHealthItem[] = [
       {
         id: 'binance_futures_ws',
         name: 'Binance Futures Live Stream',
         category: 'MARKET_DATA',
-        status: isWsOnline ? 'ONLINE' : 'OFFLINE',
+        status: serverStatus('binance_futures_ws') ?? (isWsOnline ? 'ONLINE' : 'OFFLINE'),
         latencyMs: liveTicks.binancePing,
         uptimePct: 99.98,
         throughput: '142 msg/s',
@@ -101,7 +137,7 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
       id: 'order_flow_aggregator',
       name: 'Order Flow & CVD Engine',
       category: 'ORDER_FLOW',
-      status: 'ONLINE',
+      status: serverStatus('order_flow_aggregator') ?? 'ONLINE',
       latencyMs: liveTicks.orderFlowPing,
       uptimePct: 100.0,
       throughput: '500ms tick cycle',
@@ -114,7 +150,7 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
       id: 'ai_reasoning_pipeline',
       name: `AI Inference Engine (${primaryModel.name})`,
       category: 'AI_REASONING',
-      status: botState?.aiAnalysisEnabled ? 'ONLINE' : 'DEGRADED',
+      status: serverStatus('ai_reasoning_pipeline') ?? (botState?.aiAnalysisEnabled ? 'ONLINE' : 'DEGRADED'),
       latencyMs: liveTicks.aiPing,
       uptimePct: 99.85,
       throughput: '1.4 req/min',
@@ -129,7 +165,7 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
       id: 'sqlite_persistence',
       name: 'SQLite Database & Signal Storage',
       category: 'STORAGE',
-      status: 'ONLINE',
+      status: serverStatus('sqlite_persistence') ?? 'ONLINE',
       latencyMs: liveTicks.dbPing,
       uptimePct: 100.0,
       throughput: 'Zero Latency Sync',
@@ -228,6 +264,15 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
             return 'text-rose-400';
           };
 
+          // R-13: erro real do último registro do servidor, quando disponível.
+          const serverEntry = serverFeedHealth?.feeds?.[
+            feed.id === 'binance_futures_ws' ? 'ws'
+            : feed.id === 'order_flow_aggregator' ? 'ticker'
+            : feed.id === 'ai_reasoning_pipeline' ? 'tradingSchedule'
+            : 'klines'
+          ];
+          const realError = serverEntry?.lastError || null;
+
           return (
             <div
               key={feed.id}
@@ -251,6 +296,11 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
                       </span>
                     </div>
                     <span className="text-[10px] text-neutral-400 block mt-0.5">{feed.details}</span>
+                    {realError && (
+                      <span className="text-[10px] text-rose-300/80 block mt-0.5 truncate max-w-md" title={realError}>
+                        ⚠ {realError}
+                      </span>
+                    )}
                   </div>
                 </div>
 

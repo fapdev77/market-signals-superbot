@@ -2,11 +2,12 @@ import { Router, Request, Response } from 'express';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader, buildSignalReviewPrompt } from '../aiMotor.js';
 import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
 import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights, getSignalById, getSignalsByDateRange } from '../db.js';
+import { parseOriginFilter } from '../utils/dataOrigin.js';
 import { buildTradeSignal, normalizePricePrecision } from '../signalEngine.js';
 import { TickerData, TradeSignal, BotState } from '../../src/types.js';
 import { getAIPersonaById } from '../../src/constants/aiPersonas.js';
 import { safeFetch } from '../utils/safeFetch.js';
-import { validateOutboundAIUrl } from '../utils/outboundPolicy.js';
+import { validateOutboundAIUrlWithDns } from '../utils/outboundPolicy.js';
 
 export function createAIRouter(
   getBotState: () => BotState,
@@ -32,7 +33,11 @@ export function createAIRouter(
       const now = Date.now();
       const startTime = now - days * 24 * 60 * 60 * 1000;
 
-      const signals = await getSignalsByDateRange(startTime, now);
+      // R-2: o hit-rate é calculado só sobre sinais LIVE por default; demo é opt-in explícito,
+      // para que desempenho medido em dado fabricado nunca contamine a leitura de operador.
+      const origin = parseOriginFilter(req.query.origin);
+      const signals = await getSignalsByDateRange(startTime, now, origin);
+      const demoSignals = origin === 'LIVE' ? await getSignalsByDateRange(startTime, now, 'DEMO') : [];
 
       // Group signals by day (YYYY-MM-DD)
       const dayMap: Record<string, {
@@ -171,6 +176,8 @@ export function createAIRouter(
       res.json({
         success: true,
         days,
+        origin,
+        demoSignalsExcluded: demoSignals.length,
         overallHitRate: parseFloat(overallHitRate.toFixed(1)),
         profitFactor: parseFloat(profitFactor.toFixed(2)),
         totalSignals,
@@ -405,7 +412,8 @@ export function createAIRouter(
 
       if (provider === 'local') {
         const url = (apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
-        const validation = validateOutboundAIUrl(url, 'local');
+        // R-1: DNS validation before the connection diagnostics run.
+        const validation = await validateOutboundAIUrlWithDns(url, 'local');
         if (!validation.isValid) {
           const msg = validation.error || 'URL local não autorizada por política de segurança.';
           diagnosticSteps.push(`[Segurança] Bloqueio outbound: ${msg}`);
@@ -619,7 +627,8 @@ export function createAIRouter(
       if (provider === 'openrouter' || provider === 'openai') {
         const defaultUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1';
         const url = (apiUrl || defaultUrl).replace(/\/+$/, '');
-        const validation = validateOutboundAIUrl(url, provider);
+        // R-1: DNS validation before the connection diagnostics run.
+        const validation = await validateOutboundAIUrlWithDns(url, provider);
         if (!validation.isValid) {
           const msg = validation.error || 'URL não permitida por política de segurança outbound.';
           diagnosticSteps.push(`[Segurança] Bloqueio outbound: ${msg}`);

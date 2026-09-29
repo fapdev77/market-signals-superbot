@@ -23,6 +23,7 @@ import {
   Unlock,
   Scale,
   Server,
+  ShieldAlert,
   CheckCheck,
   Target,
   Compass,
@@ -38,6 +39,7 @@ import { Tooltip } from './Tooltip';
 
 export type DashboardWidgetId = 
   | 'system_health'
+  | 'kill_switch'
   | 'prime_banner'
   | 'trapped_radar'
   | 'rsi_divergence'
@@ -61,7 +63,8 @@ export interface WidgetConfig {
 const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   lg: [
     { i: 'system_health', x: 0, y: 0, w: 12, h: 6, minW: 6, minH: 4 },
-    { i: 'prime_banner', x: 0, y: 6, w: 12, h: 4, minW: 6, minH: 3 },
+    { i: 'kill_switch', x: 0, y: 6, w: 12, h: 4, minW: 6, minH: 3 },
+    { i: 'prime_banner', x: 0, y: 10, w: 12, h: 4, minW: 6, minH: 3 },
     { i: 'trapped_radar', x: 0, y: 10, w: 12, h: 14, minW: 6, minH: 6 },
     { i: 'rsi_divergence', x: 0, y: 24, w: 12, h: 14, minW: 6, minH: 6 },
     { i: 'market_heatmap', x: 0, y: 38, w: 12, h: 12, minW: 6, minH: 6 },
@@ -72,7 +75,8 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   ],
   md: [
     { i: 'system_health', x: 0, y: 0, w: 10, h: 6, minW: 5, minH: 4 },
-    { i: 'prime_banner', x: 0, y: 6, w: 10, h: 4, minW: 5, minH: 3 },
+    { i: 'kill_switch', x: 0, y: 6, w: 10, h: 4, minW: 5, minH: 3 },
+    { i: 'prime_banner', x: 0, y: 10, w: 10, h: 4, minW: 5, minH: 3 },
     { i: 'trapped_radar', x: 0, y: 10, w: 10, h: 14, minW: 5, minH: 6 },
     { i: 'rsi_divergence', x: 0, y: 24, w: 10, h: 14, minW: 5, minH: 6 },
     { i: 'market_heatmap', x: 0, y: 38, w: 10, h: 12, minW: 5, minH: 6 },
@@ -83,7 +87,8 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   ],
   sm: [
     { i: 'system_health', x: 0, y: 0, w: 6, h: 6, minW: 6, minH: 4 },
-    { i: 'prime_banner', x: 0, y: 6, w: 6, h: 4, minW: 6, minH: 3 },
+    { i: 'kill_switch', x: 0, y: 6, w: 6, h: 4, minW: 6, minH: 3 },
+    { i: 'prime_banner', x: 0, y: 10, w: 6, h: 4, minW: 6, minH: 3 },
     { i: 'trapped_radar', x: 0, y: 10, w: 6, h: 14, minW: 6, minH: 6 },
     { i: 'rsi_divergence', x: 0, y: 24, w: 6, h: 14, minW: 6, minH: 6 },
     { i: 'market_heatmap', x: 0, y: 38, w: 6, h: 12, minW: 6, minH: 6 },
@@ -94,7 +99,7 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
   ]
 };
 
-const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v9';
+const STORAGE_LAYOUT_KEY = 'superbot_dashboard_grid_layouts_v10';
 const STORAGE_VISIBILITY_KEY = 'superbot_dashboard_widgets_visibility_v9';
 const STORAGE_VIEW_MODE_KEY = 'superbot_dashboard_view_mode_v9';
 
@@ -162,6 +167,15 @@ const INITIAL_WIDGETS: WidgetConfig[] = [
     minW: 6,
     minH: 4,
     badge: 'PRO SLA'
+  },
+  {
+    id: 'kill_switch',
+    title: 'Postura de Risco & Kill-Switch',
+    description: 'Estado do halt global de emissão, risco agregado da carteira e suspensão/reativação com motivo auditado.',
+    icon: ShieldAlert,
+    visible: true,
+    minW: 6,
+    minH: 3
   },
   {
     id: 'prime_banner',

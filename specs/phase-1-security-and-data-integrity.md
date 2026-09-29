@@ -1,104 +1,189 @@
-# Fase 1: Segurança e Integridade dos Dados (plano para revisão)
+# Fase 1 — Segurança e Integridade dos Dados (Especificação SDD)
 
-## 1. Objetivo e escopo
+> **Reescrita em formato SDD.** A versão anterior era um plano em prosa, sem critérios de aceitação
+> próprios — "pronto" ficava subjetivo. Cada requisito abaixo tem uma verificação executável e um status
+> medido contra o código atual (não contra a intenção do plano).
+>
+> **Última verificação:** 2026-09-29 · `npm ci` OK · `npx tsc --noEmit` 0 erros · `npx vitest run`
+> 19 arquivos / 154 testes OK · `npm run build` OK · `npm audit --omit=dev` 0 vulnerabilidades.
+>
+> **Relação com `phase-1-1-hotfix.md`:** este é o **spec canônico** da Fase 1 (requisitos + critérios).
+> `phase-1-1-hotfix.md` é o **registro de implementação** do hotfix que fechou os furos do núcleo. Os dois
+> usam as mesmas IDs (S1–S7, D1–D7) de propósito, para rastreio.
 
-**Objetivo:** ninguém sem credencial opera ou lê segredos do sistema, e nenhum sinal, stop ou métrica nasce de dado falso sem que isso esteja explícito.
+---
 
-**Dentro:** autenticação, hardening de rede, proteção de segredos, correção do SSRF, validação de entrada, remoção do seed falso, proveniência de dados, bloqueio de sinais com feed degradado, TradFi simulado, correção de lockfile e vulnerabilidades do `npm audit`.
+## 1. Objetivo
 
-**Fora (Fases 2+):** reescrita do backtest, correções da lógica de score/OI/funding, guard de exceções, unificação sql.js/libsql, CI/Docker, camada de execução.
+Ninguém sem credencial opera ou lê segredos do sistema, e **nenhum sinal, stop ou métrica nasce de dado
+falso sem que isso esteja explícito** na interface e na resposta da API.
 
-## 2. Especificação e critérios de aceitação
+## 2. Escopo
 
-**Segurança**
+**Dentro:** autenticação, hardening de rede, proteção de segredos, correção do SSRF, validação de entrada,
+remoção do seed falso, proveniência de dados por feed, bloqueio de sinais/gestão com feed degradado ou
+velho, TradFi simulado, lockfile/build e vulnerabilidades do `npm audit`.
 
-- **S1** Toda rota `/api/*`, exceto `/api/health`, retorna `401` sem token válido. Em produção, o servidor **recusa iniciar** sem `API_AUTH_TOKEN`.
-- **S2** O servidor escuta em `127.0.0.1` por padrão (`HOST` configurável). Há helmet, CORS por allowlist, limite de corpo de 100 kb e rate-limit global, com limite mais estrito em rotas destrutivas e de IA.
-- **S3** Nenhuma resposta da API (incluindo `database-export`) contém chave de API. O GET devolve só `hasApiKey` e os últimos 4 caracteres.
-- **S4** `test-connection` e chamadas de IA só alcançam hosts da allowlist do provedor. IPs privados, loopback e `169.254.169.254` são bloqueados. A chave do ambiente **nunca** é enviada a host fora da allowlist.
-- **S5** Corpos e parâmetros são validados por schema (zod); entrada inválida retorna `400` com mensagem clara.
-- **S6** `factory-reset` e `table-clear` exigem confirmação explícita e geram registro de auditoria.
-- **S7** `npm ci` funciona e `npm audit --omit=dev` não reporta severidade alta.
+**Fora (Fases 2+):** reescrita do backtest, correção da lógica de score/OI/funding, guard de exceções,
+unificação sql.js/libsql, CI/Docker, camada de execução e risco. Ver `phase-2.md`, `phase-2-5 and
+phase-3.md` e `phase-4-remaining-gaps.md`.
 
-**Integridade de dados**
+---
 
-- **D1** Nenhum sinal fabricado no banco; o gráfico de hit-rate mostra estado vazio com o `n` real.
-- **D2** Todo ticker e sinal carrega `dataSource`, `dataAsOf` e `isSynthetic`, por feed (ticker, klines, OI, funding, long/short).
-- **D3** Com feed obrigatório sintético ou mais velho que `MAX_DATA_AGE_MS`, **não se cria sinal e não se avalia stop/alvo/TTL** dos sinais abertos com aquele preço.
-- **D4** Geradores sintéticos só rodam com `ALLOW_SYNTHETIC_DATA=true`; nesse modo há banner "DADOS DEMO" e tudo é gravado com `origin='DEMO'`.
-- **D5** Nenhum preço de `benchmarkPrices` é usado como preço de mercado em produção.
-- **D6** TradFi simulado removido do universo monitorado e do README (ou claramente rotulado, ver decisão 5).
-- **D7** O backtest recusa rodar em klines sintéticos (erro explícito) e o resultado informa a fonte dos dados.
+## 3. Requisitos e critérios de aceitação
 
-## 3. Plano técnico
+### 3.1 Segurança
+
+#### S1 — Autenticação fail-closed
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S1.1 | Toda rota `/api/*`, exceto `/health` e `auth/status\|verify`, retorna `401` sem token válido | `tests/appHttp.test.ts` → "rejects a protected endpoint without a token" / "…with a wrong token" | ✅ |
+| S1.2 | Em `NODE_ENV=production` sem `API_AUTH_TOKEN` o processo não inicia | asserção no topo de `startServer()` em `server.ts` + `process.exit(1)` | ✅ |
+| S1.3 | Sem `API_AUTH_TOKEN`, um token aleatório é gerado no boot e impresso uma única vez | `getEffectiveAuthToken()` em `server/middleware/auth.ts` | ✅ |
+| S1.4 | A comparação de token é em tempo constante e não vaza o tamanho | `validateTokenConstantTime` (compara tamanho antes do `timingSafeEqual`) | ✅ |
+| S1.5 | `/api/auth/status` nunca devolve o token efetivo | `tests/appHttp.test.ts` → "never returns the effective token" | ✅ |
+| S1.6 | O contrato HTTP é testado contra o **app real** (não um Express montado no teste) | `server/app.ts` (`createApp`) + `tests/appHttp.test.ts` | ✅ |
+
+#### S2 — Rede e hardening HTTP
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S2.1 | `HOST` documentado e configurável (padrão `0.0.0.0` para container) | `.env.example` + `server.ts` (`process.env.HOST \|\| '0.0.0.0'`) | ✅ |
+| S2.2 | Em produção o CORS é allowlist **exata**; nenhum wildcard, nenhum sufixo `*.run.app` | `tests/appHttp.test.ts` → rejeita origem não listada / aceita origem listada | ✅ |
+| S2.3 | Payload JSON limitado a 100 kb | `tests/appHttp.test.ts` → "rejects a payload larger than 100kb" (413) | ✅ |
+| S2.4 | Rate-limit global + limites estritos em `/auth/verify` (anti-força-bruta) e rotas destrutivas/IA | `createApp()` → `authBruteForceLimiter` (15/min), `strictSensitiveLimiter` (45/min) | ✅ |
+| S2.5 | `trust proxy` configurado para rate-limit atrás de reverse proxy | `app.set('trust proxy', 1)` em `server/app.ts` | ✅ |
+| S2.6 | `x-powered-by` não é anunciado | `app.disable('x-powered-by')` + teste | ✅ |
+| S2.7 | Helmet ativo com headers de segurança | `helmet()` em `server/app.ts` | ✅ (CSP desligada de propósito; ver R-4 em `phase-4-remaining-gaps.md`) |
+
+#### S3 — Proteção de segredos
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S3.1 | Nenhuma resposta da API contém chave de API; o GET devolve `hasApiKey` + últimos 4 caracteres | `secretsRedaction.ts` + `redactAIModelConfig` no GET de `marketRoutes` | ✅ |
+| S3.2 | POST de `ai-models` com valor mascarado preserva a chave existente | `mergePreservedSecrets` | ✅ |
+| S3.3 | `database-export` omite chaves de API | `exportDatabaseJson()` (remove `apiKey`) | ✅ |
+
+#### S4 — Anti-SSRF outbound
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S4.1 | As chamadas de IA só alcançam hosts da allowlist (4 caminhos do `aiMotor` + salvar modelo) | `validateOutboundAIUrl` chamado nos pontos de saída | ✅ |
+| S4.2 | IPs privados, loopback, CGNAT, link-local (`169.254.169.254`) e IPv6 mapeado bloqueados | `FORBIDDEN_IP_PATTERNS` em `server/utils/outboundPolicy.ts` | ✅ |
+| S4.3 | Hostname comparado exatamente (não `includes()`) | `validateOutboundAIUrl` | ✅ |
+| S4.4 | HTTPS obrigatório para host externo | `validateOutboundAIUrl` | ✅ |
+| S4.5 | Ollama remoto só funciona se listado em `ALLOWED_AI_HOSTS` (comportamento intencional) | `outboundPolicy.ts` + `.env.example` | ✅ |
+| S4.6 | Resolução de DNS (rebinding) antes de conectar | `validateOutboundAIUrlWithDns` aplicada nos 4 caminhos de IA, no test-connection e no POST `/settings/ai-models`; `tests/outboundDnsEnforcement.test.ts` (4) | ✅ **(R-1)** |
+
+#### S5 — Validação de entrada
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S5.1 | Schema zod em `:symbol`, weights, ai-models e screener settings | `server/middleware/validation.ts` + uso nas rotas | ✅ |
+| S5.2 | Entrada inválida retorna `400` com mensagem clara | `validateBody` / `validateParams` | ✅ |
+
+#### S6 — Ações destrutivas
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S6.1 | `factory-reset` e `table-clear` exigem confirmação literal | `resetConfirmationSchema` (`confirm: literal('RESET')`), `tableClearConfirmationSchema` | ✅ |
+| S6.2 | Toda ação destrutiva grava auditoria | `recordAuditLog` nas 6 rotas | ✅ |
+| S6.3 | O ator da auditoria identifica quem agiu (não `'ADMIN'` fixo) | `getAuditActor(req)` → `token:<sha256[:8]>@<ip>` | ✅ |
+
+#### S7 — Build, lockfile e dependências
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| S7.1 | `npm ci` funciona a partir do lock commitado | executado a partir de `node_modules` limpo; exit 0 | ✅ |
+| S7.2 | `npm audit --omit=dev` sem severidade alta/moderada | 0 vulnerabilidades | ✅ |
+| S7.3 | Somente `package-lock.json` versionado; `bun.lock` removido | `git status` → `D bun.lock` | ✅ |
+| S7.4 | `engines.node` declarado e testado | `package.json` → `>=20.0.0`; CI roda em 20.x e 22.x | ✅ |
+| S7.5 | CI roda `npm ci`, typecheck, testes, build e audit | `.github/workflows/ci.yml` | ✅ |
+| S7.6 | Imagem de container reprodutível, non-root, com volume e healthcheck | `Dockerfile` + `.dockerignore` | ✅ |
+
+### 3.2 Integridade de dados
+
+| ID | Critério de aceitação | Verificação | Status |
+|----|----------------------|-------------|--------|
+| D1 | Nenhum sinal fabricado no banco; `HIST-*` removidos no boot, **sem backup** (decisão 3) | `server/db.ts` → `DELETE FROM trade_signals WHERE id LIKE 'HIST-%'` | ✅ |
+| D2 | Todo ticker carrega proveniência por feed (fonte, idade, fatores indisponíveis) | `TickerData.dataQuality` = `{ source, lastPriceAgeMs, unavailableFactors }` em `src/types.ts`; `tests/phase2-5-hotfix.test.ts` | ✅ (nomes diferem do plano original — ver nota) |
+| D3 | Feed `STALE`/degradado **bloqueia** geração de sinal **e** avaliação de stop/alvo/TTL | `DataGate.canGenerateSignals` + `canEvaluateActiveTrades` (rejeita `source==='STALE'` e `isDegraded`) | ✅ |
+| D4 | Geradores sintéticos só rodam com `ALLOW_SYNTHETIC_DATA='true'` | klines, `DataGate`, backtest, LSR, liquidações, screener | ✅ (flag + split físico em `server/demo/` + coluna `origin='DEMO'` — R-2 entregue) |
+| D5 | Nenhum preço de `benchmarkPrices` é usado como preço de mercado em produção | klines sintéticas só atrás da flag | ✅ |
+| D6 | TradFi simulado removido do universo monitorado; contratos descobertos do feed real | `TRADFI_ASSETS` populado só por `refreshTradfiRegistry()` via `exchangeInfo`; chamado no boot em `server.ts` | ✅ (✅ código · ⚠️ README ainda cita ativos antigos) |
+| D7 | O backtest recusa dado sintético sem a flag e reporta a fonte | `BacktestEngine.runBacktest` lança erro explícito | ✅ |
+
+> **Nota sobre D2:** o plano original propunha campos `dataSource` / `dataAsOf` / `isSynthetic`. A
+> implementação usa `dataQuality.source` (`'WS' \| 'REST' \| 'CACHE' \| 'SYNTHETIC' \| 'STALE'`),
+> `dataQuality.lastPriceAgeMs` e `dataQuality.unavailableFactors`. O critério (proveniência por feed) é
+> atendido; os nomes planejados não foram usados.
+
+---
+
+## 4. Plano técnico (as-built)
 
 **A. Segurança**
 
-1. Middleware `requireAuth` com `crypto.timingSafeEqual`, montado antes dos routers. O frontend guarda o token em `sessionStorage` (nunca no bundle) e o envia como `Authorization: Bearer`.
-2. `helmet`, `cors`, `express-rate-limit`, `express.json({ limit })`. `PORT` e `HOST` vindos de env.
-3. `secretsRedaction.ts`: função única que mascara chaves em toda saída. O POST de `ai-models` preserva a chave existente quando recebe o valor mascarado. O export omite o campo.
-4. `outboundPolicy.ts`: allowlist por provedor (OpenAI, OpenRouter, Anthropic, Google) mais `ALLOWED_AI_HOSTS` opcional, exigindo https. Resolve o DNS e rejeita faixas privadas antes de conectar. Sem redirects. O fallback para a chave de ambiente só vale para o host padrão do provedor.
-5. Schemas zod para weights, ai-models, screener settings e `:symbol` (`^[A-Z0-9]{2,20}$`), com handler global de erro.
-6. Ações destrutivas exigem corpo `{ confirm: "RESET" }` e gravam em `audit_log` (ator, rota, timestamp).
-7. `npm install` para sincronizar o lock, `npm audit fix`, remoção do `vite` duplicado, `engines.node`.
+1. `server/app.ts` expõe `createApp({botState, tickerStateCache, triggerMarketScan})` — todo o
+   middleware/CORS/helmet/limiters/auth/routers vive lá, e `server.ts` só adiciona a camada estática/Vite,
+   o `listen` e o loop de tick. É o que permite testar o app real (`tests/appHttp.test.ts`).
+2. `requireAuth` com `crypto.timingSafeEqual`, montado antes dos routers. O frontend guarda o token em
+   `sessionStorage` (nunca no bundle) e envia `Authorization: Bearer`.
+3. `secretsRedaction.ts` centraliza a máscara; o POST preserva a chave quando recebe o valor mascarado; o
+   export remove o campo.
+4. `outboundPolicy.ts`: allowlist por provedor + `ALLOWED_AI_HOSTS`, exigindo HTTPS e bloqueando faixas
+   privadas/loopback/link-local.
+5. Schemas zod para weights, ai-models, screener settings e `:symbol` (`^[A-Z0-9_]{2,20}$`).
+6. Ações destrutivas exigem corpo literal (`RESET` / `TABLE_CLEAR`) e gravam em `audit_log` com ator real.
+7. `package.json` com `engines.node >=20`, scripts `typecheck`/`audit:prod`/`ci`, CI no GitHub Actions e
+   `Dockerfile` multi-stage non-root.
 
 **B. Integridade de dados**
 
-1. As funções de fetch passam a retornar `FeedResult<T> = { value, source: 'WS'|'REST'|'CACHE'|'SYNTHETIC', fetchedAt }`. **Nenhuma função fabrica valor silenciosamente**; em falha retorna `null` com motivo.
-2. `TickerData` ganha `dataQuality` (por feed e agregado). `processTickerState` deixa de cair em `benchmark` e devolve `null` sem preço real.
-3. `DataGate` no `runMarketTick`: decide por símbolo se pode gerar sinais e se pode avaliar sinais abertos. Feed ruim: registra, marca o símbolo `DEGRADED` e segue sem tocar nos sinais.
-4. Geradores sintéticos movidos para `server/demo/`, carregados só com a flag. Rotas de leitura filtram `origin='LIVE'` por padrão.
-5. Migração versionada (`PRAGMA user_version`) que substitui os `ALTER` em `try/catch` vazio: adiciona `origin`, `data_source`, `is_synthetic` e a tabela `audit_log`.
-6. Migração 1: faz backup do banco em `data/backups/`, remove `HIST-*` e limpa klines sintéticos de `historical_klines`.
-7. UI: `DataQualityBadge` por ticker, banner global de degradação/demo e estado vazio no hit-rate.
-8. Docs: README, `docs/SEGURANCA.md`, `.env.example` (com `API_AUTH_TOKEN`, `HOST`, `ALLOWED_ORIGINS`, `ALLOWED_AI_HOSTS`, `ALLOW_SYNTHETIC_DATA`, `MAX_DATA_AGE_MS`) e uma seção "o que é real e o que é simulado".
+1. `DataGate` decide, por símbolo, se pode gerar sinal e se pode avaliar sinais abertos; feed ruim marca
+   `DEGRADED`/`STALE` e **não toca** nos sinais abertos.
+2. `server/services/TickProcessor.ts` extrai do `server.ts` o que antes vivia inline: `resolveRawTicker`
+   (propaga `updatedAt` do cache e marca `STALE`), `resolveMarketInputs` (disponibilidade por fator, sem
+   coagir ausência para `0`) e `evaluatePositionManagement` (decisões puras de stop/alvo/breakeven).
+3. `signalEngine.processTickerState` recebe `availability` e, quando o fator está indisponível, **pula** o
+   fator no score e o registra em `dataQuality.unavailableFactors` (em vez de pontuar `0`).
+4. Geradores sintéticos ficam atrás da flag `ALLOW_SYNTHETIC_DATA` **e** vivem todos em `server/demo/`
+   (`prng`, `syntheticKlines`, `syntheticMarket`, `syntheticTickers`); a persistência marca o dado como
+   `origin='DEMO'`, e as leituras de operador filtram `LIVE` por default.
+5. Purge de `HIST-*` no boot (não é migração versionada — ver R-3).
 
-## 4. Decomposição (testes primeiro, em PRs pequenos)
+---
 
-**Marco M1: segurança núcleo**
+## 5. Pendências conhecidas
 
-- T1 Testes de contrato (supertest): 401 sem token, health aberto, ausência de segredos, 400 em entrada inválida (S1, S3, S5).
-- T2 `requireAuth` + bind/helmet/CORS/rate-limit/limite de corpo.
-- T3 Redação de segredos + ajuste do export + POST que preserva chave.
-- T4 Testes do `outboundPolicy` (hosts, IPs privados, fallback de chave), depois implementação, depois aplicação em `aiRoutes`/`aiMotor`.
-- T5 Schemas zod + handler de erro.
-- T6 Confirmação e auditoria das rotas destrutivas.
-- T7 Frontend: entrada do token e envio no `apiClient`.
-- T8 Lockfile, audit fix, `engines`.
+Itens do plano original **não** entregues na Fase 1, rastreados em `phase-4-remaining-gaps.md`:
 
-**Marco M2: proveniência e bloqueio**
+| Ref | Pendência | Motivo |
+|-----|-----------|--------|
+| ~~R-1~~ | S4.6 — usar `validateOutboundAIUrlWithDns` antes de conectar | ✅ entregue (2026-09-29): `tests/outboundDnsEnforcement.test.ts` |
+| ~~R-2~~ | D4 — split `server/demo/` + coluna `origin` (`LIVE`/`DEMO`) nas tabelas | ✅ entregue (2026-09-29): `server/demo/` + coluna `origin` (migração 006) em `trade_signals`/`historical_klines`, leituras default em `LIVE`; `tests/dataOriginProvenance.test.ts` (16) |
+| ~~R-3~~ | Purge `HIST-*` como migração versionada (`PRAGMA user_version`) | ✅ entregue (2026-09-29): `server/migrations/` v1–v5, one-time, sem backup (decisão 3); `tests/migrations.test.ts` |
+| R-4 | CSP de conteúdo desligada | decisão consciente; reavaliar antes de expor publicamente |
 
-- T9 Testes do `DataGate` e do `FeedResult` (feed sintético, feed velho, feed faltando).
-- T10 Refatorar `binanceService` para `FeedResult`, sem fabricação.
-- T11 `processTickerState` sem fallback de benchmark; `DataGate` no tick; sinais abertos intocados com feed ruim.
-- T12 Migração versionada + colunas de origem/qualidade + `audit_log`.
+---
 
-**Marco M3: limpeza, UI, docs**
+## 6. Decisões aprovadas
 
-- T13 Migração de purge (com backup) e remoção do seed de `db.ts`.
-- T14 Geradores sintéticos para `server/demo/` atrás da flag; remoção do TradFi simulado.
-- T15 Backtest recusa dado sintético e reporta fonte.
-- T16 UI de qualidade de dados, banner e estado vazio do hit-rate.
-- T17 Documentação e README.
-- T18 Verificação final: `tsc`, suíte completa, `npm audit`, checklist S1–S7/D1–D7.
+| # | Decisão | Resposta | Status |
+|---|---------|----------|--------|
+| 1 | Autenticação | token estático em `Authorization: Bearer` | ✅ |
+| 2 | Chaves de IA | variável de ambiente **e** banco | ✅ |
+| 3 | Sinais `HIST-*` | apagar, **sem backup** | ✅ |
+| 4 | Lockfile | manter só `package-lock.json`, remover `bun.lock` | ✅ |
+| 5 | TradFi | usar dado real da Binance; remover se não houver | ✅ (descoberta via `exchangeInfo`) |
+| 6 | Deploy | teste em AI Studio/Cloud Run; **produção real = Ollama com LLM local** | ✅ (configurável no Motor de IA) |
 
-## 5. Riscos e mudanças que quebram compatibilidade
+---
 
-- O frontend passa a exigir token: sem T7 a interface para de funcionar. Por isso T7 entra no mesmo marco.
-- Chaves de IA já salvas no banco continuam lá, mas mascaradas na UI. Como a chave nunca sai do servidor, o uso continua funcionando.
-- O dashboard vai parecer "vazio" quando a Binance estiver bloqueada (ex.: geo-bloqueio 451 no Cloud Run). É o comportamento correto, mas muda a experiência de demo.
-- A purga apaga dados: só roda depois do backup, e o rollback é restaurar o arquivo.
-- Adicionam-se dependências: `zod`, `helmet`, `express-rate-limit` e `supertest` (dev).
+## 7. Definição de pronto
 
-## 6. Definição de pronto
-
-Checklist S1–S7 e D1–D7 verde, `tsc` sem erros, testes novos e antigos passando, `npm ci` e `npm audit --omit=dev` limpos, documentação atualizada.
-
-## 7. Decisões que preciso que você aprove
-
-1. **Autenticação:** token estático em Bearer (simples, uso individual, minha recomendação) ou login com sessão por cookie httpOnly (mais trabalho, melhor para múltiplos usuários)? R: token estático em Bearer
-2. **Chaves de IA:** só por variável de ambiente, ou também no banco? Recomendo env como padrão e banco criptografado (AES-256-GCM) como opcional. R: Variavel e Banco
-3. **Sinais falsos:** apagar os `HIST-*` (recomendo, com backup) ou apenas marcá-los como `DEMO`? R: Apagar e sem backup.
-4. **Lockfile:** manter só `package-lock.json` e remover `bun.lock` (recomendo), ou o contrário? R:  manter só `package-lock.json` e remover `bun.lock`
-5. **TradFi:** remover até existir provedor real (recomendo) ou manter rotulado como demo? R: montar plano para termos dados reais de stocks verificar documentação binance se temos isso, caso contrario remover por enquanto.
-6. **Deploy alvo:** o `metadata.json` aponta para AI Studio/Cloud Run. Confirma que é esse o ambiente? Isso define o valor padrão de `HOST` e a origem CORS. O ambiente de teste sim, e esse, mas o ambiente real de produção sera ollama com llm local (ja temos isso configuravel pronto no app em Configuração e Parâmetros do Motor de IA)
+Checklist S1–S7 e D1–D7 **verde** — S4.6 (R-1) foi entregue em 2026-09-29 (`tests/outboundDnsEnforcement.test.ts`),
+assim como R-3 (migrações versionadas) e R-2 (`origin`/`server/demo/`); da Fase 1 só R-4 (CSP) segue como
+pendência consciente, reavaliável antes de expor publicamente.
+`tsc` sem erros, suíte **233/233** verde, `npm ci` e `npm audit --omit=dev` limpos, documentação atualizada.

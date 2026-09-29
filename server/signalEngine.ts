@@ -1,5 +1,5 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData, SignalTtlSettings } from '../src/types.js';
-import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, TRADFI_ASSETS, isTradfiMarketOpen } from './binanceService.js';
+import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, getTradfiAsset, isTradfiMarketOpen } from './binanceService.js';
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
@@ -37,9 +37,27 @@ export function processTickerState(
   longShortData?: LongShortRatioData,
   trappedTradersData?: TrappedTradersData,
   realOiChange?: { change24h?: number; change1h?: number },
-  fundingIntervalHours: number = 8
+  fundingIntervalHours: number = 8,
+  availability?: { openInterest?: boolean; funding?: boolean; longShort?: boolean }
 ): TickerData | null {
   if (!rawTicker) return null;
+
+  // Phase 2.5.2: provenance. A factor whose upstream feed was unavailable must never be scored as if
+  // it were a real neutral reading, and must be surfaced to the operator instead.
+  const oiAvailable = availability?.openInterest ?? true;
+  const fundingAvailable = availability?.funding ?? true;
+  const longShortAvailable = availability?.longShort ?? true;
+  const unavailableFactors: string[] = [];
+  if (!oiAvailable) unavailableFactors.push('Open Interest');
+  if (!fundingAvailable) unavailableFactors.push('Funding Rate');
+  if (!longShortAvailable) unavailableFactors.push('Long/Short Ratio');
+
+  // Quote-level freshness/provenance (drives the DataGate). Factor availability is tracked separately:
+  // a funding outage must degrade *scoring*, not block stop-loss protection on an open position.
+  const tickNow = Date.now();
+  const hasOwnUpdatedAt = typeof rawTicker.updatedAt === 'number';
+  const quoteAgeMs = hasOwnUpdatedAt ? Math.max(0, tickNow - rawTicker.updatedAt) : 0;
+  const isStaleQuote = rawTicker.source === 'STALE';
   const symbol = rawTicker.symbol || 'BTCUSDT';
   const parsedPrice = parseFloat(rawTicker.lastPrice || rawTicker.price);
   if (isNaN(parsedPrice) || parsedPrice <= 0) {
@@ -144,8 +162,8 @@ export function processTickerState(
     }
   }
 
-  // 2. Open Interest + Price Relationship
-  if (openInterestChange1h > 1.5) {
+  // 2. Open Interest + Price Relationship (skipped entirely when the OI feed is unavailable)
+  if (oiAvailable && openInterestChange1h > 1.5) {
     if (priceChangePercent24h > 0) {
       bullishPoints += weights.openInterestWeight;
       confluenceFactors.push('Open Interest Accumulation (+OI & Price Up)');
@@ -186,12 +204,17 @@ export function processTickerState(
   const cyclesPerDay = 24 / (fundingIntervalHours || 8);
   const fundingRateDaily = fundingRate * cyclesPerDay;
   const annualFunding = fundingRateDaily * 365 * 100;
-  let fundingStatus: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE' = 'NEUTRAL';
+  let fundingStatus: 'EXTREME_POSITIVE' | 'POSITIVE' | 'NEUTRAL' | 'NEGATIVE' | 'EXTREME_NEGATIVE' | 'UNAVAILABLE' = 'NEUTRAL';
   let fundingPressure: any = 'NEUTRO / EQUILIBRADO';
   let fundingBias: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
   let fundingDesc = `Funding rate em equilíbrio normal (${(fundingRateDaily * 100).toFixed(3)}%/dia · ciclo de ${fundingIntervalHours}h). Sem pressões alavancadas em extremos.`;
 
-  if (fundingRate > 0.0004) {
+  if (!fundingAvailable) {
+    fundingStatus = 'UNAVAILABLE';
+    fundingPressure = 'INDISPONÍVEL (feed de funding falhou)';
+    fundingBias = 'NEUTRAL';
+    fundingDesc = 'Taxa de funding indisponível neste ciclo. O fator foi ignorado na pontuação de confluência (não tratado como neutro).';
+  } else if (fundingRate > 0.0004) {
     fundingStatus = 'EXTREME_POSITIVE';
     fundingPressure = 'PRESSÃO COMPRADORA EXTREMA (RISCO LONG FLUSH)';
     fundingBias = 'SELL';
@@ -276,7 +299,11 @@ export function processTickerState(
   );
 
   const trappedWeight = weights.trappedTradersWeight || 25;
-  if (trappedTraders.status === 'TRAPPED_LONGS') {
+  // Phase 2.5.2: when the long/short feed is unavailable the TTI is built on a neutral placeholder,
+  // so it must not award confluence points.
+  if (!longShortAvailable) {
+    unavailableFactors.push('Trapped Traders (fundamentado em Long/Short indisponível)');
+  } else if (trappedTraders.status === 'TRAPPED_LONGS') {
     const intensity = (trappedTraders.trappedIndex / 100);
     bearishPoints += trappedWeight * intensity * 1.5;
     confluenceFactors.push(
@@ -356,7 +383,8 @@ export function processTickerState(
   }
 
   // Phase 2.4: Check TradFi market schedule - No signals during market closed hours
-  const tradfiAsset = TRADFI_ASSETS.find(a => a.symbol === symbol);
+  // Phase 2.5.5: TradFi classification comes from the exchangeInfo-discovered registry.
+  const tradfiAsset = getTradfiAsset(symbol);
   const isMarketOpen = tradfiAsset ? isTradfiMarketOpen(tradfiAsset.tradfiCategory) : true;
 
   if (tradfiAsset && !isMarketOpen) {
@@ -412,12 +440,13 @@ export function processTickerState(
     signalReason,
     confluenceFactors,
     dataQuality: {
-      isLive: (rawTicker.updatedAt ? (Date.now() - rawTicker.updatedAt < 60000) : true) && (!klines || klines.length >= 5),
-      isDegraded: (rawTicker.updatedAt ? (Date.now() - rawTicker.updatedAt > 60000) : false) || (!klines || klines.length < 5),
-      lastPriceAgeMs: rawTicker.updatedAt ? Math.max(0, Date.now() - rawTicker.updatedAt) : 0,
-      source: rawTicker.source || (rawTicker.updatedAt && (Date.now() - rawTicker.updatedAt < 15000) ? 'WS' : 'REST')
+      isLive: !isStaleQuote && quoteAgeMs < 60000 && klines.length >= 5,
+      isDegraded: isStaleQuote || quoteAgeMs > 60000 || !klines || klines.length < 5,
+      lastPriceAgeMs: quoteAgeMs,
+      source: isStaleQuote ? 'STALE' : (rawTicker.source || (quoteAgeMs < 15000 ? 'WS' : 'REST')),
+      unavailableFactors: unavailableFactors.length > 0 ? unavailableFactors : undefined
     },
-    updatedAt: typeof rawTicker.updatedAt === 'number' ? rawTicker.updatedAt : Date.now()
+    updatedAt: hasOwnUpdatedAt ? rawTicker.updatedAt : tickNow
   };
 }
 
@@ -431,7 +460,9 @@ export function buildTradeSignal(
   minRiskRewardRatio: number = 2.5,
   strategyCategory: StrategyCategory = 'INTRADAY',
   customTimeframe?: string,
-  ttlSettings?: SignalTtlSettings
+  ttlSettings?: SignalTtlSettings,
+  /** R-7: carries maxStopLossAtrMultiple (and future risk knobs) from operator settings. */
+  weights?: IndicatorWeights
 ): TradeSignal | null {
   if (ticker.signalType === 'NEUTRAL' || ticker.confluenceScore < 50) {
     return null;
@@ -504,7 +535,33 @@ export function buildTradeSignal(
   let stopLoss = isLong
     ? Math.min(recentLowestLow * 0.9985, ticker.keyLevels.support1, price - slDist)
     : Math.max(recentHighestHigh * 1.0015, ticker.keyLevels.resistance1, price + slDist);
-  
+
+  // R-7: cap the stop distance to maxStopLossAtrMultiple × ATR% of the recent
+  // window. After an extreme-volatility candle the swing/suporte anchor could
+  // sit arbitrarily far away, silently inflating risk per trade. The cap keeps
+  // the stop structural (it still sits beyond the price) but bounded, and the
+  // R:R is recomputed AFTER the cap below.
+  const capMultiple = weights?.maxStopLossAtrMultiple ?? 2.5;
+  if (klines && klines.length >= 5 && capMultiple > 0) {
+    const lookbackAtr = klines.slice(-15);
+    const trueRanges = lookbackAtr.map((k, idx) => {
+      const prevClose = idx > 0 ? lookbackAtr[idx - 1].close : k.open;
+      return Math.max(
+        k.high - k.low,
+        Math.abs(k.high - prevClose),
+        Math.abs(k.low - prevClose)
+      );
+    });
+    const atr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
+    const maxStopDistance = atr * capMultiple;
+
+    if (isLong && price - stopLoss > maxStopDistance) {
+      stopLoss = price - maxStopDistance;
+    } else if (!isLong && stopLoss - price > maxStopDistance) {
+      stopLoss = price + maxStopDistance;
+    }
+  }
+
   // Natural targets based on market structure
   let target1 = isLong ? ticker.keyLevels.resistance1 : ticker.keyLevels.support1;
   let target2 = isLong ? ticker.keyLevels.resistance2 : ticker.keyLevels.support2;
@@ -606,11 +663,15 @@ export function buildTradeSignal(
       validationStage = 'EM OBSERVAÇÃO: Aguardando fechamento do candle de 1m';
     }
   } else {
-    // Fallback when initial klines are loading
-    candle1mConfirmed = true;
-    candle5mConfirmed = true;
-    validationStatus = 'CONFIRMED';
-    validationStage = 'VALIDADO: Confluência Direct-Market';
+    // Phase 3.1: insufficient 1m/5m data means the setup is UNVALIDATED, not confirmed.
+    // This branch previously set both flags to true and marked the signal CONFIRMED
+    // ("Confluência Direct-Market"), which bypassed the entire multi-timeframe filter whenever the kline
+    // feed was still warming up. A caller that skips the DataGate would have emitted an unvalidated entry
+    // as a fully confirmed one.
+    candle1mConfirmed = false;
+    candle5mConfirmed = false;
+    validationStatus = 'PENDING_VALIDATION';
+    validationStage = 'EM OBSERVAÇÃO: candles insuficientes para validar 1m/5m (sinal NÃO confirmado)';
   }
 
   const now = Date.now();
@@ -651,6 +712,10 @@ export function buildTradeSignal(
     ttlMinutes: effectiveTtl,
     expiresAt,
     isBreakevenActive: false,
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    // R-2: a proveniência do sinal é herdada do ticker. Só é DEMO quando o próprio dado é
+    // sintético (o que exige ALLOW_SYNTHETIC_DATA='true' para chegar aqui — o DataGate bloqueia
+    // o contrário), nunca por causa do ambiente.
+    origin: ticker.dataQuality?.source === 'SYNTHETIC' ? 'DEMO' : 'LIVE'
   };
 }

@@ -1,50 +1,106 @@
-# Revisão da Fase 1 e planejamento da próxima fase
+# Fase 1.1 — Hotfix de segurança e integridade
 
-**Veredito:** a Fase 1 está **cerca de metade implementada**. Segurança de segredos, validação e confirmação de ações destrutivas estão bem feitas. Mas **a autenticação tem um bypass e o "DataGate" na prática nunca bloqueia nada**, então não dá para considerar a fase aprovada.
+> **Reescrita em formato SDD.** A versão anterior deste arquivo era uma cópia de mensagem de revisão, sem
+> critérios de aceitação próprios — o que tornava "pronto" subjetivo. Cada requisito abaixo tem uma
+> verificação executável e um status medido contra o código em `main`.
+>
+> **Última verificação:** 2026-09-29 · `npm ci` OK · `tsc --noEmit` 0 erros · `vitest run` 154/154 ·
+> `vite build` + `esbuild` OK · `npm audit --omit=dev` 0 vulnerabilidades.
 
-Verifiquei o commit `e57445e`: `tsc` limpo e 74 testes passando. Mas `npm ci` falha e `npm audit` ainda mostra 4 vulnerabilidades (1 alta).
+## 1. Objetivo
 
-## Scorecard contra a spec
+Fechar os furos que faziam a Fase 1 *parecer* implementada sem proteger: bypass de autenticação, DataGate
+que nunca disparava, feeds que fabricavam dado e build irreprodutível.
 
-**Segurança**
+## 2. Requisitos
 
-- **S1 Auth: ❌.** Existe token, comparação em tempo constante e trava de produção. Mas sem `API_AUTH_TOKEN` e com `NODE_ENV` diferente de `production` (inclusive não definido), **qualquer requisição passa sem token**. O token de dev está hardcoded (`superbot-dev-token-2026`), e o endpoint **público** `/api/auth/status` **devolve esse token**. O `apiClient` adota o token automaticamente.
-- **S2 Rede: ⚠️.** Há helmet, limite de corpo e rate-limit. Faltam **CORS** (não existe no código), `HOST` padrão é `0.0.0.0` (a spec pedia `127.0.0.1`) e a CSP está desligada. `/api/auth/verify` só tem o limite global de 300/min, sem proteção contra força bruta.
-- **S3 Segredos: ✅.** Redação e merge de chave mascarada bem feitos; o export sanitiza.
-- **S4 SSRF: ⚠️.** O `test-connection` valida, mas o **caminho real de inferência (`aiMotor.ts`) não chama `validateOutboundAIUrl`**: o Ollama aceita qualquer `baseUrl` vinda da config salva. Também não há resolução de DNS (rebinding), a decisão de "host customizado" usa `includes()` na string, e os padrões IPv6 são incompletos.
-- **S5 Validação: ⚠️.** Os schemas zod existem e têm teste, mas não confirmei que todas as rotas os usam.
-- **S6 Ações destrutivas: ✅.** Confirmação literal e `audit_logs`. O ator é fixo `'ADMIN'`.
-- **S7 Dependências: ❌.** O lock não tem os `@types/*` (o `npm ci` falha), e o audit segue com 1 alta (`nanoid`) e 3 moderadas. O `bun.lock` foi removido corretamente.
+### S1 — Autenticação fail-closed
 
-**Integridade de dados**
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S1.1 | Toda rota `/api/*`, exceto `health` e `auth/status|verify`, retorna `401` sem token válido | `tests/appHttp.test.ts` → "rejects a protected endpoint without a token" | ✅ |
+| S1.2 | Em `NODE_ENV=production` sem `API_AUTH_TOKEN` o processo não inicia | `server.ts` → asserção no topo de `startServer()` + `process.exit(1)` | ✅ |
+| S1.3 | Sem `API_AUTH_TOKEN`, um token aleatório é gerado no boot e impresso uma única vez | `getEffectiveAuthToken()` em `server/middleware/auth.ts` | ✅ |
+| S1.4 | Comparação de token em tempo constante | `validateTokenConstantTime` (compara os buffers iguais antes do `timingSafeEqual` quando o tamanho difere) | ✅ |
+| S1.5 | `/api/auth/status` não devolve o token efetivo | `tests/appHttp.test.ts` → "never returns the effective token" | ✅ |
 
-- **D1 Seed falso: ✅.** A função de seed sumiu e um `DELETE ... 'HIST-%'` roda na inicialização, como você decidiu.
-- **D2 Proveniência: ❌.** `dataQuality` é **fixo** em `{ isLive: true, isDegraded: false, source: 'WS' }` dentro do `processTickerState`. `binanceService.ts` não foi alterado.
-- **D3 Gate: ❌ na prática.** `updatedAt` é `Date.now()` no momento do processamento, então a idade é sempre ~0, e `isDegraded` é sempre `false`. O gate **nunca dispara**. Os klines sintéticos (`generateFallbackKlines`) continuam alimentando sinais e a avaliação de stops. O tick também reconstrói `raw` a partir do cache e o trata como dado fresco.
-- **D4 Flag sintética: ❌.** `ALLOW_SYNTHETIC_DATA` aparece só no `.env.example` e na doc, não é lido em nenhum ponto do código. Não há coluna `origin`.
-- **D5 Benchmark: ⚠️.** Saiu do `signalEngine`, mas segue no fallback de klines.
-- **D6 TradFi: ⚠️.** A simulação senoidal saiu, mas `TRADFI_ASSETS` continua no código e o README ainda cita PETR4/VALE3/EUR-USD.
-- **D7 Backtest: ❌.** Não foi tocado; `BacktestEngine.ts:86` ainda semeia klines sintéticos.
+### S2 — Rede
 
-**Testes:** os novos são unitários. O `supertest` foi instalado, mas nenhum teste faz requisição HTTP, então o bypass do S1 passou despercebido. Os testes do DataGate montam tickers à mão e não cobrem o fluxo real.
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S2.1 | `HOST` documentado e configurável (padrão `0.0.0.0` para container) | `.env.example` com a justificativa e a alternativa `127.0.0.1` | ✅ |
+| S2.2 | CORS por allowlist exata em produção | `tests/appHttp.test.ts` → rejeita `*.run.app` de terceiros; aceita origem allowlistada | ✅ |
+| S2.3 | Limite de corpo de 100 kb | `tests/appHttp.test.ts` → "rejects a payload larger than 100kb" (413) | ✅ |
+| S2.4 | Limiter estrito em `/api/auth/verify` (anti-força-bruta) e em rotas destrutivas | `createApp()` → `authBruteForceLimiter` 15/min, `strictSensitiveLimiter` 45/min | ✅ |
+| S2.5 | `trust proxy` configurado para o rate-limit atrás de reverse proxy | `app.set('trust proxy', 1)` | ✅ |
+| S2.6 | `x-powered-by` não anunciado | `app.disable('x-powered-by')` + teste | ✅ |
 
-## Problemas novos trazidos pela Fase 1
+### S3 — Segredos
 
-- **Falsa sensação de segurança:** o gate e a auth parecem ativos, mas não protegem, o que é pior que não ter.
-- Atrás de proxy (Cloud Run), o rate-limit precisa de `trust proxy`; não conferi se está configurado. Verificar.
-- `audit_logs` sem retenção e no mesmo banco que pode ser limpo.
-- O purge roda a cada inicialização, sem migração versionada.
-- Chaves de IA no banco seguem em texto puro (decisão sua; a criptografia opcional fica pendente).
-- Continuam de fora, por escopo: o guard que engole exceções e o código sintético dentro do backtest.
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S3.1 | Nenhuma resposta da API contém chave de API; o GET devolve `hasApiKey` + últimos 4 caracteres | `secretsRedaction.ts` + `redactAIModelConfig` no GET de `marketRoutes` | ✅ |
+| S3.2 | POST de `ai-models` com valor mascarado preserva a chave existente | `mergePreservedSecrets` | ✅ |
+| S3.3 | `database-export` omite chaves | `exportDatabaseJson()` (strips `apiKey`) + teste S1.5-like | ✅ |
 
-## Fase 1.1 (hotfix, antes da Fase 2)
+### S4 — SSRF
 
-Cada item começa por um teste que falha:
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S4.1 | As chamadas de IA só alcançam hosts da allowlist | `validateOutboundAIUrl` chamado nos 4 caminhos de `aiMotor` e ao salvar modelos | ✅ |
+| S4.2 | IPs privados, loopback, CGNAT, link-local e IPv6 mapeado bloqueados | `FORBIDDEN_IP_PATTERNS` em `outboundPolicy.ts` | ✅ |
+| S4.3 | Hostname comparado exatamente (não `includes()`) | `validateOutboundAIUrl` | ✅ |
+| S4.4 | Resolução de DNS (rebinding) antes de conectar | `validateOutboundAIUrlWithDns` existe | ⚠️ **não usada** — ver R-1 em `phase-4-remaining-gaps.md` |
+| S4.5 | HTTPS obrigatório para host externo | `validateOutboundAIUrl` | ✅ |
 
-1. **Auth fail-closed:** remover o bypass e o token hardcoded, remover `defaultDevToken` do `/auth/status` e do `apiClient`. Sem `API_AUTH_TOKEN`, gerar um token aleatório no boot e imprimi-lo uma vez no console, ou recusar iniciar. `HOST=127.0.0.1` por padrão.
-2. **CORS** por allowlist, limiter estrito em `/auth/verify` e `table-clear`, e conferir `trust proxy`.
-3. **Qualidade de dados real:** `FeedResult` com fonte e horário por feed. `updatedAt` passa a ser o timestamp do último dado real da exchange. Eliminar o fallback sintético (ou ler de fato `ALLOW_SYNTHETIC_DATA`) e parar de reaproveitar cache como fresco.
-4. **SSRF completo:** aplicar a política no `aiMotor` e ao salvar modelos, resolver DNS, comparar hostname exato, cobrir IPv6.
-5. **Lockfile e CI:** commitar o lock regenerado, `npm audit fix` e um workflow que rode `npm ci`, `tsc`, testes e audit.
-6. **Testes HTTP** com `supertest`: 401 sem token, sem token vazado, export sem chaves, CORS, gate com feed degradado.
-7. Backtest recusa dado sintético; README corrigido.
+### S5 — Validação de entrada
+
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S5.1 | Schema zod em `:symbol`, weights, ai-models, screener settings | `server/middleware/validation.ts` + uso nas rotas | ✅ |
+| S5.2 | Entrada inválida retorna `400` | `validateBody` / `validateParams` | ✅ |
+
+### S6 — Ações destrutivas
+
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S6.1 | `factory-reset` e `table-clear` exigem confirmação literal | `resetConfirmationSchema` (`confirm: literal('RESET')`), `tableClearConfirmationSchema` | ✅ |
+| S6.2 | Toda ação destrutiva grava auditoria | `recordAuditLog` nas 6 rotas | ✅ |
+| S6.3 | O ator registrado identifica quem agiu | `getAuditActor(req)` → `token:<sha256[:8]>@<ip>` | ✅ (era `'ADMIN'` fixo) |
+
+### S7 — Build e dependências
+
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| S7.1 | `npm ci` funciona a partir do lock commitado | executado; exit 0 | ✅ |
+| S7.2 | `npm audit --omit=dev` sem severidade alta/moderada | 0 vulnerabilidades | ✅ |
+| S7.3 | Somente `package-lock.json` versionado; `bun.lock` removido | `git ls-files` → apenas `package-lock.json` | ✅ |
+| S7.4 | `engines.node` declarado | `package.json` → `>=20.0.0`, testado na CI em 20.x e 22.x | ✅ |
+| S7.5 | CI roda `npm ci`, `tsc`, testes, build e audit | `.github/workflows/ci.yml` | ✅ |
+
+### D1–D7 — Integridade de dados (escopo do hotfix)
+
+| ID | Requisito | Verificação | Status |
+|----|-----------|-------------|--------|
+| D1 | Nenhum sinal fabricado; `HIST-*` removidos no boot (sem backup, conforme decisão 3) | `db.ts` purge no boot | ✅ |
+| D2 | Todo ticker carrega `dataQuality` com `source`, `lastPriceAgeMs` e `unavailableFactors` por feed | `signalEngine.ts` → bloco `dataQuality`; `tests/phase2-5-hotfix.test.ts` | ✅ |
+| D3 | Cache nunca tratado como dado fresco | `resolveRawTicker` propaga `updatedAt` + `source:'STALE'` | ✅ |
+| D4 | Geradores sintéticos só com `ALLOW_SYNTHETIC_DATA=true` | klines, `DataGate`, backtest, LSR, liquidações, screener | ✅ |
+| D5 | Preço de `benchmarkPrices` não usado como preço de mercado em produção | klines sintéticas só atrás da flag | ✅ |
+| D6 | TradFi simulado removido do universo monitorado | `TRADFI_ASSETS` agora é registro descoberto via `exchangeInfo` | ✅ |
+| D7 | Backtest recusa dado sintético sem a flag | `BacktestEngine.runBacktest` lança erro explícito | ✅ |
+
+## 3. Critério de pronto
+
+`tsc` limpo, suíte verde, `npm ci` e `npm audit --omit=dev` limpos, todos os requisitos acima com
+verificação executável. **Pendência conhecida e aceita:** S4.4 (validação por DNS) — rastreada em
+`phase-4-remaining-gaps.md`.
+
+## 4. Decisões aprovadas
+
+1. Autenticação: **token estático Bearer**. ✅ implementado
+2. Chaves de IA: **variável de ambiente e banco**. ✅ implementado
+3. Sinais `HIST-*`: **apagar, sem backup**. ✅ implementado
+4. Lockfile: **manter só `package-lock.json`**, remover `bun.lock`. ✅ implementado
+5. TradFi: **usar dado real da Binance; remover se não houver**. ✅ implementado (descoberta por `exchangeInfo`)
+6. Deploy: teste em AI Studio/Cloud Run; **produção real = Ollama com LLM local**. ✅ configurável no Motor de IA

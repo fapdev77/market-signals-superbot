@@ -30,6 +30,7 @@ import { DashboardGridLayout } from './components/DashboardGridLayout';
 import { LiquidityDepth } from './components/LiquidityDepth';
 import { RiskExposureDashboard } from './components/RiskExposureDashboard';
 import { SystemHealthWidget } from './components/SystemHealthWidget';
+import { KillSwitchPanel } from './components/KillSwitchPanel';
 import { TrappedTradersRadar } from './components/TrappedTradersRadar';
 import { RSIDivergenceMonitor } from './components/RSIDivergenceMonitor';
 import { SystemDatabaseSettings } from './components/SystemDatabaseSettings';
@@ -470,6 +471,9 @@ export default function App() {
                   activeModels={botState.aiModels}
                 />
               ),
+              kill_switch: (
+                <KillSwitchPanel />
+              ),
               prime_banner: topGoldenPocketTicker ? (
                 <PrimeOpportunityBanner
                   ticker={topGoldenPocketTicker}
@@ -644,11 +648,15 @@ export default function App() {
         )}
 
         {activeTab === 'risk' && (
-          <RiskExposureDashboard
-            tickers={tickers}
-            signals={signals}
-            onSelectTickerBySymbol={handleSelectTickerBySymbol}
-          />
+          <div className="space-y-4">
+            {/* R-17: halt global + postura agregada, visíveis no topo da aba de risco */}
+            <KillSwitchPanel />
+            <RiskExposureDashboard
+              tickers={tickers}
+              signals={signals}
+              onSelectTickerBySymbol={handleSelectTickerBySymbol}
+            />
+          </div>
         )}
 
         {activeTab === 'ai_motor' && (

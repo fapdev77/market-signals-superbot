@@ -1,9 +1,7 @@
-import { db } from '../backtest_db';
-import { historicalKlines, backtestResults } from '../backtest_db/schema';
-import { eq, and, gte, lte, desc } from 'drizzle-orm';
+import { historicalKlinesDao, backtestResultsDao, type HistoricalKlineRow } from '../backtest_db/index.js';
 import crypto from 'crypto';
 import { HistoricalDataService } from './HistoricalDataService';
-import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint, KlineCandle, StrategyCategory } from '../../src/types.js';
+import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint, KlineCandle, StrategyCategory, WalkForwardOptions } from '../../src/types.js';
 import { PROFILE_PRESETS } from '../../src/constants.js';
 import { processTickerState, buildTradeSignal } from '../signalEngine.js';
 
@@ -19,6 +17,319 @@ function createPRNG(seed: number = 42) {
   };
 }
 
+// ============================================================================
+// R-9 — Position resolution shared contract (backtest fidelity to live)
+// ============================================================================
+
+/** Backtest position state carried between candles. */
+export interface BacktestPositionState {
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  entryTime: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  /** True on the candle that opened the position — that candle never resolves it. */
+  openedThisCandle: boolean;
+}
+
+/** Mutable flags that evolve while the position is open. */
+export interface BacktestPositionFlags {
+  partialTaken: boolean;
+  isBreakevenActive: boolean;
+  /** Current stop (moves to entry on breakeven). Optional → use pos.stopLoss. */
+  stopLoss?: number;
+}
+
+export interface BacktestExitLeg {
+  leg: 'FULL' | 'PARTIAL' | 'RUNNER';
+  price: number;
+  size: number; // fraction of the original position (0..1)
+}
+
+export interface BacktestResolution {
+  /** Fill price of the LAST leg of this candle (kept for legacy fields). */
+  exitPrice: number;
+  exitLegs: BacktestExitLeg[];
+  isWin: boolean;
+  /** Gross PnL in % of the position notional, BEFORE fees/funding. */
+  grossPnlPct: number;
+  nextState: BacktestPositionFlags & { stopLoss: number };
+}
+
+function stopFirst(candleLow: number, candleHigh: number, stop: number, t1: number, t2: number, isLong: boolean): boolean {
+  if (isLong) return candleLow <= stop && (candleHigh >= t1 || candleHigh >= t2);
+  return candleHigh >= stop && (candleLow <= t1 || candleLow <= t2);
+}
+
+/**
+ * Resolves ONE candle against an open backtest position, mirroring the live
+ * TickProcessor rules: stop-first, TP1 = 50% partial + breakeven, runner until
+ * TP2 or the (now breakeven) stop. Pure function → fully unit-testable.
+ */
+export function resolveBacktestPosition(
+  candle: { high: number; low: number; close: number; timestamp?: number },
+  pos: BacktestPositionState,
+  flags: BacktestPositionFlags,
+  slipPct: number
+): BacktestResolution | null {
+  // Rule 2.3/3.1: the candle that opened the position cannot resolve it
+  // (intra-candle sequence unknown).
+  if (pos.openedThisCandle) return null;
+
+  const isLong = pos.direction === 'LONG';
+  const stop = flags.stopLoss ?? pos.stopLoss;
+  const partialTaken = flags.partialTaken;
+
+  // ---- STOP-FIRST GATE -------------------------------------------------
+  // If this candle touches both the stop and any target, the stop wins
+  // (conservative assumption — same rule as the live engine).
+  const touchesT = isLong
+    ? candle.high >= (partialTaken ? pos.target2 : pos.target1) || candle.high >= pos.target2
+    : candle.low <= (partialTaken ? pos.target2 : pos.target1) || candle.low <= pos.target2;
+  if (stopFirst(candle.low, candle.high, stop, pos.target1, pos.target2, isLong) && touchesT) {
+    const stopFill = isLong ? stop * (1 - slipPct / 100) : stop * (1 + slipPct / 100);
+    const leg: BacktestExitLeg = {
+      leg: partialTaken ? 'RUNNER' : 'FULL',
+      price: stopFill,
+      size: partialTaken ? 0.5 : 1
+    };
+    const grossPnlPct = leg.size * ((isLong ? stopFill - pos.entryPrice : pos.entryPrice - stopFill) / pos.entryPrice) * 100;
+    return {
+      exitPrice: stopFill,
+      exitLegs: [leg],
+      isWin: partialTaken && grossPnlPct >= 0 ? true : false,
+      grossPnlPct,
+      nextState: { partialTaken, isBreakevenActive: flags.isBreakevenActive, stopLoss: stop }
+    };
+  }
+
+  // ---- STOP HIT (no target conflict) ------------------------------------
+  const stopHit = isLong ? candle.low <= stop : candle.high >= stop;
+  if (stopHit) {
+    const stopFill = isLong ? stop * (1 - slipPct / 100) : stop * (1 + slipPct / 100);
+    const leg: BacktestExitLeg = {
+      leg: partialTaken ? 'RUNNER' : 'FULL',
+      price: stopFill,
+      size: partialTaken ? 0.5 : 1
+    };
+    const grossPnlPct = leg.size * ((isLong ? stopFill - pos.entryPrice : pos.entryPrice - stopFill) / pos.entryPrice) * 100;
+    return {
+      exitPrice: stopFill,
+      exitLegs: [leg],
+      isWin: partialTaken && grossPnlPct >= 0 ? true : false,
+      grossPnlPct,
+      nextState: { partialTaken, isBreakevenActive: flags.isBreakevenActive, stopLoss: stop }
+    };
+  }
+
+  const legs: BacktestExitLeg[] = [];
+  let grossPnlPct = 0;
+  let newState = { partialTaken, isBreakevenActive: flags.isBreakevenActive, stopLoss: stop };
+
+  // ---- TP1: 50% partial + breakeven (only once) --------------------------
+  const touchesT1 = isLong ? candle.high >= pos.target1 : candle.low <= pos.target1;
+  if (!partialTaken && touchesT1) {
+    const t1Fill = isLong ? pos.target1 * (1 - slipPct / 100) : pos.target1 * (1 + slipPct / 100);
+    legs.push({ leg: 'PARTIAL', price: t1Fill, size: 0.5 });
+    grossPnlPct += 0.5 * ((isLong ? t1Fill - pos.entryPrice : pos.entryPrice - t1Fill) / pos.entryPrice) * 100;
+    newState = { partialTaken: true, isBreakevenActive: true, stopLoss: pos.entryPrice };
+  }
+
+  // ---- TP2: runner closes the position ----------------------------------
+  const touchesT2 = isLong ? candle.high >= pos.target2 : candle.low <= pos.target2;
+  if (touchesT2) {
+    const t2Fill = isLong ? pos.target2 * (1 - slipPct / 100) : pos.target2 * (1 + slipPct / 100);
+    legs.push({ leg: 'RUNNER', price: t2Fill, size: newState.partialTaken ? 0.5 : 1 });
+    grossPnlPct += (newState.partialTaken ? 0.5 : 1)
+      * ((isLong ? t2Fill - pos.entryPrice : pos.entryPrice - t2Fill) / pos.entryPrice) * 100;
+    const exitPrice = t2Fill;
+    return {
+      exitPrice,
+      exitLegs: legs,
+      isWin: grossPnlPct > 0,
+      grossPnlPct,
+      nextState: newState
+    };
+  }
+
+  // ---- TP1 only: partial leg books, runner stays open -------------------
+  if (legs.length > 0) {
+    return {
+      exitPrice: legs[legs.length - 1].price,
+      exitLegs: legs,
+      isWin: grossPnlPct > 0,
+      grossPnlPct,
+      nextState: newState
+    };
+  }
+
+  return null;
+}
+
+// ============================================================================
+// R-10 — Rolling walk-forward (time-based windows, tuning restricted to IS)
+// ============================================================================
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A train→test window pair. `is*` is the training slice, `oos*` the validation slice. */
+export interface WalkForwardWindow {
+  index: number;
+  isStart: number;
+  isEnd: number;
+  oosStart: number;
+  oosEnd: number;
+}
+
+/** Minimal trade shape needed to aggregate the walk-forward metrics. */
+export interface WalkForwardTradeLike {
+  entryTime: number;
+  pnlPct: number;
+  pnlValue: number;
+  isWin: boolean;
+}
+
+export interface WalkForwardAggregate {
+  inSampleWins: number;
+  inSampleLosses: number;
+  inSampleProfit: number;
+  outOfSampleWins: number;
+  outOfSampleLosses: number;
+  outOfSampleProfit: number;
+  outOfSampleTrades: number;
+  windowResults: Array<{
+    index: number;
+    isStart: number;
+    oosStart: number;
+    oosEnd: number;
+    isTrades: number;
+    oosTrades: number;
+    oosWinRate: number;
+    oosProfitPct: number;
+  }>;
+}
+
+/** Derives train/test/step (in days) when the caller does not pin them. */
+export function resolveWalkForwardOptions(
+  days: number,
+  options?: WalkForwardOptions
+): { trainDays: number; testDays: number; stepDays: number } {
+  const safeDays = Math.max(2, Math.round(days) || 2);
+  const testDays = Math.max(1, Math.round(options?.testDays ?? safeDays * 0.2));
+  const trainDays = Math.max(1, Math.round(options?.trainDays ?? safeDays * 0.5));
+  const stepDays = Math.max(1, Math.round(options?.stepDays ?? testDays));
+  return { trainDays, testDays, stepDays };
+}
+
+/**
+ * Builds rolling windows from TIME alone. Because the boundaries never depend on
+ * the number of candles loaded, poisoning the out-of-sample tail cannot move the
+ * training slice — the property the leakage test relies on.
+ */
+export function buildWalkForwardWindows(
+  startTime: number,
+  endTime: number,
+  options?: WalkForwardOptions,
+  days?: number
+): WalkForwardWindow[] {
+  const windowDays = days ?? Math.max(1, Math.ceil((endTime - startTime) / DAY_MS));
+  const { trainDays, testDays, stepDays } = resolveWalkForwardOptions(windowDays, options);
+
+  const windows: WalkForwardWindow[] = [];
+  let cursor = startTime;
+  let index = 0;
+
+  // Guard: a pathological config must not spin forever.
+  while (index < 500) {
+    const isStart = cursor;
+    const isEnd = cursor + trainDays * DAY_MS;
+    const oosStart = isEnd;
+    const oosEnd = Math.min(oosStart + testDays * DAY_MS, endTime);
+    if (oosStart >= endTime) break;
+    windows.push({ index, isStart, isEnd, oosStart, oosEnd });
+    index++;
+    if (oosEnd >= endTime) break;
+    cursor += stepDays * DAY_MS;
+  }
+
+  if (windows.length === 0) {
+    // Series shorter than train+test: keep one time-based split so the walk-forward
+    // block still reports an in/out-of-sample reading.
+    const isEnd = startTime + Math.round((endTime - startTime) * 0.7);
+    windows.push({ index: 0, isStart: startTime, isEnd, oosStart: isEnd, oosEnd: endTime });
+  }
+
+  return windows;
+}
+
+/**
+ * In-sample = the initial training window; out-of-sample = everything the model
+ * was never fitted on. `windowResults` exposes the rolling per-window detail.
+ */
+export function aggregateWalkForward(
+  trades: WalkForwardTradeLike[],
+  windows: WalkForwardWindow[]
+): WalkForwardAggregate {
+  const firstIsEnd = windows[0]?.isEnd ?? 0;
+  let inSampleWins = 0;
+  let inSampleLosses = 0;
+  let inSampleProfit = 0;
+  let outOfSampleWins = 0;
+  let outOfSampleLosses = 0;
+  let outOfSampleProfit = 0;
+
+  const windowResults = windows.map(w => ({
+    index: w.index,
+    isStart: w.isStart,
+    oosStart: w.oosStart,
+    oosEnd: w.oosEnd,
+    isTrades: 0,
+    oosTrades: 0,
+    oosWinRate: 0,
+    oosProfitPct: 0
+  }));
+  const windowWins = windows.map(() => 0);
+
+  for (const trade of trades) {
+    if (trade.entryTime < firstIsEnd) {
+      if (trade.isWin) inSampleWins++;
+      else inSampleLosses++;
+      inSampleProfit += trade.pnlValue;
+    } else {
+      if (trade.isWin) outOfSampleWins++;
+      else outOfSampleLosses++;
+      outOfSampleProfit += trade.pnlValue;
+    }
+
+    for (let i = 0; i < windows.length; i++) {
+      const w = windows[i];
+      if (trade.entryTime >= w.isStart && trade.entryTime < w.isEnd) windowResults[i].isTrades++;
+      if (trade.entryTime >= w.oosStart && trade.entryTime <= w.oosEnd) {
+        windowResults[i].oosTrades++;
+        windowResults[i].oosProfitPct += trade.pnlPct;
+        if (trade.isWin) windowWins[i]++;
+      }
+    }
+  }
+
+  windowResults.forEach((wr, i) => {
+    wr.oosWinRate = wr.oosTrades > 0 ? Number(((windowWins[i] / wr.oosTrades) * 100).toFixed(1)) : 0;
+    wr.oosProfitPct = Number(wr.oosProfitPct.toFixed(2));
+  });
+
+  return {
+    inSampleWins,
+    inSampleLosses,
+    inSampleProfit,
+    outOfSampleWins,
+    outOfSampleLosses,
+    outOfSampleProfit,
+    outOfSampleTrades: outOfSampleWins + outOfSampleLosses,
+    windowResults
+  };
+}
+
 export class BacktestEngine {
 
   static async runBacktest(config: BacktestConfig, useCache: boolean = true): Promise<BacktestResult> {
@@ -28,35 +339,27 @@ export class BacktestEngine {
     
     if (useCache) {
       try {
-        const cached = await db.select().from(backtestResults)
-          .where(
-            and(
-               eq(backtestResults.symbol, config.symbol),
-               eq(backtestResults.strategyId, strategyId)
-            )
-          )
-          .orderBy(desc(backtestResults.createdAt))
-          .limit(1);
+        const cached = await backtestResultsDao.getLatest(config.symbol, strategyId);
 
-        if (cached.length > 0) {
-          const parsed = JSON.parse(cached[0].config);
+        if (cached) {
+          const parsed = JSON.parse(cached.config);
           if (parsed && parsed.profile === profile) {
             const cachedTrades = parsed.trades || [];
             if (cachedTrades.length === 0) {
               console.log('No cached trades found. Bypassing cache to calculate full trades data.');
             } else {
               return {
-                 ...cached[0],
+                 ...cached,
                  profile: parsed.profile as TradingProfile || profile,
                  totalCandlesTested: parsed.totalCandlesTested || 5000,
-                 winningTrades: parsed.winningTrades || Math.round(cached[0].totalTrades * (cached[0].winRate / 100)),
-                 losingTrades: parsed.losingTrades || (cached[0].totalTrades - Math.round(cached[0].totalTrades * (cached[0].winRate / 100))),
+                 winningTrades: parsed.winningTrades || Math.round(cached.totalTrades * (cached.winRate / 100)),
+                 losingTrades: parsed.losingTrades || (cached.totalTrades - Math.round(cached.totalTrades * (cached.winRate / 100))),
                  avgWinPct: parsed.avgWinPct || 1.8,
                  avgLossPct: parsed.avgLossPct || 0.9,
                  avgRiskReward: parsed.avgRiskReward || 2.0,
                  avgDurationMinutes: parsed.avgDurationMinutes || 25,
                  equityCurve: parsed.equityCurve || [],
-                 diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached[0], profile } as any),
+                 diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached, profile } as any),
                  config: parsed,
                  trades: cachedTrades,
                  walkForward: parsed.walkForward
@@ -69,46 +372,30 @@ export class BacktestEngine {
       }
     }
 
-    const now = Date.now();
+    // Phase 2.5.4: the analysis window must be stable for a given (symbol, days). Deriving it from the
+    // raw wall clock meant two identical calls straddling a candle boundary selected different candles,
+    // so even the seeded PRNG could return different results on a cache miss. Align to the candle
+    // boundary (or honour an explicit `asOf`) so a run is reproducible.
+    const BACKTEST_CANDLE_MS = 15 * 60 * 1000;
+    const now = config.asOf ? config.asOf : Math.floor(Date.now() / BACKTEST_CANDLE_MS) * BACKTEST_CANDLE_MS;
     const days = config.days || 30;
     const startTime = now - days * 24 * 60 * 60 * 1000;
 
+    const loadKlines = (): Promise<HistoricalKlineRow[]> =>
+      historicalKlinesDao.getBySymbolAndRange(config.symbol, '1m', startTime, now);
+
     // Load klines
-    let klines = await db.select().from(historicalKlines)
-      .where(
-        and(
-          eq(historicalKlines.symbol, config.symbol),
-          gte(historicalKlines.openTime, startTime),
-          lte(historicalKlines.openTime, now)
-        )
-      )
-      .orderBy(historicalKlines.openTime);
+    let klines = await loadKlines();
 
     if (klines.length === 0) {
       await HistoricalDataService.syncSymbol(config.symbol, days);
-      klines = await db.select().from(historicalKlines)
-        .where(
-          and(
-            eq(historicalKlines.symbol, config.symbol),
-            gte(historicalKlines.openTime, startTime),
-            lte(historicalKlines.openTime, now)
-          )
-        )
-        .orderBy(historicalKlines.openTime);
+      klines = await loadKlines();
     }
 
     if (klines.length === 0) {
       if (process.env.ALLOW_SYNTHETIC_DATA === 'true') {
         await HistoricalDataService.seedSyntheticKlines(config.symbol, startTime, now);
-        klines = await db.select().from(historicalKlines)
-          .where(
-            and(
-              eq(historicalKlines.symbol, config.symbol),
-              gte(historicalKlines.openTime, startTime),
-              lte(historicalKlines.openTime, now)
-            )
-          )
-          .orderBy(historicalKlines.openTime);
+        klines = await loadKlines();
       } else {
         throw new Error(
           `Sem dados históricos reais para ${config.symbol}. Execute a sincronização prévia de candles via histórico ou ative ALLOW_SYNTHETIC_DATA=true.`
@@ -151,9 +438,29 @@ export class BacktestEngine {
     // Advanced Institutional Parameters (Phase 2.3)
     const feePct = (config as any).makerTakerFeePct ?? 0.04; // 0.04% taker fee
     const slipPct = (config as any).slippagePct ?? 0.02;     // 0.02% slippage
-    const roundtripFee = (feePct * 2) + slipPct;
+    // Phase 2.5.4: slippage is already applied to the fill prices below. Adding it here as well
+    // charged it twice (once in the price, once in the fee).
+    const roundtripFee = feePct * 2;
     const fundingRatePer8h = 0.0001; // Standard 0.01% baseline funding per 8h
     const fundingIntervalHours = 8;
+
+    // Phase 2.5.4: the historical OHLCV store has no Open Interest, funding-interval or long/short
+    // history. These values used to be invented (OI = volume*close*2.5, changes pinned to +1.2%/+0.4%),
+    // which turned the OI factor into a constant and made the backtest diverge from live behaviour.
+    // They are now disabled and reported to the operator instead.
+    const backtestAvailability = { openInterest: false, funding: false, longShort: false };
+    const disabledFactors = [
+      'Open Interest (sem histórico OI na janela)',
+      'Funding Rate (fator de score)',
+      'Long/Short Ratio (sem histórico)'
+    ];
+    const assumptions = [
+      `Funding cost charged at a flat ${(fundingRatePer8h * 100).toFixed(3)}%/8h baseline (not the observed rate)`,
+      `Taker fee ${feePct}% per side, slippage ${slipPct}% applied to fill prices`
+    ];
+
+    // Phase 2.5.4: entry is deferred to the next candle's open to remove lookahead bias.
+    let pendingEntry: { direction: 'LONG' | 'SHORT'; stopLoss: number; target1: number; target2: number } | null = null;
 
     // Track active position state
     let isBreakevenActive = false;
@@ -172,21 +479,43 @@ export class BacktestEngine {
 
     const strategyCat: StrategyCategory = profile === 'scalp' ? 'SCALP' : profile === 'swing' ? 'SWING' : 'DAY_TRADE';
 
-    // Walk-Forward Split: 70% in-sample, 30% out-of-sample
-    const splitIndex = Math.floor(candleObjects.length * 0.70);
-    const splitTime = candleObjects[splitIndex]?.timestamp || (startTime + (now - startTime) * 0.70);
-
-    let inSampleWins = 0;
-    let inSampleLosses = 0;
-    let inSampleProfit = 0;
-    let outOfSampleWins = 0;
-    let outOfSampleLosses = 0;
-    let outOfSampleProfit = 0;
+    // R-10: rolling walk-forward framing. Boundaries come from TIME (not candle
+    // counts), and `isOnlyUntil` truncates the run at the end of the training
+    // window so parameter selection never reads the validation slice.
+    const seriesStart = candleObjects[0]?.timestamp ?? startTime;
+    const seriesEndRaw = candleObjects[candleObjects.length - 1]?.timestamp ?? now;
+    const seriesEnd =
+      config.isOnlyUntil !== undefined ? Math.min(seriesEndRaw, config.isOnlyUntil) : seriesEndRaw;
+    const walkForwardWindows = buildWalkForwardWindows(seriesStart, seriesEnd, config.walkForward, days);
 
     // Rolling window evaluation (minimum 25 candles required for indicators)
     for (let i = 25; i < candleObjects.length; i += step) {
       const candle = candleObjects[i];
+
+      // R-10: candidate scoring stops at the training boundary — the simulation
+      // never reads an out-of-sample candle while parameters are being fitted.
+      if (config.isOnlyUntil !== undefined && candle.timestamp >= config.isOnlyUntil) break;
+
       const windowSlice = candleObjects.slice(Math.max(0, i - 40), i + 1);
+
+      // Phase 2.5.4: fill a signal raised on the PREVIOUS candle at this candle's open.
+      // R-9: the fill candle registers the position but cannot resolve it.
+      let openedThisCandle = false;
+      if (pendingEntry && !inPosition) {
+        inPosition = true;
+        isBreakevenActive = false;
+        partialTaken = false;
+        openedThisCandle = true;
+        posDirection = pendingEntry.direction;
+        entryPrice = pendingEntry.direction === 'LONG'
+          ? candle.open * (1 + slipPct / 100)
+          : candle.open * (1 - slipPct / 100);
+        entryTime = candle.timestamp;
+        stopLoss = pendingEntry.stopLoss;
+        takeProfit1 = pendingEntry.target1;
+        takeProfit2 = pendingEntry.target2;
+        pendingEntry = null;
+      }
 
       if (!inPosition) {
         // Construct raw ticker state for signalEngine
@@ -202,17 +531,17 @@ export class BacktestEngine {
           source: 'REST'
         };
 
-        const simulatedOI = candle.volume * candle.close * 2.5;
         const tickerState = processTickerState(
           rawTicker,
           windowSlice,
-          simulatedOI,
-          fundingRatePer8h,
+          0, // no historical OI available
+          0, // no historical funding available for scoring
           weights,
           undefined,
           undefined,
-          { change24h: 1.2, change1h: 0.4 },
-          fundingIntervalHours
+          {},
+          fundingIntervalHours,
+          backtestAvailability
         );
 
         if (tickerState && tickerState.signalType !== 'NEUTRAL' && tickerState.confluenceScore >= preset.minConfluence) {
@@ -224,105 +553,55 @@ export class BacktestEngine {
           );
 
           if (signal && signal.validationStatus !== 'REJECTED_SPIKE') {
-            inPosition = true;
-            isBreakevenActive = false;
-            partialTaken = false;
-            posDirection = signal.direction;
-
-            // Factor slippage on entry
-            entryPrice = posDirection === 'LONG'
-              ? candle.open * (1 + slipPct / 100)
-              : candle.open * (1 - slipPct / 100);
-            entryTime = candle.timestamp;
-
-            stopLoss = signal.stopLoss;
-            takeProfit1 = signal.target1;
-            takeProfit2 = signal.target2;
+            // Phase 2.5.4: the signal is derived from THIS candle's close, so the fill belongs to the
+            // NEXT candle's open. Filling at this candle's open was lookahead bias.
+            pendingEntry = {
+              direction: signal.direction,
+              stopLoss: signal.stopLoss,
+              target1: signal.target1,
+              target2: signal.target2
+            };
           }
         }
-      } else {
-        // Phase 2.3: Position Resolution with Stop-First Rule
-        // If both stop and target are touched in the same candle, stop loss triggers first
-        let exitPrice = 0;
-        let isWin = false;
+      } else if (!openedThisCandle) {
+        // R-9: resolution via the pure, unit-tested resolver (stop-first,
+        // TP1 = 50% partial + breakeven, runner until TP2/breakeven-stop).
+        const resolution = resolveBacktestPosition(
+          candle,
+          { direction: posDirection, entryPrice, entryTime, stopLoss, target1: takeProfit1, target2: takeProfit2, openedThisCandle: false },
+          { partialTaken, isBreakevenActive, stopLoss },
+          slipPct
+        );
 
-        if (posDirection === 'LONG') {
-          // 1. Check Stop Loss FIRST
-          if (candle.low <= stopLoss) {
-            exitPrice = stopLoss * (1 - slipPct / 100);
-            isWin = isBreakevenActive;
-          } else {
-            // 2. Check Target 1 and activate Breakeven trailing stop
-            if (candle.high >= takeProfit1 && !partialTaken) {
-              partialTaken = true;
-              isBreakevenActive = true;
-              stopLoss = entryPrice; // Breakeven
-            }
+        if (resolution) {
+          // Apply the returned state
+          stopLoss = resolution.nextState.stopLoss;
+          partialTaken = resolution.nextState.partialTaken;
+          isBreakevenActive = resolution.nextState.isBreakevenActive;
 
-            // 3. Check Target 2 (Full exit)
-            if (candle.high >= takeProfit2) {
-              exitPrice = takeProfit2 * (1 - slipPct / 100);
-              isWin = true;
-            } else if (partialTaken && candle.close >= takeProfit1) {
-              // Partial profit taking
-              exitPrice = takeProfit1;
-              isWin = true;
-            }
-          }
-        } else {
-          // SHORT position
-          // 1. Check Stop Loss FIRST
-          if (candle.high >= stopLoss) {
-            exitPrice = stopLoss * (1 + slipPct / 100);
-            isWin = isBreakevenActive;
-          } else {
-            // 2. Check Target 1 and activate Breakeven
-            if (candle.low <= takeProfit1 && !partialTaken) {
-              partialTaken = true;
-              isBreakevenActive = true;
-              stopLoss = entryPrice; // Breakeven
-            }
+          // Which legs closed on THIS candle?
+          const closedLegs = resolution.exitLegs;
+          const closedSize = closedLegs.reduce((a, l) => a + l.size, 0);
+          const positionFullyClosed = closedSize >= 0.999;
 
-            // 3. Check Target 2
-            if (candle.low <= takeProfit2) {
-              exitPrice = takeProfit2 * (1 + slipPct / 100);
-              isWin = true;
-            } else if (partialTaken && candle.close <= takeProfit1) {
-              exitPrice = takeProfit1;
-              isWin = true;
-            }
-          }
-        }
-
-        if (exitPrice > 0) {
           const durationMin = Math.max(1, Math.round((candle.timestamp - entryTime) / (60 * 1000)));
-          totalDurationSum += durationMin;
 
-          // Deduct funding fees accrued over trade duration
+          // Funding accrues on the whole holding period, charged once on the
+          // closed fraction of this candle (proportional to closed size).
           const holdingHours = durationMin / 60;
           const fundingCycles = holdingHours / fundingIntervalHours;
           const fundingFeePct = fundingCycles * (fundingRatePer8h * 100);
 
-          const grossPnlPct = posDirection === 'LONG'
-            ? ((exitPrice - entryPrice) / entryPrice) * 100
-            : ((entryPrice - exitPrice) / entryPrice) * 100;
-
-          // Net trade PnL = Gross % - Roundtrip fees - Funding cost
-          const tradePnlPct = grossPnlPct - roundtripFee - (posDirection === 'LONG' ? fundingFeePct : -fundingFeePct);
+          // Net trade PnL = Gross % (this candle's legs) - fees on closed size - funding on closed size
+          const feeCostPct = roundtripFee * closedSize;
+          const fundingCostPct = (posDirection === 'LONG' ? fundingFeePct : -fundingFeePct) * closedSize;
+          const tradePnlPct = resolution.grossPnlPct - feeCostPct - fundingCostPct;
           const profit = (tradePnlPct / 100) * balance;
           balance += profit;
 
-          // Track walk-forward in-sample vs out-of-sample
-          if (entryTime < splitTime) {
-            if (tradePnlPct > 0) inSampleWins++;
-            else inSampleLosses++;
-            inSampleProfit += profit;
-          } else {
-            if (tradePnlPct > 0) outOfSampleWins++;
-            else outOfSampleLosses++;
-            outOfSampleProfit += profit;
-          }
-
+          // R-10: the in/out-of-sample split is aggregated from the recorded
+          // trades after the loop (see aggregateWalkForward), so it stays in one
+          // place and follows the rolling windows.
           if (tradePnlPct > 0) {
             wins++;
             totalProfit += Math.max(0, profit);
@@ -351,7 +630,7 @@ export class BacktestEngine {
             symbol: config.symbol,
             direction: posDirection,
             entryPrice: parseFloat(entryPrice.toFixed(4)),
-            exitPrice: parseFloat(exitPrice.toFixed(4)),
+            exitPrice: parseFloat(resolution.exitPrice.toFixed(4)),
             entryTime,
             exitTime: candle.timestamp,
             pnlPct: parseFloat(tradePnlPct.toFixed(2)),
@@ -361,10 +640,18 @@ export class BacktestEngine {
             takeProfit2: parseFloat(takeProfit2.toFixed(4)),
             isWin: tradePnlPct > 0,
             isBreakeven: isBreakevenActive,
+            partialClosed: closedLegs.some(l => l.leg === 'PARTIAL'),
+            closedSize: parseFloat(closedSize.toFixed(2)),
             durationMinutes: durationMin
           });
 
-          inPosition = false;
+          // Only the full close (TP2 or final stop) frees the engine for the
+          // next signal; a partial keeps the position open with the runner.
+          if (positionFullyClosed) {
+            inPosition = false;
+            partialTaken = false;
+            isBreakevenActive = false;
+          }
         }
       }
     }
@@ -393,22 +680,31 @@ export class BacktestEngine {
     const sharpeRatio = stdDev > 0.0001 ? Number(((meanReturn / stdDev) * annualFactor).toFixed(2)) : 0;
     const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * annualFactor).toFixed(2)) : (meanReturn > 0 ? 4.5 : 0);
 
-    // Walk-Forward Metrics
-    const inSampleTotal = inSampleWins + inSampleLosses;
-    const outOfSampleTotal = outOfSampleWins + outOfSampleLosses;
-    const inSampleWinRate = inSampleTotal > 0 ? Number(((inSampleWins / inSampleTotal) * 100).toFixed(1)) : winRate;
-    const outOfSampleWinRate = outOfSampleTotal > 0 ? Number(((outOfSampleWins / outOfSampleTotal) * 100).toFixed(1)) : winRate;
-    const overfitRatio = inSampleProfit > 0 && outOfSampleProfit > 0
-      ? Number((outOfSampleProfit / (inSampleProfit * 0.43)).toFixed(2)) // 30/70 normalized
-      : 0.85;
+    // R-10: rolling walk-forward metrics, aggregated from the closed trades.
+    const wf = aggregateWalkForward(trades, walkForwardWindows);
+    const inSampleTotal = wf.inSampleWins + wf.inSampleLosses;
+    const outOfSampleTotal = wf.outOfSampleWins + wf.outOfSampleLosses;
+    const inSampleWinRate = inSampleTotal > 0 ? Number(((wf.inSampleWins / inSampleTotal) * 100).toFixed(1)) : winRate;
+    const outOfSampleWinRate = outOfSampleTotal > 0 ? Number(((wf.outOfSampleWins / outOfSampleTotal) * 100).toFixed(1)) : winRate;
+    // Phase 2.5.4 (kept): robustness is measured on profit per trade so the period split does not bias
+    // the ratio. An uncomputable ratio stays 0 — defaulting it high made a *losing* out-of-sample run
+    // pass the ≥0.5 threshold whenever the win rate happened to be ≥45%.
+    const inSamplePerTrade = inSampleTotal > 0 ? wf.inSampleProfit / inSampleTotal : 0;
+    const outOfSamplePerTrade = outOfSampleTotal > 0 ? wf.outOfSampleProfit / outOfSampleTotal : 0;
+    const overfitRatio = inSamplePerTrade > 0 && outOfSamplePerTrade > 0
+      ? Number((outOfSamplePerTrade / inSamplePerTrade).toFixed(2))
+      : 0;
 
     const walkForward = {
       inSampleWinRate,
-      inSampleProfit: Number(inSampleProfit.toFixed(2)),
+      inSampleProfit: Number(wf.inSampleProfit.toFixed(2)),
       outOfSampleWinRate,
-      outOfSampleProfit: Number(outOfSampleProfit.toFixed(2)),
+      outOfSampleProfit: Number(wf.outOfSampleProfit.toFixed(2)),
       overfitRatio,
-      isRobust: overfitRatio >= 0.5 && outOfSampleWinRate >= 45
+      isRobust: overfitRatio >= 0.5 && outOfSampleWinRate >= 45,
+      windows: walkForwardWindows.length,
+      outOfSampleTrades: wf.outOfSampleTrades,
+      windowResults: wf.windowResults
     };
 
     const result: BacktestResult = {
@@ -416,6 +712,8 @@ export class BacktestEngine {
       symbol: config.symbol,
       profile,
       strategyId,
+      disabledFactors,
+      assumptions,
       startTime: klines[0].openTime,
       endTime: klines[klines.length - 1].openTime,
       totalCandlesTested: klines.length,
@@ -454,9 +752,9 @@ export class BacktestEngine {
 
     result.diagnostic = this.generateDiagnostic(result);
 
-    // Save result to DB
+    // Save result to DB (unified sql.js database — R-14)
     try {
-      await db.insert(backtestResults).values({
+      await backtestResultsDao.insert({
          id: result.id,
          symbol: result.symbol,
          strategyId: result.strategyId,
@@ -494,15 +792,29 @@ export class BacktestEngine {
     days: number = 30,
     iterations: number = 20,
     currentWeights: IndicatorWeights,
-    seed: number = 42
+    seed: number = 42,
+    asOf?: number,
+    walkForward?: WalkForwardOptions
   ): Promise<AutoTuneResult> {
     const rng = createPRNG(seed);
+
+    // R-10: derive the training boundary from a full-range probe, then score every
+    // candidate with `isOnlyUntil` so parameter selection never sees OOS candles.
+    const probe = await this.runBacktest(
+      { symbol, days, profile, weights: currentWeights, seed, asOf, walkForward },
+      false
+    );
+    const trainedUntil = buildWalkForwardWindows(probe.startTime, probe.endTime, walkForward, days)[0]?.isEnd;
+
     const initialResult = await this.runBacktest({
       symbol,
       days,
       profile,
       weights: currentWeights,
-      seed
+      seed,
+      asOf,
+      walkForward,
+      isOnlyUntil: trainedUntil
     }, false);
 
     let bestWeights = { ...currentWeights };
@@ -528,7 +840,10 @@ export class BacktestEngine {
         days,
         profile,
         weights: candidateWeights,
-        seed: seed + iter * 7
+        seed: seed + iter * 7,
+        asOf,
+        walkForward,
+        isOnlyUntil: trainedUntil
       }, false);
 
       const candidateScore = this.calculateFitnessScore(candidateResult);
@@ -559,7 +874,14 @@ export class BacktestEngine {
     const tuningSummary = `O Auto-Tuning executou ${iterations} iterações de simulação quantitativa no perfil ${PROFILE_PRESETS[profile].name} (${symbol}). ` +
       `Resultado: Win Rate ${bestResult.winRate}% (${Number(wrDiff) >= 0 ? '+' : ''}${wrDiff}%), Profit Factor ${bestResult.profitFactor} (${Number(pfDiff) >= 0 ? '+' : ''}${pfDiff}), ` +
       `Lucro Líquido ${bestResult.netProfit}% (${Number(profitDiff) >= 0 ? '+' : ''}${profitDiff}%) e Max Drawdown de ${bestResult.maxDrawdown}% (${Number(ddDiff) >= 0 ? 'redução de ' : ''}${ddDiff}%). ` +
-      `Os pesos ideais foram otimizados e estão prontos para aplicação instantânea ao bot.`;
+      `R-10: os candidatos foram avaliados apenas na janela de treino (sem vazamento do out-of-sample); ` +
+      `a validação do conjunto escolhido no trecho não visto está em \`oosValidation\`.`;
+
+    // R-10: honest validation of the chosen weights on the unseen remainder.
+    const oosValidation = await this.runBacktest(
+      { symbol, days, profile, weights: bestWeights, seed, asOf, walkForward },
+      false
+    );
 
     return {
       symbol,
@@ -570,7 +892,9 @@ export class BacktestEngine {
       bestResult,
       fitnessHistory,
       tuningSummary,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      oosValidation,
+      trainedUntil
     };
   }
 
@@ -681,7 +1005,21 @@ export class BacktestEngine {
   }
 
   private static generateStrategyId(config: BacktestConfig): string {
-    const str = JSON.stringify({ w: config.weights, p: config.profile });
+    // Phase 2.5.4: the analysis window, seed and cost assumptions all change the result, so they belong
+    // in the cache key. Previously only weights+profile were hashed, so a 3-day run could be served the
+    // cached result of a 30-day run.
+    const str = JSON.stringify({
+      // R-10: bumped to v2 — the walk-forward block gained rolling windows and the
+      // training-slice truncation, so pre-R-10 cached rows must never be replayed.
+      v: 2,
+      w: config.weights,
+      p: config.profile,
+      d: config.days ?? 30,
+      s: config.seed ?? 42,
+      a: config.asOf ?? null,
+      wf: config.walkForward ?? null,
+      io: config.isOnlyUntil ?? null
+    });
     return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
   }
 }

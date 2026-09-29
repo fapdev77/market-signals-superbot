@@ -3,7 +3,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { addAILog } from './aiLogger.js';
 import { getAIPersonaById } from '../src/constants/aiPersonas.js';
 import { safeFetch } from './utils/safeFetch.js';
-import { validateOutboundAIUrl } from './utils/outboundPolicy.js';
+import { validateOutboundAIUrlWithDns } from './utils/outboundPolicy.js';
 
 const getAiClient = (apiKeyOverride?: string) => {
   const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
@@ -147,6 +147,25 @@ export async function generateContentWithModel(
   const logType = options.logType || (options.responseMimeType === 'application/json' ? 'SIGNAL_REVIEW' : 'CHAT_AGENT');
 
   if (provider === 'gemini') {
+    // R-1: the Gemini SDK has no user-configurable baseUrl, but the outbound
+    // host must still pass the DNS (anti-rebinding) check before connecting.
+    const geminiValidation = await validateOutboundAIUrlWithDns(
+      'https://generativelanguage.googleapis.com/v1beta',
+      'gemini'
+    );
+    if (!geminiValidation.isValid) {
+      const errMsg = `URL bloqueada pela política de segurança SSRF (DNS rebinding): ${geminiValidation.error}`;
+      addAILog({
+        level: 'ERROR',
+        type: logType,
+        provider: 'gemini',
+        modelId: modelConfig.modelId,
+        message: errMsg,
+        durationMs: 0
+      });
+      throw new Error(errMsg);
+    }
+
     const ai = getAiClient(modelConfig.apiKey);
     if (!ai) {
       const errMsg = "Chave GEMINI_API_KEY não encontrada no servidor nem nas configurações do modelo.";
@@ -244,7 +263,8 @@ export async function generateContentWithModel(
     const baseUrl = (modelConfig.apiUrl || 'http://localhost:11434').replace(/\/+$/, '');
     const modelId = modelConfig.modelId || 'llama3.2';
 
-    const validation = validateOutboundAIUrl(baseUrl, 'local');
+    // R-1: all AI outbound paths validate DNS (anti-rebinding) before connecting.
+    const validation = await validateOutboundAIUrlWithDns(baseUrl, 'local');
     if (!validation.isValid) {
       const errMsg = `URL bloqueada pela política de segurança SSRF: ${validation.error}`;
       addAILog({
@@ -505,7 +525,8 @@ export async function generateContentWithModel(
     const defaultUrl = provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : 'https://api.openai.com/v1';
     const baseUrl = (modelConfig.apiUrl || defaultUrl).replace(/\/+$/, '');
 
-    const validation = validateOutboundAIUrl(baseUrl, provider);
+    // R-1: all AI outbound paths validate DNS (anti-rebinding) before connecting.
+    const validation = await validateOutboundAIUrlWithDns(baseUrl, provider);
     if (!validation.isValid) {
       const errMsg = `URL bloqueada pela política de segurança SSRF: ${validation.error}`;
       addAILog({
@@ -630,7 +651,8 @@ export async function generateContentWithModel(
   if (provider === 'anthropic') {
     const baseUrl = (modelConfig.apiUrl || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
 
-    const validation = validateOutboundAIUrl(baseUrl, 'anthropic');
+    // R-1: all AI outbound paths validate DNS (anti-rebinding) before connecting.
+    const validation = await validateOutboundAIUrlWithDns(baseUrl, 'anthropic');
     if (!validation.isValid) {
       const errMsg = `URL bloqueada pela política de segurança SSRF: ${validation.error}`;
       addAILog({
