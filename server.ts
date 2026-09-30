@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import {
   DEFAULT_SYMBOLS,
   getTradfiAsset,
-  isTradfiMarketOpen,
+  evaluateTickTradfiGate,
   refreshTradfiRegistry,
   refreshTradingSchedule,
   fetchBinanceFuturesTickers,
@@ -324,7 +324,15 @@ async function startServer() {
                 // Phase 2.4/2.5.5: Ensure underlying TradFi market is open before emitting signals.
                 // Classification comes from the exchangeInfo-discovered registry, not a hardcoded list.
                 const tradfiAsset = getTradfiAsset(symbol);
-                const isTradfiAllowed = !tradfiAsset || isTradfiMarketOpen(tradfiAsset.tradfiCategory);
+                // 6.4.1: gate ÚNICO de calendário no caminho ao vivo — só
+                // TRADIFI_PERPETUAL é agendado; PERPETUAL (incluindo PAXG/XAUT)
+                // nunca é bloqueado por relógio.
+                const tradfiGate = evaluateTickTradfiGate({
+                  symbol,
+                  contractType: tradfiAsset?.contractType,
+                  tradfiCategory: tradfiAsset?.tradfiCategory ?? null
+                });
+                const isTradfiAllowed = tradfiGate.allow;
 
                 // Phase 3.4: the kill-switch and the portfolio limits gate emission.
                 const risk = evaluatePortfolioRisk(openSignals, DEFAULT_RISK_LIMITS, { category: targetCategory });

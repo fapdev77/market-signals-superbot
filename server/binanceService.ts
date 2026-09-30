@@ -502,6 +502,38 @@ export function canGenerateSignalsForAsset(
   };
 }
 
+/**
+ * 6.4.2 — O gate de calendário se aplica SOMENTE a `TRADIFI_PERPETUAL`.
+ * Perpétuos cripto comuns (incluindo PAXG/XAUT, cuja categoria de commodity é
+ * informativa) nunca são bloqueados por calendário.
+ */
+export function isScheduleGatedSymbol(asset: {
+  symbol: string;
+  contractType?: string;
+  tradfiCategory?: TradfiCategory | null;
+}): boolean {
+  return String(asset.contractType || '').toUpperCase() === 'TRADIFI_PERPETUAL';
+}
+
+/**
+ * 6.4.1 — ÚNICA decisão de gate usada pelo tick ao vivo. É um invólucro de
+ * `canGenerateSignalsForAsset` que também expõe o escopo do gate
+ * (`scheduleGated`) e mantém o registro do bloqueio em métrica.
+ */
+export function evaluateTickTradfiGate(
+  asset: { symbol: string; contractType?: string; tradfiCategory?: TradfiCategory | null },
+  at: Date = new Date()
+): { allow: boolean; reason?: string; session?: TradingSessionType; scoreBonus?: number; scheduleGated: boolean } {
+  const scheduleGated = isScheduleGatedSymbol(asset);
+  if (!scheduleGated) {
+    // PERPETUAL: nunca bloqueado por calendário (M1.3 / 6.4.1).
+    return { allow: true, scheduleGated };
+  }
+  // Métricas de bloqueio ficam com os callers existentes (fail-closed conta
+  // dentro de canGenerateSignalsForAsset; sessões contam no branch do tick).
+  return { ...canGenerateSignalsForAsset(asset, at), scheduleGated };
+}
+
 /** Fallback clock evaluation using America/New_York timezone */
 export function isTradfiMarketOpenClock(category: TradfiCategory, at: Date = new Date()): boolean {
   if (category === 'COMMODITY') return true;

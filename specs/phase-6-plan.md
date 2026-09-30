@@ -122,24 +122,35 @@
 
 ## Fase 6.4 — Gate TradFi único e universo íntegro (G-10, G-11)
 
-- [ ] **T6.4.1 — Gate único no tick** (S)
+- [x] **T6.4.1 — Gate único no tick** (S)
   - *CA:* CA-4.1 — sábado: `PERPETUAL` de ouro não é bloqueado; `TRADIFI_PERPETUAL` de ações bloqueia em `OVERNIGHT`, libera em `REGULAR`/`PRE_MARKET`/`AFTER_MARKET`. O tick só usa `canGenerateSignalsForAsset`.
   - *Teste:* `tests/tickTradfiGate.test.ts`. *Arquivos:* `server.ts`, `server/binanceService.ts`.
-- [ ] **T6.4.2 — Escopo do gate + `scheduleGated`** (S). *CA-4.5*.
+- [x] **T6.4.2 — Escopo do gate + `scheduleGated`** (S). *CA-4.5*.
   - *Arquivos:* `server/binanceService.ts`.
-- [ ] **T6.4.3 — Sem fallback spot no screener** (S)
+- [x] **T6.4.3 — Sem fallback spot no screener** (S)
   - *CA:* CA-4.2 — `fapi` fora ⇒ lista vazia, feed degradado, nenhuma chamada a `/api/v3/`.
   - *Teste:* `tests/screenerNoSpotFallback.test.ts`. *Arquivos:* `server/services/MarketScreenerService.ts`.
-- [ ] **T6.4.4 — Remover métricas fabricadas + renormalizar score** (M)
+- [x] **T6.4.4 — Remover métricas fabricadas + renormalizar score** (M)
   - *CA:* CA-4.3 (dois símbolos com entradas idênticas e nomes diferentes ⇒ scores idênticos) e CA-4.4 (sem OI o fator sai do score e `availableFactors`; mudar o peso de OI não muda o resultado).
   - *Testes:* `tests/screenerNameIndependence.test.ts`, `tests/screenerFactorRenorm.test.ts`. *Arquivos:* `MarketScreenerService.ts`, `server/demo/*`.
-- [ ] **T6.4.5 — RVOL real top-60** (S). *Arquivos:* `MarketScreenerService.ts`.
-- [ ] **T6.4.6 — Universo a partir do `exchangeInfo`** (S)
+- [x] **T6.4.5 — RVOL real top-60** (S). *Arquivos:* `MarketScreenerService.ts`.
+- [x] **T6.4.6 — Universo a partir do `exchangeInfo`** (S)
   - *CA:* CA-4.5 — símbolos em `SETTLING`/`BREAK` ficam fora.
   - *Teste:* `tests/universeFromExchangeInfo.test.ts`.
 
-### Checkpoint E (após 6.4)
-- [ ] Nenhuma métrica derivada do nome · nenhum endpoint spot no caminho de futuros · gate único.
+### Checkpoint E (após 6.4) — ✅ 2026-09-30
+- [x] Nenhuma métrica derivada do nome · nenhum endpoint spot no caminho de futuros · gate único. (`tsc` limpo · **77 arquivos / 419 testes verdes** · `build` ok.)
+
+#### Notas de implementação (6.4, 2026-09-30)
+- **Núcleo puro novo:** `server/services/screenerScoring.ts` — `buildUniverseFromExchangeInfo` (status `TRADING`, `PERPETUAL`/`TRADIFI_PERPETUAL`, quoteAssets configurável), `computeScreenerCompositeScore` (**ignora o nome do símbolo** — CA-4.3; fator ausente sai do score com renormalização pela soma dos pesos disponíveis + `availableFactors` — CA-4.4; piso 15/teto 99), `computeRealRvol` (cap 8), `averageDailyQuoteVolume`, `topSymbolsByVolume` (top-60).
+- **6.4.1/CA-4.1:** gate único no tick — `evaluateTickTradfiGate({symbol, contractType, tradfiCategory})` em `binanceService` (invólucro de `canGenerateSignalsForAsset` + campo `scheduleGated`); `PERPETUAL` nunca bloqueado; `server.ts` não usa mais `isTradfiMarketOpen` no caminho do tick.
+- **6.4.2/CA-4.5:** `isScheduleGatedSymbol` = true apenas para `TRADIFI_PERPETUAL`; `scheduleGated` exposto no gate do tick (métricas com os callers; fail-closed continua contado dentro de `canGenerateSignalsForAsset`, sessões no branch do tick).
+- **6.4.3/CA-4.2:** screener só fapi — candidatos vêm de `buildScreenerCandidates` (ticker/24hr + exchangeInfo); sem dados ⇒ `assets: []`, `dataUnavailable: true`, log WARN; zero chamadas a `/api/v3/` e zero ticks sintéticos.
+- **6.4.4:** métricas fabricadas removidas — rvol/OI/funding `null` quando sem dado (UI mostra "n/d", ordenação null-last, propagação com `?? 0`); sem OI/funding ⇒ `topOiSurge`/`highestFundingRate` ficam `undefined` (fim do fallback `'SOLUSDT'`/`'BTCUSDT'` com 0, que era dado fabricado).
+- **6.4.5:** RVOL real por klines 1d (`limit=21`, descarta o candle em formação, média das últimas 20 sessões fechadas) para o top-60 por volume, em bateladas de 8, cache 24h; OI: `openInterestHist` 5m×500 (janela ~41h), cache 5min/símbolo; funding: `premiumIndex` em lote + `fundingInfo` (intervalos, fallback 8h), cache 5min + promise-sharing. **Todas as chamadas passam pelo `requestJsonLimited`.**
+- **6.4.6/CA-4.5:** universo derivado do `exchangeInfo` da fapi — `SETTLING`/`BREAK` ficam fora.
+- Desvio do plano: `server/demo/*` não existia mais; a lógica de score foi extraída para o módulo puro `screenerScoring.ts` (testável sem rede), que implementa o T6.4.4.
+- Testes novos (19): `tests/tickTradfiGate.test.ts` (7), `tests/screenerNoSpotFallback.test.ts` (3), `tests/screenerNameIndependence.test.ts` (3), `tests/screenerFactorRenorm.test.ts` (3), `tests/universeFromExchangeInfo.test.ts` (3).
 
 ---
 

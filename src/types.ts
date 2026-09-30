@@ -632,12 +632,16 @@ export interface ScreenerAsset {
   quoteVolume24h: number;
   high24h: number;
   low24h: number;
-  openInterest: number;
-  openInterestChange1h: number;
-  openInterestChange24h: number;
-  fundingRate: number;
-  fundingRateAnnualized: number;
-  rvol: number;                     // Relative Volume vs standard
+  /** 6.4.4: null = indisponível (a UI mostra "n/d"); nunca derivado do nome. */
+  openInterest: number | null;
+  openInterestChange1h: number | null;
+  openInterestChange24h: number | null;
+  fundingRate: number | null;
+  fundingRateAnnualized: number | null;
+  /** RVOL real (média 20d do próprio símbolo); null fora do top-N. */
+  rvol: number | null;
+  /** 6.4.4: fatores que de fato compuseram o score. */
+  availableFactors?: string[];
   compositeScore: number;           // 0 to 100 ranking score
   isFavorite: boolean;              // User pinned/favorite
   isMonitored: boolean;             // Currently in the active 4s scan universe

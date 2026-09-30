@@ -225,8 +225,9 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       if (sortBy === 'score') return b.compositeScore - a.compositeScore;
       if (sortBy === 'gain') return b.priceChangePercent24h - a.priceChangePercent24h;
       if (sortBy === 'volume') return b.quoteVolume24h - a.quoteVolume24h;
-      if (sortBy === 'oi') return b.openInterestChange24h - a.openInterestChange24h;
-      if (sortBy === 'funding') return Math.abs(b.fundingRate) - Math.abs(a.fundingRate);
+      // 6.4.4: null = indisponível — fica por último na ordenação ("n/d" na UI).
+      if (sortBy === 'oi') return (b.openInterestChange24h ?? -Infinity) - (a.openInterestChange24h ?? -Infinity);
+      if (sortBy === 'funding') return Math.abs(b.fundingRate ?? 0) - Math.abs(a.fundingRate ?? 0);
       return 0;
     });
   }, [assets, selectedSector, onlyMonitored, searchQuery, sortBy, hideExcluded]);
@@ -501,7 +502,8 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
               ) : (
                 filteredAssets.map((asset) => {
                   const isPositive = asset.priceChangePercent24h >= 0;
-                  const isOiPositive = asset.openInterestChange24h >= 0;
+                  // 6.4.4: null = "n/d" (nunca 0, que fingiria dado real).
+                  const isOiPositive = (asset.openInterestChange24h ?? 0) >= 0;
 
                   return (
                     <tr 
@@ -525,12 +527,12 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
                             low24h: asset.low24h,
                             volume24h: asset.volume24h,
                             quoteVolume24h: asset.quoteVolume24h,
-                            openInterest: asset.openInterest,
-                            openInterestChange24h: asset.openInterestChange24h,
-                            openInterestChange1h: asset.openInterestChange1h,
-                            fundingRate: asset.fundingRate,
-                            fundingRateDaily: asset.fundingRate * 3,
-                            fundingRateAnnualized: asset.fundingRateAnnualized,
+                            openInterest: asset.openInterest ?? 0,
+                            openInterestChange24h: asset.openInterestChange24h ?? 0,
+                            openInterestChange1h: asset.openInterestChange1h ?? 0,
+                            fundingRate: asset.fundingRate ?? 0,
+                            fundingRateDaily: (asset.fundingRate ?? 0) * 3,
+                            fundingRateAnnualized: asset.fundingRateAnnualized ?? 0,
                             cvd: 0,
                             cvdDelta: 0,
                             cvdDeltaPercent: 0,
@@ -591,37 +593,49 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
                         {formatVolume(asset.quoteVolume24h)}
                       </td>
 
-                      {/* Relative Volume (RVOL) */}
+                      {/* Relative Volume (RVOL) — 6.4.5: null fora do top-N ⇒ "n/d" */}
                       <td className="py-3 px-4 text-right font-mono">
-                        <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
-                          asset.rvol >= 2.5 
-                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' 
-                            : asset.rvol >= 1.5 
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
-                            : 'text-slate-400'
-                        }`}>
-                          {asset.rvol.toFixed(2)}x
-                        </span>
+                        {asset.rvol === null ? (
+                          <span className="text-slate-500">n/d</span>
+                        ) : (
+                          <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
+                            asset.rvol >= 2.5 
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' 
+                              : asset.rvol >= 1.5 
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
+                              : 'text-slate-400'
+                          }`}>
+                            {asset.rvol.toFixed(2)}x
+                          </span>
+                        )}
                       </td>
 
-                      {/* Open Interest Delta */}
+                      {/* Open Interest Delta — 6.4.4: null ⇒ "n/d" */}
                       <td className="py-3 px-4 text-right font-mono">
-                        <span className={`font-semibold ${isOiPositive ? 'text-indigo-400' : 'text-slate-400'}`}>
-                          {formatPercent(asset.openInterestChange24h)}
-                        </span>
+                        {asset.openInterestChange24h === null ? (
+                          <span className="text-slate-500">n/d</span>
+                        ) : (
+                          <span className={`font-semibold ${isOiPositive ? 'text-indigo-400' : 'text-slate-400'}`}>
+                            {formatPercent(asset.openInterestChange24h)}
+                          </span>
+                        )}
                       </td>
 
-                      {/* Funding Rate Annualized */}
+                      {/* Funding Rate Annualized — 6.4.4: null ⇒ "n/d" */}
                       <td className="py-3 px-4 text-right font-mono">
-                        <span className={`font-medium ${
-                          asset.fundingRate > 0.0003 
-                            ? 'text-rose-400 font-bold' 
-                            : asset.fundingRate < -0.0001 
-                            ? 'text-emerald-400 font-bold' 
-                            : 'text-slate-400'
-                        }`}>
-                          {asset.fundingRateAnnualized > 0 ? `+${asset.fundingRateAnnualized}%` : `${asset.fundingRateAnnualized}%`}
-                        </span>
+                        {asset.fundingRateAnnualized === null ? (
+                          <span className="text-slate-500">n/d</span>
+                        ) : (
+                          <span className={`font-medium ${
+                            (asset.fundingRate ?? 0) > 0.0003 
+                              ? 'text-rose-400 font-bold' 
+                              : (asset.fundingRate ?? 0) < -0.0001 
+                              ? 'text-emerald-400 font-bold' 
+                              : 'text-slate-400'
+                          }`}>
+                            {asset.fundingRateAnnualized > 0 ? `+${asset.fundingRateAnnualized}%` : `${asset.fundingRateAnnualized}%`}
+                          </span>
+                        )}
                       </td>
 
                       {/* Institutional Composite Score */}
@@ -691,12 +705,12 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
                                   low24h: asset.low24h,
                                   volume24h: asset.volume24h,
                                   quoteVolume24h: asset.quoteVolume24h,
-                                  openInterest: asset.openInterest,
-                                  openInterestChange24h: asset.openInterestChange24h,
-                                  openInterestChange1h: asset.openInterestChange1h,
-                                  fundingRate: asset.fundingRate,
-                                  fundingRateDaily: asset.fundingRate * 3,
-                                  fundingRateAnnualized: asset.fundingRateAnnualized,
+                                  openInterest: asset.openInterest ?? 0,
+                                  openInterestChange24h: asset.openInterestChange24h ?? 0,
+                                  openInterestChange1h: asset.openInterestChange1h ?? 0,
+                                  fundingRate: asset.fundingRate ?? 0,
+                                  fundingRateDaily: (asset.fundingRate ?? 0) * 3,
+                                  fundingRateAnnualized: asset.fundingRateAnnualized ?? 0,
                                   cvd: 0,
                                   cvdDelta: 0,
                                   cvdDeltaPercent: 0,

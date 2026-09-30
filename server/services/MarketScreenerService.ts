@@ -1,10 +1,19 @@
 import { ScreenerAsset, ScreenerSettings, ScreenerScanSummary, MarketSector } from '../../src/types.js';
-import { requestJson } from '../utils/httpClient.js';
+import { requestJsonLimited } from '../utils/httpClient.js';
 import { addBinanceLog } from '../binanceWebsocket.js';
 import { getFavoriteSymbols, getScreenerSettings, saveScreenerSettings, getActiveSignals, setWatchedSymbol, DEFAULT_EXCLUDED_SYMBOLS } from '../db.js';
 import { DEFAULT_SYMBOLS } from '../binanceService.js';
-// R-2: o universo de triagem fabricado vive em server/demo/.
-import { generateFallbackRawTickers } from '../demo/syntheticTickers.js';
+// 6.4: núcleo puro do screener — universo via exchangeInfo, score sem
+// métricas do nome, renormalização de fatores, RVOL real, sem fallback spot.
+import {
+  buildScreenerCandidates,
+  computeScreenerCompositeScore,
+  topSymbolsByVolume,
+  averageDailyQuoteVolume,
+  computeRealRvol,
+  RVOL_LOOKBACK_DAYS,
+  type ScreenerTickerInput
+} from './screenerScoring.js';
 
 // Classification mapping for sectors
 const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
@@ -150,60 +159,70 @@ export class MarketScreenerService {
       const excludedNormalizedList = Array.from(new Set(rawExcluded.map(s => s.trim().toUpperCase().replace(/[\/\-_]/g, ''))));
       const excludedSet = new Set<string>(excludedNormalizedList);
 
-      // 1. Fetch 24hr tickers from Binance Futures
-      const endpoints = [
-        'https://fapi.binance.com/fapi/v1/ticker/24hr',
-        'https://fapi1.binance.com/fapi/v1/ticker/24hr',
-        'https://data-api.binance.vision/api/v3/ticker/24hr'
-      ];
-
-      let rawTickers: any[] = [];
-      for (const url of endpoints) {
-        try {
-          const res = await requestJson<any[]>(url, { timeoutMs: 5000 });
-          if (Array.isArray(res.data) && res.data.length > 0) {
-            rawTickers = res.data;
-            break;
-          }
-        } catch {
-          // Continue to next endpoint
+      // 1. Candidatos: tickers fapi filtrados pelo universo do exchangeInfo.
+      // 6.4.3: SEM fallback spot; fapi fora ⇒ lista vazia + feed degradado.
+      const { tickers, universe, dataUnavailable, degradedFeeds } = await buildScreenerCandidates({
+        fetchTickers: async url => {
+          const res = await requestJsonLimited<any[]>(url, { timeoutMs: 5000 });
+          return Array.isArray(res.data) ? res.data : [];
+        },
+        fetchExchangeInfo: async () => {
+          const res = await requestJsonLimited<any>('https://fapi.binance.com/fapi/v1/exchangeInfo', { timeoutMs: 8000 });
+          return res.data;
         }
+      });
+
+      // Phase 2.5.6 / 6.4.3: nunca fabricar universo. Sem dado, sem candidatos.
+      if (dataUnavailable || tickers.length === 0) {
+        addBinanceLog(
+          'WARN',
+          'REST_API',
+          `Screener sem dados do fapi (feeds degradados: ${degradedFeeds.join(', ') || 'nenhum'}). Universo vazio; nenhuma métrica inventada.`
+        );
+        const emptySummary = this.buildFallbackSummary();
+        emptySummary.dataUnavailable = true;
+        this.lastSummary = emptySummary;
+        return { assets: [], summary: emptySummary };
       }
 
-      // Filter only valid USDT pairs
-      const usdtTickers = rawTickers.filter(t => t.symbol && t.symbol.endsWith('USDT'));
+      // 2. Enriquecimento REAL para o top-N por volume (6.4.4/6.4.5):
+      // OI e RVOL apenas do top-N; funding do lote premiumIndex/fundingInfo;
+      // tudo sob o limiter (requestJsonLimited) e com cache.
+      const topSet = topSymbolsByVolume(tickers);
+      const oiChangeBySymbol = await this.fetchRealOiChanges([...topSet]);
+      const { funding: fundingBySymbol, intervals: intervalBySymbol } = await this.fetchRealFundingBatch();
+      const rvolBySymbol = await this.computeRealRvolBatch(tickers, topSet);
 
-      // Phase 2.5.6: never fabricate a screening universe. When the exchange returns nothing the scan
-      // reports zero candidates instead of presenting a fixed reference-price list as live market data.
-      // Fabrication remains available only behind the explicit ALLOW_SYNTHETIC_DATA opt-in.
-      const candidates = usdtTickers.length > 0
-        ? usdtTickers
-        : (process.env.ALLOW_SYNTHETIC_DATA === 'true' ? generateFallbackRawTickers() : []);
-
-      // 2. Compute RVOL, Volatility, and Composite Score
-      const processed: ScreenerAsset[] = candidates.map(ticker => {
+      // 3. Score composto a partir de dados reais (6.4.4/CA-4.3/CA-4.4).
+      const processed: ScreenerAsset[] = tickers.map((ticker: ScreenerTickerInput) => {
         const symbol = ticker.symbol;
         const normalizedSymbol = symbol.trim().toUpperCase().replace(/[\/\-_]/g, '');
         const isExcluded = excludedSet.has(normalizedSymbol);
 
-        const price = parseFloat(ticker.lastPrice) || 1;
-        const priceChangePercent24h = parseFloat(ticker.priceChangePercent) || 0;
-        const volume24h = parseFloat(ticker.volume) || 0;
-        const quoteVolume24h = parseFloat(ticker.quoteVolume) || (volume24h * price);
-        const high24h = parseFloat(ticker.highPrice) || (price * 1.02);
-        const low24h = parseFloat(ticker.lowPrice) || (price * 0.98);
+        const oiChange24h = oiChangeBySymbol.get(symbol) ?? null;
+        const fundingRate = fundingBySymbol.get(symbol) ?? null;
+        const rvol = rvolBySymbol.get(symbol) ?? null;
 
-        // Approximate Open Interest & Funding if not in batch
-        const baseSymbolSeed = symbol.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const oiEstimated = quoteVolume24h * (0.08 + (baseSymbolSeed % 10) * 0.015);
-        const oiChange24h = parseFloat(((priceChangePercent24h * 0.7) + ((baseSymbolSeed % 7) - 3)).toFixed(2));
-        const oiChange1h = parseFloat((oiChange24h / 4 + ((baseSymbolSeed % 5) - 2) * 0.3).toFixed(2));
-        const fundingRate = parseFloat((((baseSymbolSeed % 9) - 4) * 0.00008 + 0.0001).toFixed(6));
-        const fundingRateAnnualized = parseFloat((fundingRate * 3 * 365 * 100).toFixed(2));
-
-        // Relative Volume (RVOL): quoteVolume / estimated benchmark
-        const benchmarkVol = 50_000_000;
-        const rvol = parseFloat(Math.min(8.0, Math.max(0.4, quoteVolume24h / benchmarkVol)).toFixed(2));
+        const scored = isExcluded
+          ? {
+              score: 5,
+              availableFactors: [] as string[],
+              metrics: {
+                rvol,
+                openInterestChange24h: oiChange24h,
+                openInterestChange1h: oiChange24h !== null ? parseFloat((oiChange24h / 4).toFixed(2)) : null,
+                fundingRate,
+                fundingRateAnnualized: fundingRate !== null ? parseFloat((fundingRate * 3 * 365 * 100).toFixed(2)) : null
+              }
+            }
+          : computeScreenerCompositeScore(symbol, {
+              priceChangePercent24h: ticker.priceChangePercent24h,
+              quoteVolume24h: ticker.quoteVolume24h,
+              rvol,
+              openInterestChange24h: oiChange24h,
+              fundingRate,
+              fundingIntervalHours: intervalBySymbol.get(symbol) ?? null
+            });
 
         // Sector classification
         const { sector, tag } = this.getSectorInfo(symbol);
@@ -211,41 +230,30 @@ export class MarketScreenerService {
         // Check if favorite
         const isFavorite = favorites.includes(symbol) || (favorites.length === 0 && DEFAULT_SYMBOLS.slice(0, 5).includes(symbol));
 
-        // Institutional Composite Momentum Formula
-        // w_rvol (35%) + w_oi (30%) + w_momentum (20%) + w_funding (15%)
-        const rvolPoints = Math.min(100, (rvol / 3.0) * 100) * (settings.weights.rvolWeight / 100);
-        const oiPoints = Math.min(100, Math.max(0, (oiChange24h + 10) * 4)) * (settings.weights.oiChangeWeight / 100);
-        const priceMomentumPoints = Math.min(100, Math.abs(priceChangePercent24h) * 5) * (settings.weights.priceMomentumWeight / 100);
-        const fundingAnomalyPoints = Math.min(100, Math.abs(fundingRate * 10000) * 15) * (settings.weights.fundingAnomalyWeight / 100);
-
-        const compositeScore = isExcluded
-          ? 5 // Strongly discount excluded assets
-          : Math.round(
-              Math.min(99, Math.max(15, rvolPoints + oiPoints + priceMomentumPoints + fundingAnomalyPoints))
-            );
-
         return {
           symbol,
-          baseAsset: symbol.replace('USDT', ''),
-          quoteAsset: 'USDT',
+          baseAsset: symbol.replace(/(USDT|USDC|USD)$/, ''),
+          quoteAsset: symbol.endsWith('USDC') ? 'USDC' : 'USDT',
           name: symbol,
-          price,
-          priceChangePercent24h,
-          volume24h,
-          quoteVolume24h,
-          high24h,
-          low24h,
-          openInterest: oiEstimated,
-          openInterestChange1h: oiChange1h,
-          openInterestChange24h: oiChange24h,
-          fundingRate,
-          fundingRateAnnualized,
-          rvol,
-          compositeScore,
+          price: ticker.lastPrice || 1,
+          priceChangePercent24h: ticker.priceChangePercent24h,
+          volume24h: ticker.volume24h,
+          quoteVolume24h: ticker.quoteVolume24h,
+          high24h: ticker.high24h || ticker.lastPrice * 1.02,
+          low24h: ticker.low24h || ticker.lastPrice * 0.98,
+          // 6.4.4: null = indisponível ⇒ UI mostra "n/d". Nunca inventado.
+          openInterest: null,
+          openInterestChange1h: scored.metrics.openInterestChange1h,
+          openInterestChange24h: scored.metrics.openInterestChange24h,
+          fundingRate: scored.metrics.fundingRate,
+          fundingRateAnnualized: scored.metrics.fundingRateAnnualized,
+          rvol: scored.metrics.rvol,
+          availableFactors: scored.availableFactors,
+          compositeScore: scored.score,
           isFavorite,
           isMonitored: false,
           isExcluded,
-          monitoringReason: 'NONE',
+          monitoringReason: 'NONE' as const,
           sector: isExcluded ? 'EXCLUDED' : sector,
           categoryTag: tag,
           lastScannedAt: Date.now()
@@ -340,8 +348,9 @@ export class MarketScreenerService {
       const validAssets = processed.filter(p => !p.isExcluded);
       const sortedByGain = [...validAssets].sort((a, b) => b.priceChangePercent24h - a.priceChangePercent24h);
       const sortedByVol = [...validAssets].sort((a, b) => b.quoteVolume24h - a.quoteVolume24h);
-      const sortedByOi = [...validAssets].sort((a, b) => b.openInterestChange24h - a.openInterestChange24h);
-      const sortedByFunding = [...validAssets].sort((a, b) => Math.abs(b.fundingRate) - Math.abs(a.fundingRate));
+      // 6.4.4: null ordena por último (indisponível não compete com dado real).
+      const sortedByOi = [...validAssets].sort((a, b) => (b.openInterestChange24h ?? -Infinity) - (a.openInterestChange24h ?? -Infinity));
+      const sortedByFunding = [...validAssets].sort((a, b) => Math.abs(b.fundingRate ?? 0) - Math.abs(a.fundingRate ?? 0));
 
       const summary: ScreenerScanSummary = {
         totalAssetsAvailable: processed.length,
@@ -357,14 +366,12 @@ export class MarketScreenerService {
           symbol: sortedByVol[0]?.symbol || 'BTCUSDT',
           quoteVolume: sortedByVol[0]?.quoteVolume24h || 0
         },
-        topOiSurge: {
-          symbol: sortedByOi[0]?.symbol || 'SOLUSDT',
-          oiChange: sortedByOi[0]?.openInterestChange24h || 0
-        },
-        highestFundingRate: {
-          symbol: sortedByFunding[0]?.symbol || 'BTCUSDT',
-          rate: sortedByFunding[0]?.fundingRate || 0
-        },
+        topOiSurge: sortedByOi[0]?.openInterestChange24h != null
+          ? { symbol: sortedByOi[0].symbol, oiChange: sortedByOi[0].openInterestChange24h }
+          : undefined,
+        highestFundingRate: sortedByFunding[0]?.fundingRate != null
+          ? { symbol: sortedByFunding[0].symbol, rate: sortedByFunding[0].fundingRate }
+          : undefined,
         lastScanDurationMs: scanDuration,
         timestamp: Date.now()
       };
@@ -388,6 +395,172 @@ export class MarketScreenerService {
     } finally {
       this.isScanning = false;
     }
+  }
+
+  // ==========================================================================
+  // 6.4.4 / 6.4.5 — enriquecimento REAL (sem métrica derivada do nome)
+  // ==========================================================================
+
+  /** Cache de funding real (premiumIndex em lote) — 5 min. */
+  private fundingCache: { at: number; funding: Map<string, number>; intervals: Map<string, number | null> } | null = null;
+  private fundingCachePromise: Promise<{ funding: Map<string, number>; intervals: Map<string, number | null> }> | null = null;
+  /** Cache de variação de OI real (openInterestHist) por símbolo — 5 min. */
+  private oiCache = new Map<string, { at: number; change24h: number | null }>();
+  /** Cache de klines diários para RVOL por símbolo — 24 h. */
+  private dailyKlinesCache = new Map<string, { at: number; avgQuoteVolume: number | null }>();
+
+  /**
+   * Funding real por símbolo: UMA chamada a `/fapi/v1/premiumIndex` (sem
+   * symbol = todos, peso baixo) + intervalos do `fundingInfo` (com fallback
+   * 8h). Cache de 5 min; tudo sob o limiter (requestJsonLimited).
+   */
+  private async fetchRealFundingBatch(): Promise<{ funding: Map<string, number>; intervals: Map<string, number | null> }> {
+    const TTL = 5 * 60 * 1000;
+    if (this.fundingCache && Date.now() - this.fundingCache.at < TTL) {
+      return { funding: this.fundingCache.funding, intervals: this.fundingCache.intervals };
+    }
+    if (this.fundingCachePromise) return this.fundingCachePromise;
+
+    this.fundingCachePromise = (async () => {
+      const funding = new Map<string, number>();
+      const intervals = new Map<string, number | null>();
+      try {
+        const res = await requestJsonLimited<any[]>('https://fapi.binance.com/fapi/v1/premiumIndex', { timeoutMs: 8000 });
+        if (Array.isArray(res.data)) {
+          for (const item of res.data) {
+            const symbol = String(item?.symbol || '').toUpperCase();
+            const rate = parseFloat(item?.lastFundingRate);
+            if (symbol && Number.isFinite(rate)) funding.set(symbol, rate);
+          }
+        }
+      } catch {
+        // Sem funding: todos ficam null (fator sai do score) — nunca inventado.
+      }
+      try {
+        const res = await requestJsonLimited<any[]>('https://fapi.binance.com/fapi/v1/fundingInfo', { timeoutMs: 8000 });
+        if (Array.isArray(res.data)) {
+          for (const item of res.data) {
+            const symbol = String(item?.symbol || '').toUpperCase();
+            const hours = Number(item?.fundingIntervalHours);
+            intervals.set(symbol, Number.isFinite(hours) && hours > 0 ? hours : null);
+          }
+        }
+      } catch {
+        // Intervalos ausentes ⇒ anualização usa o padrão 8h.
+      }
+      this.fundingCache = { at: Date.now(), funding, intervals };
+      return { funding, intervals };
+    })();
+
+    try {
+      return await this.fundingCachePromise;
+    } finally {
+      this.fundingCachePromise = null;
+    }
+  }
+
+  /**
+   * Variação de OI real por símbolo via `/futures/data/openInterestHist`
+   * (period=5m, limit=500 ⇒ janela de ~41h; a variação é do início ao fim da
+   * janela obtida). Apenas para o top-N; cache de 5 min.
+   */
+  private async fetchRealOiChanges(symbols: string[]): Promise<Map<string, number | null>> {
+    const TTL = 5 * 60 * 1000;
+    const now = Date.now();
+    const result = new Map<string, number | null>();
+    const toFetch: string[] = [];
+
+    for (const symbol of symbols) {
+      const cached = this.oiCache.get(symbol);
+      if (cached && now - cached.at < TTL) {
+        result.set(symbol, cached.change24h);
+      } else {
+        toFetch.push(symbol);
+      }
+    }
+
+    await Promise.allSettled(
+      toFetch.map(async symbol => {
+        try {
+          const res = await requestJsonLimited<any[]>(
+            `https://fapi.binance.com/futures/data/openInterestHist?symbol=${encodeURIComponent(symbol)}&period=5m&limit=500`,
+            { timeoutMs: 6000 }
+          );
+          const rows = Array.isArray(res.data) ? res.data : [];
+          let change: number | null = null;
+          if (rows.length >= 2) {
+            const latest = parseFloat(rows[rows.length - 1]?.sumOpenInterest);
+            const oldest = parseFloat(rows[0]?.sumOpenInterest);
+            if (Number.isFinite(latest) && Number.isFinite(oldest) && oldest > 0) {
+              change = parseFloat((((latest - oldest) / oldest) * 100).toFixed(2));
+            }
+          }
+          this.oiCache.set(symbol, { at: now, change24h: change });
+          result.set(symbol, change);
+        } catch {
+          this.oiCache.set(symbol, { at: now, change24h: null });
+          result.set(symbol, null);
+        }
+      })
+    );
+
+    return result;
+  }
+
+  /**
+   * RVOL real (6.4.5): quoteVolume 24h ÷ média de 20 klines diários do
+   * PRÓPRIO símbolo. Apenas para o top-N por volume; cache de 24 h.
+   */
+  private async computeRealRvolBatch(
+    tickers: ScreenerTickerInput[],
+    topSet: Set<string>
+  ): Promise<Map<string, number | null>> {
+    const now = Date.now();
+    const result = new Map<string, number | null>();
+    const toFetch: string[] = [];
+
+    for (const t of tickers) {
+      if (!topSet.has(t.symbol)) {
+        result.set(t.symbol, null); // fora do top-N ⇒ rvol: null (spec 6.4.5)
+        continue;
+      }
+      const cached = this.dailyKlinesCache.get(t.symbol);
+      if (cached && now - cached.at < 24 * 60 * 60 * 1000) {
+        result.set(t.symbol, computeRealRvol(t.quoteVolume24h, cached.avgQuoteVolume));
+      } else {
+        toFetch.push(t.symbol);
+      }
+    }
+
+    // Top-N em série com pequenas bateladas para não estourar o peso do limiter.
+    const BATCH = 8;
+    for (let i = 0; i < toFetch.length; i += BATCH) {
+      const slice = toFetch.slice(i, i + BATCH);
+      await Promise.allSettled(
+        slice.map(async symbol => {
+          try {
+            // limit=21 e descarte do último: exclui o candle DIÁRIO em formação
+            // da média (senão o dia parcial distorceria o RVOL).
+            const res = await requestJsonLimited<any[]>(
+              `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=1d&limit=21`,
+              { timeoutMs: 6000 }
+            );
+            const rowsAll = Array.isArray(res.data) ? res.data : [];
+            const rows = rowsAll.length > 1 ? rowsAll.slice(0, -1) : [];
+            const klines = rows.map(k => ({ quoteVolume: parseFloat(k?.[7]) || 0 }));
+            const avg = averageDailyQuoteVolume(klines.slice(0, RVOL_LOOKBACK_DAYS));
+            this.dailyKlinesCache.set(symbol, { at: now, avgQuoteVolume: avg });
+            const ticker = tickers.find(t => t.symbol === symbol);
+            result.set(symbol, ticker ? computeRealRvol(ticker.quoteVolume24h, avg) : null);
+          } catch {
+            this.dailyKlinesCache.set(symbol, { at: now, avgQuoteVolume: null });
+            result.set(symbol, null);
+          }
+        })
+      );
+    }
+
+    return result;
   }
 
   /**
