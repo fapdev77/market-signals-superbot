@@ -1,8 +1,14 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData, SignalTtlSettings } from '../src/types.js';
-import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, getTradfiAsset, isTradfiMarketOpen } from './binanceService.js';
+import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, getTradfiAsset, isTradfiMarketOpen, canGenerateSignalsForAsset } from './binanceService.js';
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
+
+/**
+ * Shared Lookback Window Constant (M2.3 - Phase 5)
+ * Defines standard 60-candle history lookback for indicator calculation across live and backtest.
+ */
+export const SIGNAL_LOOKBACK_CANDLES = 60;
 
 export function normalizePricePrecision(value: number | null | undefined): number {
   if (value === null || value === undefined || isNaN(value)) return 0;
@@ -382,14 +388,25 @@ export function processTickerState(
     }
   }
 
-  // Phase 2.4: Check TradFi market schedule - No signals during market closed hours
-  // Phase 2.5.5: TradFi classification comes from the exchangeInfo-discovered registry.
+  // Phase 2.4 & Phase 5 (M1): Check TradFi market schedule & session policy
   const tradfiAsset = getTradfiAsset(symbol);
-  const isMarketOpen = tradfiAsset ? isTradfiMarketOpen(tradfiAsset.tradfiCategory) : true;
+  let tradfiSession: 'REGULAR' | 'PRE_MARKET' | 'AFTER_MARKET' | 'OVERNIGHT' | 'NO_TRADING' | undefined = undefined;
 
-  if (tradfiAsset && !isMarketOpen) {
-    signalType = 'NEUTRAL';
-    signalReason = `Mercado tradicional subjacente (${tradfiAsset.tradfiCategory}) fechado no momento. Sinais pausados até a reabertura da sessão.`;
+  if (tradfiAsset) {
+    const assetDecision = canGenerateSignalsForAsset(tradfiAsset);
+    tradfiSession = assetDecision.session;
+
+    if (!assetDecision.allow) {
+      signalType = 'NEUTRAL';
+      signalReason = assetDecision.reason || `Mercado tradicional subjacente (${tradfiAsset.tradfiCategory}) fechado no momento. Sinais pausados até a reabertura da sessão.`;
+    } else if (assetDecision.scoreBonus && assetDecision.scoreBonus > 0) {
+      // CA-1.4: Extended session score requirement (+5 bonus)
+      const minExtendedScore = 35 + assetDecision.scoreBonus;
+      if (Math.abs(netScore) < minExtendedScore) {
+        signalType = 'NEUTRAL';
+        signalReason = `Sinal em sessão estendida (${tradfiSession}) suprimido por score insuficiente (< ${minExtendedScore}%).`;
+      }
+    }
   }
 
   const baseAsset = symbol.replace(/USDT|USD|BUSD/, '');
@@ -439,6 +456,7 @@ export function processTickerState(
     signalType,
     signalReason,
     confluenceFactors,
+    tradfiSession,
     dataQuality: {
       isLive: !isStaleQuote && quoteAgeMs < 60000 && klines.length >= 5,
       isDegraded: isStaleQuote || quoteAgeMs > 60000 || !klines || klines.length < 5,
@@ -713,6 +731,7 @@ export function buildTradeSignal(
     expiresAt,
     isBreakevenActive: false,
     status: 'ACTIVE',
+    tradfiSession: ticker.tradfiSession,
     // R-2: a proveniência do sinal é herdada do ticker. Só é DEMO quando o próprio dado é
     // sintético (o que exige ALLOW_SYNTHETIC_DATA='true' para chegar aqui — o DataGate bloqueia
     // o contrário), nunca por causa do ambiente.

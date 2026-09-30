@@ -189,6 +189,54 @@ export const historicalKlinesDao = {
   }
 };
 
+export interface HistoricalFundingRow {
+  symbol: string;
+  fundingTime: number;
+  fundingRate: number;
+  markPrice: number | null;
+  rateType: string;
+}
+
+export const historicalFundingDao = {
+  async insertBatch(rows: HistoricalFundingRow[]): Promise<void> {
+    if (!rows.length) return;
+    const db = await getDb();
+    await runWithRetry(() => {
+      const stmt = db.prepare(
+        `INSERT OR REPLACE INTO historical_funding (symbol, funding_time, funding_rate, mark_price, rate_type)
+         VALUES (?, ?, ?, ?, ?)`
+      );
+      try {
+        for (const row of rows) {
+          stmt.run([row.symbol, row.fundingTime, row.fundingRate, row.markPrice, row.rateType || 'Normal']);
+        }
+      } finally {
+        stmt.free();
+      }
+    });
+    scheduleDbSave();
+  },
+
+  async getBySymbolAndRange(symbol: string, startTime: number, endTime: number): Promise<HistoricalFundingRow[]> {
+    const db = await getDb();
+    const res = db.exec(
+      `SELECT symbol, funding_time, funding_rate, mark_price, rate_type
+       FROM historical_funding
+       WHERE symbol = ? AND funding_time >= ? AND funding_time <= ?
+       ORDER BY funding_time ASC`,
+      [symbol, startTime, endTime] as SqlJsStatementValues
+    );
+    if (!res.length || !res[0].values.length) return [];
+    return res[0].values.map(row => ({
+      symbol: String(row[0]),
+      fundingTime: num(row[1]),
+      fundingRate: num(row[2]),
+      markPrice: row[3] !== null ? num(row[3]) : null,
+      rateType: String(row[4] || 'Normal')
+    }));
+  }
+};
+
 export const backtestResultsDao = {
   async insert(row: BacktestResultRow): Promise<void> {
     const db = await getDb();
@@ -236,3 +284,4 @@ export const backtestResultsDao = {
     };
   }
 };
+

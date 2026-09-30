@@ -1,0 +1,16 @@
+[
+  {
+    "symbol": "BTCUSDT",
+    "adjustedFundingRateCap": "0.02000000",
+    "adjustedFundingRateFloor": "-0.02000000",
+    "fundingIntervalHours": 8,
+    "disclaimer": false
+  },
+  {
+    "symbol": "AAPLUSDT",
+    "adjustedFundingRateCap": "0.01500000",
+    "adjustedFundingRateFloor": "-0.01500000",
+    "fundingIntervalHours": 8,
+    "disclaimer": false
+  }
+]

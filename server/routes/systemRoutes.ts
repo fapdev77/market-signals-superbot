@@ -1,4 +1,6 @@
-import { Router, Request, Response } from 'express';import {
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import {
   getDatabaseStats, 
   vacuumDatabase, 
   clearTable, 
@@ -6,13 +8,26 @@ import { Router, Request, Response } from 'express';import {
   factoryResetDatabase,
   recordAuditLog,
   getAuditLogs,
-  getActiveSignals
+  getActiveSignals,
+  getDbMetrics,
+  getDb
 } from '../db.js';
-import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, getKillSwitch, setKillSwitch } from '../services/RiskManager.js';
+import {
+  DEFAULT_RISK_LIMITS,
+  evaluatePortfolioRisk,
+  getKillSwitch,
+  setKillSwitch,
+  getRiskLimits,
+  updateRiskLimits,
+  saveRiskLimitsToDb,
+  saveKillSwitchToDb,
+  type RiskLimits
+} from '../services/RiskManager.js';
 import { getFeedHealth } from '../services/feedHealth.js';
 import { getMetrics } from '../utils/metrics.js';
 import { getTradingScheduleStatus } from '../binanceService.js';
 import { getWebSocketStatus } from '../binanceWebsocket.js';
+import { isClockDegraded, getClockDriftMs, getLastClockCheckTime } from '../services/ClockService.js';
 import { parseOriginFilter } from '../utils/dataOrigin.js';
 import { BotState } from '../../src/types.js';
 import { getDefaultIndicatorWeights } from '../../src/constants/strategyPresets.js';
@@ -127,11 +142,15 @@ export function createSystemRouter(
   });
 
   // ---------------------------------------------------------------------------------------------
-  // R-15: métricas em memória (contadores de ticks, sinais, bloqueios e erros por feed).
-  // JSON simples conforme a spec; Prometheus só se houver demanda.
+  // R-15: métricas em memória (contadores de ticks, sinais, bloqueios e erros por feed)
+  // M4.4: Métricas de tamanho do arquivo e duração do save do banco de dados
   router.get('/metrics', (req: Request, res: Response) => {
     try {
-      res.json({ success: true, metrics: getMetrics() });
+      res.json({
+        success: true,
+        metrics: getMetrics(),
+        database: getDbMetrics()
+      });
     } catch (err: any) {
       res.status(500).json({ error: 'Falha ao obter métricas', details: err?.message });
     }
@@ -139,7 +158,8 @@ export function createSystemRouter(
 
   // ---------------------------------------------------------------------------------------------
   // R-13: health por feed — estado observável de cada fonte de dado.
-  // Inclui o estado do calendário R-11 (assumptions quando em fallback por relógio) e do WS.
+  // Inclui o estado do calendário R-11 (assumptions quando em fallback por relógio), do WS
+  // e da deriva de relógio (M4.6).
   // ---------------------------------------------------------------------------------------------
   router.get('/feed-health', (req: Request, res: Response) => {
     try {
@@ -148,7 +168,12 @@ export function createSystemRouter(
         health: {
           ...getFeedHealth(),
           ws: getWebSocketStatus(),
-          tradingSchedule: getTradingScheduleStatus()
+          tradingSchedule: getTradingScheduleStatus(),
+          clock: {
+            isDegraded: isClockDegraded(),
+            driftMs: getClockDriftMs(),
+            lastCheckedAt: getLastClockCheckTime()
+          }
         }
       });
     } catch (err: any) {
@@ -157,21 +182,18 @@ export function createSystemRouter(
   });
 
   // ---------------------------------------------------------------------------------------------
-  // Phase 3.4: risk posture and kill-switch
+  // Phase 3.4 & M4.2: risk posture and kill-switch
   // ---------------------------------------------------------------------------------------------
 
   // Current halt state plus the portfolio risk computed from the open signals.
-  //
-  // R-2: default ALL (ao contrário das leituras de conteúdo), porque esta rota descreve a postura
-  // que o motor realmente aplica: se um sinal DEMO está aberto, ele ocupa margem e concorre aos
-  // limites. `?origin=LIVE` mostra a visão só de mercado.
   router.get('/risk-status', async (req: Request, res: Response) => {
     try {
       const openSignals = await getActiveSignals(parseOriginFilter(req.query.origin, 'ALL'));
+      const limits = getRiskLimits();
       res.json({
         killSwitch: getKillSwitch(),
-        limits: DEFAULT_RISK_LIMITS,
-        portfolio: evaluatePortfolioRisk(openSignals, DEFAULT_RISK_LIMITS)
+        limits,
+        portfolio: evaluatePortfolioRisk(openSignals, limits)
       });
     } catch (err: any) {
       console.error('Failed to compute risk status:', err);
@@ -179,7 +201,30 @@ export function createSystemRouter(
     }
   });
 
-  // Activate or release the trading halt. Activating requires a reason.
+  const riskLimitsInputSchema = z.object({
+    accountEquity: z.number().positive().min(100).max(100_000_000).optional(),
+    riskPerTradePct: z.number().positive().min(0.01).max(10).optional(),
+    maxConcurrentSignals: z.number().int().min(1).max(50).optional(),
+    maxPortfolioRiskPct: z.number().positive().min(0.1).max(50).optional(),
+    maxSignalsPerCategory: z.number().int().min(1).max(20).optional()
+  });
+
+  // M4.2: Limites de risco editáveis por endpoint validado (zod, com faixas), gravando no audit log.
+  router.post('/risk-limits', validateBody(riskLimitsInputSchema), async (req: Request, res: Response) => {
+    try {
+      const actor = getAuditActor(req);
+      const updated = updateRiskLimits(req.body);
+      const database = await getDb();
+      await saveRiskLimitsToDb(database);
+      await recordAuditLog('RISK_LIMITS_UPDATE', req.originalUrl, actor, updated);
+      res.json({ success: true, limits: updated });
+    } catch (err: any) {
+      console.error('Failed to update risk limits:', err);
+      res.status(400).json({ error: err?.message || 'Falha ao atualizar limites de risco' });
+    }
+  });
+
+  // Activate or release the trading halt. Activating requires a reason. Persists to app_state.
   router.post('/kill-switch', async (req: Request, res: Response) => {
     const { enabled, reason } = req.body || {};
 
@@ -196,6 +241,8 @@ export function createSystemRouter(
     try {
       const actor = getAuditActor(req);
       const state = setKillSwitch(enabled, actor, reason);
+      const database = await getDb();
+      await saveKillSwitchToDb(database);
       await recordAuditLog('KILL_SWITCH', req.originalUrl, actor, { enabled, reason: reason || null });
       res.json({ success: true, killSwitch: state });
     } catch (err: any) {

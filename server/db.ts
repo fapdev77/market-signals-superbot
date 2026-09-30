@@ -14,12 +14,23 @@ import { getDefaultStrategyConfigs } from '../src/constants/strategyPresets.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
 import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/index.js';
+import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence } from './services/EvidenceService.js';
+import { calculateSignalOutcomeR } from './services/EvidenceService.js';
+import { defaultAlertService } from './services/AlertService.js';
 
 let db: Database | null = null;
 const DEFAULT_DB_FILE_PATH = path.join(process.cwd(), 'data', 'superbot.sqlite');
 // R-14/R-3 test hook: tests may redirect the unified database file BEFORE the
 // first getDb() call (used by the backtest DAO suite to avoid touching real data).
 let dbFilePathOverride: string | null = null;
+
+export function setDbForTesting(testDb: Database | null): void {
+  db = testDb;
+}
+
+export function setCustomDbPath(filePath: string | null): void {
+  dbFilePathOverride = filePath;
+}
 
 /** Test-only: redirects the unified SQLite file before the first getDb() use. */
 export function setDatabaseFilePathForTests(filePath: string): void {
@@ -357,6 +368,28 @@ function renameWithRetry(tempPath: string, targetPath: string): void {
   }
 }
 
+let lastSaveDurationMs = 0;
+const recentSaveDurations: number[] = [];
+let lastKnownFileSizeBytes = 0;
+
+export function getDbMetrics(): {
+  fileSizeBytes: number;
+  lastSaveDurationMs: number;
+  p95SaveDurationMs: number;
+  saveCount: number;
+  pendingSave: boolean;
+} {
+  const sorted = [...recentSaveDurations].sort((a, b) => a - b);
+  const p95 = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.95)] : 0;
+  return {
+    fileSizeBytes: lastKnownFileSizeBytes,
+    lastSaveDurationMs,
+    p95SaveDurationMs: p95,
+    saveCount: recentSaveDurations.length,
+    pendingSave: isDbSavePending()
+  };
+}
+
 export function saveDbToDisk() {
   if (!db) return;
   if (debouncedSaveTimer) {
@@ -364,6 +397,7 @@ export function saveDbToDisk() {
     clearTimeout(debouncedSaveTimer);
     debouncedSaveTimer = null;
   }
+  const start = Date.now();
   try {
     const data = db.export();
     const buffer = Buffer.from(data);
@@ -375,9 +409,67 @@ export function saveDbToDisk() {
     const tempPath = `${targetPath}.tmp`;
     fs.writeFileSync(tempPath, buffer);
     renameWithRetry(tempPath, targetPath);
+
+    const duration = Date.now() - start;
+    lastSaveDurationMs = duration;
+    recentSaveDurations.push(duration);
+    if (recentSaveDurations.length > 50) recentSaveDurations.shift();
+    lastKnownFileSizeBytes = buffer.length;
+
+    // M4.5 Gatilhos para reabrir a decisão do banco:
+    // 1. Arquivo > 250 MB
+    if (lastKnownFileSizeBytes > 250 * 1024 * 1024) {
+      defaultAlertService.emitAlert(
+        'db_size_trigger',
+        'CRITICAL',
+        `Tamanho do arquivo do banco (${Math.round(lastKnownFileSizeBytes / (1024 * 1024))}MB) ultrapassou o gatilho de 250MB. Reabrir decisão de migração de banco.`
+      );
+    }
+    // 2. p95 da duração do save > 500 ms (mínimo 10 amostras)
+    const sorted = [...recentSaveDurations].sort((a, b) => a - b);
+    const p95 = sorted[Math.floor(sorted.length * 0.95)];
+    if (p95 > 500 && recentSaveDurations.length >= 10) {
+      defaultAlertService.emitAlert(
+        'db_p95_save_trigger',
+        'HIGH',
+        `p95 da duração de gravação do banco (${p95}ms) ultrapassou o gatilho de 500ms. Reabrir decisão de banco.`
+      );
+    }
   } catch (err) {
     console.error('Failed to save SQLite DB to disk:', err);
   }
+}
+
+/**
+ * Prunes dynamic tables per retention policies (M4.4).
+ * IMPORTANT: The signal ledger and signal events are NEVER pruned.
+ */
+export async function pruneDatabaseTables(database?: Database): Promise<{
+  auditLogsPruned: number;
+  aiAuditsPruned: number;
+}> {
+  const target = database || (await getDb());
+  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+
+  let auditLogsPruned = 0;
+  let aiAuditsPruned = 0;
+
+  try {
+    target.run(`DELETE FROM audit_logs WHERE created_at < ?;`, [oneYearAgo]);
+    auditLogsPruned = target.getRowsModified();
+  } catch {
+    /* ignore if table does not exist */
+  }
+
+  try {
+    target.run(`DELETE FROM ai_audits WHERE created_at < ?;`, [ninetyDaysAgo]);
+    aiAuditsPruned = target.getRowsModified();
+  } catch {
+    /* ignore if table does not exist */
+  }
+
+  return { auditLogsPruned, aiAuditsPruned };
 }
 
 export function rowToTradeSignal(columns: string[], row: any[]): TradeSignal {
@@ -1302,41 +1394,52 @@ export async function exportDatabaseJson(): Promise<Record<string, any>> {
 
 export async function factoryResetDatabase(
   defaultWeights: IndicatorWeights,
-  defaultModels: AIModelConfig[]
+  defaultModels: AIModelConfig[],
+  dbOverride?: Database
 ): Promise<{
   success: boolean;
   message: string;
   clearedTables: string[];
   signalsReseededCount: number;
 }> {
-  const database = await getDb();
+  const database = dbOverride || (await getDb());
   console.log('🔄 [FACTORY RESET] Performing global database reset to factory defaults...');
 
-  // 1. Clear dynamic tables
-  database.run(`DELETE FROM trade_signals;`);
-  database.run(`DELETE FROM ticker_snapshots;`);
-  database.run(`DELETE FROM ai_audits;`);
-  database.run(`DELETE FROM watched_symbols;`);
+  // 1. Clear dynamic tables (M3.1 / CA-3.1: signal_ledger and signal_events are preserved!)
+  const safeRun = (sql: string, params?: any[]) => {
+    try {
+      database.run(sql, params);
+    } catch {
+      /* safe fallback if table does not exist in testing isolation */
+    }
+  };
+
+  safeRun(`DELETE FROM trade_signals;`);
+  safeRun(`DELETE FROM ticker_snapshots;`);
+  safeRun(`DELETE FROM ai_audits;`);
+  safeRun(`DELETE FROM watched_symbols;`);
 
   // 2. Reset strategy weights to factory defaults
   const now = Date.now();
-  database.run(`INSERT OR REPLACE INTO strategy_settings (id, weights, updated_at) VALUES (1, ?, ?)`, [
+  safeRun(`INSERT OR REPLACE INTO strategy_settings (id, weights, updated_at) VALUES (1, ?, ?)`, [
     JSON.stringify(defaultWeights),
     now
   ]);
 
   // 3. Reset AI models to factory defaults
-  database.run(`INSERT OR REPLACE INTO ai_models_settings (id, models, updated_at) VALUES (1, ?, ?)`, [
+  safeRun(`INSERT OR REPLACE INTO ai_models_settings (id, models, updated_at) VALUES (1, ?, ?)`, [
     JSON.stringify(defaultModels),
     now
   ]);
 
   // 4. Reset Screener settings to factory defaults
-  database.run(`DELETE FROM screener_settings;`);
+  safeRun(`DELETE FROM screener_settings;`);
 
   // 5. Compact database file
-  database.run('VACUUM;');
-  flushDbSave();
+  safeRun('VACUUM;');
+  if (!dbOverride) {
+    flushDbSave();
+  }
 
   console.log(`✅ [FACTORY RESET] Global reset completed successfully.`);
 
@@ -1347,5 +1450,187 @@ export async function factoryResetDatabase(
     signalsReseededCount: 0
   };
 }
+
+/**
+ * M3.1 / CA-3.1: Dedicated reset for append-only signal ledger.
+ * Fails without explicit { confirm: 'RESET_LEDGER' }.
+ */
+export async function resetSignalLedger(
+  options: { confirm: string },
+  dbOverride?: Database
+): Promise<{ success: boolean; message: string }> {
+  if (!options || options.confirm !== 'RESET_LEDGER') {
+    throw new Error('Confirmação inválida para reset do ledger. Envie { confirm: "RESET_LEDGER" }');
+  }
+
+  const database = dbOverride || (await getDb());
+
+  // Drop triggers temporarily to allow delete
+  database.run('DROP TRIGGER IF EXISTS signal_ledger_no_delete;');
+  database.run('DROP TRIGGER IF EXISTS signal_events_no_delete;');
+
+  database.run('DELETE FROM signal_events;');
+  database.run('DELETE FROM signal_ledger;');
+
+  // Re-enable triggers
+  database.run(`
+    CREATE TRIGGER IF NOT EXISTS signal_ledger_no_delete
+    BEFORE DELETE ON signal_ledger
+    BEGIN
+      SELECT RAISE(FAIL, 'signal_ledger is append-only');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS signal_events_no_delete
+    BEFORE DELETE ON signal_events
+    BEGIN
+      SELECT RAISE(FAIL, 'signal_events is append-only');
+    END;
+  `);
+
+  if (!dbOverride) {
+    scheduleDbSave();
+  }
+
+  return {
+    success: true,
+    message: 'Signal ledger e eventos apagados com sucesso sob autorização dedicada.'
+  };
+}
+
+export const signalLedgerDao = {
+  async recordSignal(params: LedgerSignalParams, dbOverride?: Database): Promise<void> {
+    const database = dbOverride || (await getDb());
+    database.run(
+      `INSERT INTO signal_ledger (
+        id, symbol, category, direction, entry_price, stop_loss, take_profit1, take_profit2,
+        score, factors, unavailable_factors, origin, data_source, tradfi_session, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        params.id,
+        params.symbol,
+        params.category,
+        params.direction,
+        params.entryPrice,
+        params.stopLoss,
+        params.takeProfit1,
+        params.takeProfit2,
+        params.score,
+        JSON.stringify(params.factors || {}),
+        params.unavailableFactors ? JSON.stringify(params.unavailableFactors) : null,
+        params.origin || 'LIVE',
+        params.dataSource || 'BINANCE',
+        params.tradfiSession || null,
+        params.createdAt || Date.now()
+      ]
+    );
+    if (!dbOverride) {
+      scheduleDbSave();
+    }
+  },
+
+  async recordEvent(params: LedgerEventRecord, dbOverride?: Database): Promise<void> {
+    const database = dbOverride || (await getDb());
+    database.run(
+      `INSERT INTO signal_events (
+        signal_id, event_type, price, timestamp, metadata
+      ) VALUES (?, ?, ?, ?, ?)`,
+      [
+        params.signalId,
+        params.eventType,
+        params.price,
+        params.timestamp || Date.now(),
+        params.metadata ? JSON.stringify(params.metadata) : null
+      ]
+    );
+    if (!dbOverride) {
+      scheduleDbSave();
+    }
+  },
+
+  async getClosedSignalsEvidence(origin: OriginFilter = 'LIVE', dbOverride?: Database): Promise<ClosedSignalEvidence[]> {
+    const database = dbOverride || (await getDb());
+    let query = `
+      SELECT
+        l.id, l.symbol, l.category, l.direction, l.entry_price, l.stop_loss,
+        l.take_profit1, l.take_profit2, l.score, l.origin, l.tradfi_session, l.created_at
+      FROM signal_ledger l
+    `;
+    if (origin !== 'ALL') {
+      query += ` WHERE l.origin = '${origin}'`;
+    }
+    const resLedger = database.exec(query);
+    if (!resLedger.length || !resLedger[0].values) return [];
+
+    const signals: ClosedSignalEvidence[] = [];
+    for (const row of resLedger[0].values) {
+      const id = String(row[0]);
+      const symbol = String(row[1]);
+      const category = String(row[2]);
+      const direction = String(row[3]) as 'LONG' | 'SHORT';
+      const entryPrice = Number(row[4]);
+      const stopLoss = Number(row[5]);
+      const takeProfit1 = Number(row[6]);
+      const takeProfit2 = Number(row[7]);
+      const score = Number(row[8]);
+      const rowOrigin = String(row[9]) as 'LIVE' | 'DEMO';
+      const tradfiSession = row[10] ? String(row[10]) : undefined;
+      const createdAt = Number(row[11]);
+
+      const resEvents = database.exec(
+        `SELECT event_type, price, timestamp, metadata FROM signal_events WHERE signal_id = ? ORDER BY timestamp ASC`,
+        [id]
+      );
+      const events: LedgerEventRecord[] = [];
+      if (resEvents.length && resEvents[0].values) {
+        for (const evRow of resEvents[0].values) {
+          events.push({
+            eventType: String(evRow[0]) as any,
+            price: Number(evRow[1]),
+            timestamp: Number(evRow[2]),
+            metadata: evRow[3] ? JSON.parse(String(evRow[3])) : undefined
+          });
+        }
+      }
+
+      const outcome = calculateSignalOutcomeR(
+        {
+          id,
+          symbol,
+          category,
+          direction,
+          entryPrice,
+          stopLoss,
+          takeProfit1,
+          takeProfit2,
+          score,
+          origin: rowOrigin
+        },
+        events
+      );
+
+      if (outcome.isClosed) {
+        const closedAt = events.length > 0 ? events[events.length - 1].timestamp : createdAt;
+        signals.push({
+          id,
+          symbol,
+          category,
+          direction,
+          score,
+          scoreTier: `${Math.floor(score / 10) * 10}-${Math.floor(score / 10) * 10 + 9}`,
+          tradfiSession,
+          origin: rowOrigin,
+          netR: outcome.netR,
+          mfeR: 0,
+          maeR: 0,
+          isWin: outcome.netR > 0,
+          closedAt
+        });
+      }
+    }
+    return signals;
+  }
+};
+
+
 
 

@@ -4,6 +4,7 @@ import { requestJson, requestJsonLimited } from './utils/httpClient.js';
 import { BinanceRateLimiter } from './utils/binanceRateLimiter.js';
 // R-13: health por feed — todo caminho de fetch grava sucesso/falha no registro central.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
+import { incrementMetric } from './utils/metrics.js';
 // R-2: os geradores sintéticos vivem todos em server/demo/.
 import { generateFallbackKlines } from './demo/syntheticKlines.js';
 import { simulateLongShortRatio } from './demo/syntheticMarket.js';
@@ -108,8 +109,8 @@ export function classifyTradfiContract(symbolInfo: any): TradfiCategory | null {
   const haystack = [underlyingType, contractType, ...subTypes].join(' ').toUpperCase();
 
   // Commodity-backed tokens are a genuine classification regardless of the exchange's TradFi marker.
-  if (COMMODITY_BASE_ASSETS.has(base)) return 'COMMODITY';
-  if (FX_BASE_ASSETS.has(base)) return 'FOREX';
+  if (COMMODITY_BASE_ASSETS.has(base) || /COMMODITY|METAL|GOLD|SILVER|OIL/.test(haystack)) return 'COMMODITY';
+  if (FX_BASE_ASSETS.has(base) || /(^|\s)(FX|FOREX)(\s|$)/.test(haystack)) return 'FOREX';
 
   if (!contractType) return null;
 
@@ -117,13 +118,14 @@ export function classifyTradfiContract(symbolInfo: any): TradfiCategory | null {
   const looksTradfi =
     contractType.toUpperCase() === 'TRADIFI_PERPETUAL' ||
     underlyingType === 'INDEX' ||
+    underlyingType === 'EQUITY' ||
     /(^|\s)(EQUITY|STOCK|INDEX|FX|FOREX|COMMODITY|METAL|GOLD)(\s|$)/.test(haystack);
   if (!looksTradfi) return null;
 
   if (/COMMODITY|METAL|GOLD|SILVER|OIL/.test(haystack)) return 'COMMODITY';
   if (/(^|\s)(FX|FOREX)(\s|$)/.test(haystack)) return 'FOREX';
-  if (/EQUITY|STOCK/.test(haystack)) return 'EQUITY';
   if (/INDEX/.test(haystack)) return 'INDEX';
+  if (/EQUITY|STOCK/.test(haystack)) return 'EQUITY';
 
   // Marked TradFi by the exchange but carrying no finer subtype — report instead of guessing.
   return null;
@@ -362,21 +364,137 @@ export function getTradingScheduleStatus(): {
 }
 
 /**
- * Veredito pelo calendário oficial da exchange para uma categoria em um instante.
- * `null` significa "sem schedule aplicável" (cache ausente/mercado ausente) — o chamador
- * decide o fallback; aqui não inventamos fechamento.
+ * Returns active TradFi trading session for a category or symbol at an instant.
+ * M1.4: Derives session type and bounds from exchange tradingSchedule cache.
  */
-function exchangeScheduleSaysOpen(category: TradfiCategory, at: Date): boolean | null {
+export function getTradfiSession(
+  symbolOrCategory: string | TradfiCategory,
+  at: Date = new Date()
+): { type: TradingSessionType; startsAt: number; endsAt: number } | null {
   if (!tradingScheduleCache) return null;
-  const marketKey = TRADFI_CATEGORY_TO_SCHEDULE_MARKET[category];
+
+  let category: TradfiCategory | undefined;
+  if (symbolOrCategory === 'EQUITY' || symbolOrCategory === 'INDEX' || symbolOrCategory === 'COMMODITY' || symbolOrCategory === 'FOREX') {
+    category = symbolOrCategory;
+  } else {
+    const asset = getTradfiAsset(symbolOrCategory);
+    category = asset?.tradfiCategory;
+  }
+
+  const marketKey = category ? (TRADFI_CATEGORY_TO_SCHEDULE_MARKET[category] || category) : 'EQUITY';
   const schedule = tradingScheduleCache[marketKey];
-  if (!schedule) return null; // mercado não coberto pelo endpoint → relógio de NY
+  if (!schedule || !Array.isArray(schedule.sessions)) return null;
 
   const t = at.getTime();
   const session = schedule.sessions.find(s => t >= s.startTime && t < s.endTime);
-  if (!session) return false; // fora de qualquer sessão declarada: fechado
-  // Sessões produtivas: REGULAR cobre o pregão; OVERNIGHT é a extensão contínua de alguns mercados.
-  return session.type === 'REGULAR' || session.type === 'OVERNIGHT';
+  if (!session) return null;
+
+  return {
+    type: session.type,
+    startsAt: session.startTime,
+    endsAt: session.endTime
+  };
+}
+
+/**
+ * Checks whether a given session type allows generating new trading signals.
+ * D2 / M1.4: REGULAR, PRE_MARKET, and AFTER_MARKET allow new signals. OVERNIGHT and NO_TRADING block them.
+ */
+export function isTradfiSessionAllowed(sessionType: TradingSessionType): boolean {
+  if (sessionType === 'OVERNIGHT' || sessionType === 'NO_TRADING') {
+    return false;
+  }
+  const allowedEnv = process.env.TRADFI_ALLOWED_SESSIONS;
+  if (allowedEnv) {
+    const allowed = allowedEnv.split(',').map(s => s.trim().toUpperCase());
+    return allowed.includes(sessionType);
+  }
+  return sessionType === 'REGULAR' || sessionType === 'PRE_MARKET' || sessionType === 'AFTER_MARKET';
+}
+
+/**
+ * M1.6: Returns score bonus required during extended sessions (PRE_MARKET / AFTER_MARKET)
+ * due to lower market liquidity.
+ */
+export function getTradfiExtendedScoreBonus(sessionType?: TradingSessionType | null): number {
+  if (!sessionType) return 0;
+  if (sessionType === 'PRE_MARKET' || sessionType === 'AFTER_MARKET') {
+    const envBonus = Number(process.env.TRADFI_EXTENDED_MIN_SCORE_BONUS);
+    return Number.isFinite(envBonus) && envBonus >= 0 ? envBonus : 5;
+  }
+  return 0;
+}
+
+/**
+ * M1.3 / M1.4 / M1.5: Determines whether trading signals can be generated for an asset.
+ * - PERPETUAL contracts (crypto) are never blocked by market calendars.
+ * - TRADIFI_PERPETUAL contracts are verified against exchange tradingSchedule.
+ * - Fail-closed if tradingSchedule is missing and TRADFI_SCHEDULE_FALLBACK is not 'clock'.
+ */
+export function canGenerateSignalsForAsset(
+  asset: { symbol: string; contractType?: string; tradfiCategory?: TradfiCategory | null },
+  at: Date = new Date()
+): { allow: boolean; reason?: string; session?: TradingSessionType; scoreBonus?: number } {
+  const contractType = String(asset.contractType || '').toUpperCase();
+
+  // M1.3: Crypto perpetuals are NEVER blocked by traditional market calendar
+  if (contractType !== 'TRADIFI_PERPETUAL') {
+    return { allow: true };
+  }
+
+  const category = asset.tradfiCategory || 'EQUITY';
+  const session = getTradfiSession(category, at);
+
+  if (session) {
+    if (isTradfiSessionAllowed(session.type)) {
+      return {
+        allow: true,
+        session: session.type,
+        scoreBonus: getTradfiExtendedScoreBonus(session.type)
+      };
+    }
+    return {
+      allow: false,
+      session: session.type,
+      reason: `Sessão tradicional ${session.type} fechada (mercado fechado para novos sinais).`
+    };
+  }
+
+  // If no tradingSchedule cache is present
+  if (process.env.TRADFI_SCHEDULE_FALLBACK === 'clock') {
+    const open = isTradfiMarketOpenClock(category, at);
+    if (!open) {
+      return {
+        allow: false,
+        reason: `Mercado tradicional fechado pelo relógio de Nova York (fallback de horário).`
+      };
+    }
+    return { allow: true, session: 'REGULAR', scoreBonus: 0 };
+  }
+
+  // Fail-closed (M1.5 / CA-1.3)
+  incrementMetric('tradingScheduleBlocks');
+  return {
+    allow: false,
+    reason: `tradingSchedule indisponível da exchange (fail-closed por segurança: mercado fechado para novos sinais).`
+  };
+}
+
+/** Fallback clock evaluation using America/New_York timezone */
+export function isTradfiMarketOpenClock(category: TradfiCategory, at: Date = new Date()): boolean {
+  if (category === 'COMMODITY') return true;
+
+  const { weekday, minutes } = newYorkClock(at);
+
+  if (category === 'FOREX') {
+    if (weekday === 6) return false;                        // Saturday: closed
+    if (weekday === 0) return minutes >= 22 * 60;          // Sunday: opens 22:00 NY
+    if (weekday === 5) return minutes < 22 * 60;           // Friday: closes 22:00 NY
+    return true;
+  }
+
+  if (weekday === 0 || weekday === 6) return false;
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
 
 /** Test-only: injeta fixture de calendário sem rede. */
@@ -396,38 +514,22 @@ export function __resetTradingScheduleForTests(): void {
 
 /**
  * Checks whether the underlying traditional market for a category is currently open.
- *
- * R-11: quando o calendário oficial (`/fapi/v1/tradingSchedule`, cache diário) está disponível
- * e cobre a categoria, ELE decide — modela feriados e horários reduzidos que o relógio puro
- * não enxerga. Sem resposta, mantemos o cálculo por America/New_York e a suposição fica
- * registrada em `getTradingScheduleStatus().assumptions`.
- *
- * - COMMODITY (sem schedule): gold tokens/perpetuals trade around the clock, so always open.
- * - FOREX (sem schedule): Sunday 22:00 to Friday 22:00 America/New_York (24/5).
- * - EQUITY / INDEX (sem schedule): 09:30–16:00 America/New_York, Monday–Friday.
- *
- * The previous implementation hardcoded a 14:30–21:00 UTC window, which is 09:30–16:00 EST only — it
- * was an hour wrong for the whole of US daylight saving time. Using the IANA zone fixes that.
- *
- * `at` is injectable so this is unit-testable.
  */
 export function isTradfiMarketOpen(category: TradfiCategory, at: Date = new Date()): boolean {
-  const scheduleVerdict = exchangeScheduleSaysOpen(category, at);
-  if (scheduleVerdict !== null) return scheduleVerdict;
-
-  if (category === 'COMMODITY') return true;
-
-  const { weekday, minutes } = newYorkClock(at);
-
-  if (category === 'FOREX') {
-    if (weekday === 6) return false;                        // Saturday: closed
-    if (weekday === 0) return minutes >= 22 * 60;          // Sunday: opens 22:00 NY
-    if (weekday === 5) return minutes < 22 * 60;           // Friday: closes 22:00 NY
-    return true;
+  if (tradingScheduleCache) {
+    const session = getTradfiSession(category, at);
+    if (session) {
+      return isTradfiSessionAllowed(session.type);
+    }
+    // If market category is absent from schedule, fallback to clock without inventing closure
+    const marketKey = TRADFI_CATEGORY_TO_SCHEDULE_MARKET[category] || category;
+    if (!tradingScheduleCache[marketKey]) {
+      return isTradfiMarketOpenClock(category, at);
+    }
+    return false;
   }
 
-  if (weekday === 0 || weekday === 6) return false;
-  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+  return isTradfiMarketOpenClock(category, at);
 }
 
 // Helper to fetch JSON safely with timeout, User-Agent, and detailed logging

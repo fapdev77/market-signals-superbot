@@ -17,6 +17,7 @@
     "test": "vitest run",
     "audit:prod": "npm audit --omit=dev --audit-level=moderate",
     "measure:db-save": "tsx scripts/measure-db-save.ts",
+    "smoke:binance": "tsx scripts/binance-smoke.ts",
     "ci": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {

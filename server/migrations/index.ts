@@ -167,6 +167,108 @@ export const MIGRATIONS: Migration[] = [
       addColumnIfMissing(db, 'trade_signals', 'origin', "TEXT NOT NULL DEFAULT 'LIVE'");
       addColumnIfMissing(db, 'historical_klines', 'origin', "TEXT NOT NULL DEFAULT 'LIVE'");
     }
+  },
+  {
+    version: 7,
+    id: '007-create-historical-funding',
+    description: 'R-21 / M2.1: Cria a tabela historical_funding para cobrança real de funding no backtest.',
+    up: db => {
+      exec(db, `
+        CREATE TABLE IF NOT EXISTS historical_funding (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          symbol TEXT NOT NULL,
+          funding_time INTEGER NOT NULL,
+          funding_rate REAL NOT NULL,
+          mark_price REAL,
+          rate_type TEXT NOT NULL DEFAULT 'Normal'
+        );
+      `);
+      exec(
+        db,
+        `CREATE UNIQUE INDEX IF NOT EXISTS symbol_funding_time_unique
+         ON historical_funding (symbol, funding_time);`
+      );
+    }
+  },
+  {
+    version: 8,
+    id: '008-create-signal-ledger-and-events',
+    description:
+      'M3.1 / R-18: Cria signal_ledger e signal_events com triggers append-only impedindo UPDATE e DELETE.',
+    up: db => {
+      exec(db, `
+        CREATE TABLE IF NOT EXISTS signal_ledger (
+          id TEXT PRIMARY KEY,
+          symbol TEXT NOT NULL,
+          category TEXT NOT NULL,
+          direction TEXT NOT NULL,
+          entry_price REAL NOT NULL,
+          stop_loss REAL NOT NULL,
+          take_profit1 REAL NOT NULL,
+          take_profit2 REAL NOT NULL,
+          score REAL NOT NULL,
+          factors TEXT NOT NULL,
+          unavailable_factors TEXT,
+          origin TEXT NOT NULL DEFAULT 'LIVE',
+          data_source TEXT NOT NULL DEFAULT 'BINANCE',
+          tradfi_session TEXT,
+          created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS signal_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          signal_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          price REAL NOT NULL,
+          timestamp INTEGER NOT NULL,
+          metadata TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_signal_events_signal_id ON signal_events (signal_id);
+        CREATE INDEX IF NOT EXISTS idx_signal_ledger_symbol ON signal_ledger (symbol);
+        CREATE INDEX IF NOT EXISTS idx_signal_ledger_created_at ON signal_ledger (created_at);
+
+        CREATE TRIGGER IF NOT EXISTS signal_ledger_no_update
+        BEFORE UPDATE ON signal_ledger
+        BEGIN
+          SELECT RAISE(FAIL, 'signal_ledger is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS signal_ledger_no_delete
+        BEFORE DELETE ON signal_ledger
+        BEGIN
+          SELECT RAISE(FAIL, 'signal_ledger is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS signal_events_no_update
+        BEFORE UPDATE ON signal_events
+        BEGIN
+          SELECT RAISE(FAIL, 'signal_events is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS signal_events_no_delete
+        BEFORE DELETE ON signal_events
+        BEGIN
+          SELECT RAISE(FAIL, 'signal_events is append-only');
+        END;
+      `);
+    }
+  },
+  {
+    version: 9,
+    id: '009-create-app-state',
+    description:
+      'M4.2 / R-25: Cria tabela app_state para persistencia de kill-switch e limites de risco.',
+    up: db => {
+      exec(
+        db,
+        `CREATE TABLE IF NOT EXISTS app_state (
+           key TEXT PRIMARY KEY,
+           value TEXT NOT NULL,
+           updated_at INTEGER NOT NULL
+         );`
+      );
+    }
   }
 ];
 

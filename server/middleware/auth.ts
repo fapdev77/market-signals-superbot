@@ -1,33 +1,86 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 // In production and dev, a secure token must be used.
 // If API_AUTH_TOKEN is not supplied in environment, generate a cryptographically secure 32-char token at startup.
 let dynamicSessionToken: string | null = null;
 let hasLoggedTokenWarning = false;
 
-export function getEffectiveAuthToken(): string {
+export function resetTokenForTests(): void {
+  dynamicSessionToken = null;
+  hasLoggedTokenWarning = false;
+}
+
+export interface SessionTokenOptions {
+  nodeEnv?: string;
+  isVitest?: boolean;
+  tokenFilePath?: string;
+}
+
+export function initOrLoadSessionToken(opts?: SessionTokenOptions): string {
+  const nodeEnv = opts?.nodeEnv ?? process.env.NODE_ENV ?? 'development';
+  const isVitest = opts?.isVitest ?? Boolean(process.env.VITEST);
+  const tokenFilePath =
+    opts?.tokenFilePath ?? path.join(process.cwd(), 'data', 'session-token');
+
   if (process.env.API_AUTH_TOKEN && process.env.API_AUTH_TOKEN.trim().length > 0) {
-    return process.env.API_AUTH_TOKEN.trim();
+    dynamicSessionToken = process.env.API_AUTH_TOKEN.trim();
+    return dynamicSessionToken;
   }
+
   if (!dynamicSessionToken) {
-    if (process.env.NODE_ENV === 'test') {
+    // M4.8: Token fixo de teste só é aceito com NODE_ENV=test E VITEST definido
+    if (nodeEnv === 'test' && isVitest) {
       dynamicSessionToken = 'test-secret-token-32-chars-long-abc';
     } else {
       dynamicSessionToken = crypto.randomBytes(24).toString('base64url');
     }
   }
 
-  if (!hasLoggedTokenWarning && process.env.NODE_ENV !== 'test') {
+  if (!hasLoggedTokenWarning && nodeEnv !== 'test') {
     hasLoggedTokenWarning = true;
-    console.log('\n======================================================');
-    console.log('🔒 [SECURITY] API_AUTH_TOKEN não definido no ambiente.');
-    console.log(`🔑 Token de sessão gerado dinamicamente: ${dynamicSessionToken}`);
-    console.log('Utilize este token no cabeçalho: Authorization: Bearer <token>');
-    console.log('======================================================\n');
+    if (nodeEnv === 'production') {
+      try {
+        const dir = path.dirname(tokenFilePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(tokenFilePath, dynamicSessionToken, { mode: 0o600 });
+        if (process.platform !== 'win32') {
+          try {
+            fs.chmodSync(tokenFilePath, 0o600);
+          } catch {
+            /* ignore chmod error on platforms without posix perms */
+          }
+        }
+      } catch (err: any) {
+        console.error('Falha ao gravar session-token em modo 0600:', err?.message || err);
+      }
+      // CA-4.6: Nenhum log de produção contém o token; o log mostra apenas o caminho
+      console.log('\n======================================================');
+      console.log('🔒 [SECURITY] API_AUTH_TOKEN não definido no ambiente.');
+      console.log(`📁 Token gravado com segurança em: ${tokenFilePath} (modo 0600)`);
+      console.log('Utilize este token no cabeçalho: Authorization: Bearer <token>');
+      console.log('======================================================\n');
+    } else {
+      console.log('\n======================================================');
+      console.log('🔒 [SECURITY] API_AUTH_TOKEN não definido no ambiente.');
+      console.log(`🔑 Token de sessão gerado dinamicamente: ${dynamicSessionToken}`);
+      console.log('Utilize este token no cabeçalho: Authorization: Bearer <token>');
+      console.log('======================================================\n');
+    }
   }
 
   return dynamicSessionToken;
+}
+
+export function getEffectiveAuthToken(): string {
+  if (process.env.API_AUTH_TOKEN && process.env.API_AUTH_TOKEN.trim().length > 0) {
+    return process.env.API_AUTH_TOKEN.trim();
+  }
+  return initOrLoadSessionToken();
 }
 
 export function validateTokenConstantTime(providedToken: string, expectedToken: string): boolean {

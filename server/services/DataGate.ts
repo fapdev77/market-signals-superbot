@@ -1,4 +1,5 @@
 import { TickerData } from '../../src/types.js';
+import { isClockDegraded, getClockDriftMs } from './ClockService.js';
 
 export const MAX_DATA_AGE_MS = 60000; // 60 seconds tolerance
 
@@ -49,6 +50,15 @@ export function canGenerateSignals(ticker: TickerData, now: number = Date.now())
     return {
       allow: false,
       reason: 'Qualidade do feed degradada ou instável.',
+      isDegraded: true,
+      ageMs
+    };
+  }
+
+  if (isClockDegraded()) {
+    return {
+      allow: false,
+      reason: `Relógio do sistema degradado por deriva (${getClockDriftMs()}ms > 2000ms). Sinais bloqueados para prevenir distorções temporais.`,
       isDegraded: true,
       ageMs
     };

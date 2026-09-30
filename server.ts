@@ -16,7 +16,7 @@ import {
   DEFAULT_FUNDING_INTERVAL_HOURS
 } from './server/binanceService.js';
 import { initBinanceWebSocket } from './server/binanceWebsocket.js';
-import { processTickerState, buildTradeSignal } from './server/signalEngine.js';
+import { processTickerState, buildTradeSignal, SIGNAL_LOOKBACK_CANDLES } from './server/signalEngine.js';
 import {
   saveSignal,
   getIndicatorWeights,
@@ -28,14 +28,20 @@ import {
   expireActiveSignalsByCategory,
   expireAllActiveSignals,
   getActiveSignals,
-  flushDbSave
+  flushDbSave,
+  signalLedgerDao
 } from './server/db.js';
 import { marketScreener } from './server/services/MarketScreenerService.js';
 import { TickerData, BotState, IndicatorWeights, LongShortRatioData } from './src/types.js';
 import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
 import { canGenerateSignals, canEvaluateActiveTrades } from './server/services/DataGate.js';
 import { resolveRawTicker, resolveMarketInputs, evaluatePositionManagement } from './server/services/TickProcessor.js';
-import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted } from './server/services/RiskManager.js';
+import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted, loadAppStateFromDb, getRiskLimits } from './server/services/RiskManager.js';
+import { resolveServerHost, enforceHostBinding } from './server/utils/hostGuard.js';
+import { initOrLoadSessionToken } from './server/middleware/auth.js';
+import { initOrRestoreDatabase, createScheduledBackup, ensureSqlInstance } from './server/services/BackupService.js';
+import { checkBinanceServerTimeDrift } from './server/services/ClockService.js';
+import { getDb } from './server/db.js';
 import { createApp } from './server/app.js';
 // R-15: logger estruturado + métricas em memória.
 import { logJson } from './server/utils/logger.js';
@@ -105,15 +111,50 @@ process.on('beforeExit', () => {
 });
 
 async function startServer() {
-  // S1: Production startup assertion
-  if (process.env.NODE_ENV === 'production' && !process.env.API_AUTH_TOKEN) {
-    console.error('❌ [FATAL SECURITY ERROR] API_AUTH_TOKEN is required in production environment.');
-    process.exit(1);
-  }
+  // M4.8: Initialize session token (auto-generates & stores 0600 file in prod, or uses env var)
+  initOrLoadSessionToken();
 
   // Environment constraint: Dev server must run on port 3000 in AI Studio
   const PORT = process.env.NODE_ENV === 'production' ? (Number(process.env.PORT) || 3000) : 3000;
-  const HOST = process.env.HOST || '0.0.0.0';
+  // M4.1: Host binding security guard (defaults to 127.0.0.1; forbids 0.0.0.0 in prod without flag)
+  const HOST = resolveServerHost(process.env.HOST);
+  enforceHostBinding(HOST, process.env.NODE_ENV, process.env.ALLOW_PUBLIC_BIND === 'true');
+
+  // M4.3: Check database integrity and restore from backup if corrupted
+  const dbPath = path.join(process.cwd(), 'data', 'superbot.sqlite');
+  const backupDir = path.join(process.cwd(), 'data', 'backups');
+  try {
+    await ensureSqlInstance();
+    initOrRestoreDatabase(dbPath, backupDir);
+  } catch (err: any) {
+    console.error('❌ [FATAL DATABASE INTEGRITY ERROR]:', err?.message || err);
+    process.exit(1);
+  }
+
+  // M4.2: Load persistent app_state (kill-switch and risk limits) at boot
+  try {
+    const database = await getDb();
+    await loadAppStateFromDb(database);
+  } catch (err: any) {
+    console.warn('⚠️ Falha ao inicializar banco para app_state:', err?.message || err);
+  }
+
+  // M4.6: Clock drift initial verification and 10m periodic check
+  checkBinanceServerTimeDrift().catch(err => console.warn('Falha no check inicial de relógio:', err));
+  const clockCheckTimer = setInterval(() => {
+    checkBinanceServerTimeDrift().catch(err => console.warn('Falha periódica no check de relógio:', err));
+  }, 10 * 60 * 1000);
+  clockCheckTimer.unref();
+
+  // M4.3: Scheduled database backup every 6 hours
+  const scheduledBackupTimer = setInterval(() => {
+    try {
+      createScheduledBackup(dbPath, backupDir);
+    } catch (err) {
+      console.error('Falha ao executar backup agendado:', err);
+    }
+  }, 6 * 60 * 60 * 1000);
+  scheduledBackupTimer.unref();
 
   // Default indicator weights and models for immediate startup
   const defaultWeights: IndicatorWeights = getDefaultIndicatorWeights();
@@ -186,8 +227,8 @@ async function startServer() {
             }
             const { raw } = resolved;
 
-            // Fetch live Kline data (15m timeframe, 60 candles)
-            const klines = await fetchKlines(symbol, '15m', 60);
+            // Fetch live Kline data (15m timeframe, standard lookback candles - M2.3)
+            const klines = await fetchKlines(symbol, '15m', SIGNAL_LOOKBACK_CANDLES);
 
             // Fetch live Open Interest with real change tracking (Phase 2.2)
             const oiData = await fetchOpenInterest(symbol);
@@ -281,6 +322,30 @@ async function startServer() {
                   );
                   if (newSignal) {
                     await saveSignal(newSignal);
+                    // M3.1: Server-authoritative append-only signal ledger & events
+                    signalLedgerDao.recordSignal({
+                      id: newSignal.id,
+                      symbol: newSignal.symbol,
+                      category: newSignal.strategyCategory || targetCategory,
+                      direction: newSignal.direction,
+                      entryPrice: newSignal.currentPrice,
+                      stopLoss: newSignal.stopLoss,
+                      takeProfit1: newSignal.target1,
+                      takeProfit2: newSignal.target2,
+                      score: newSignal.confluenceScore,
+                      factors: newSignal.confluenceFactors,
+                      origin: newSignal.origin || 'LIVE',
+                      tradfiSession: tradfiAsset?.tradfiCategory,
+                      createdAt: newSignal.createdAt
+                    }).catch(e => console.warn('Ledger signal record error:', e));
+
+                    signalLedgerDao.recordEvent({
+                      signalId: newSignal.id,
+                      eventType: 'ENTRY',
+                      price: newSignal.currentPrice,
+                      timestamp: newSignal.createdAt || Date.now()
+                    }).catch(e => console.warn('Ledger event entry error:', e));
+
                     // Keep the in-tick risk snapshot current so limits hold for the rest of this tick.
                     openSignals.push(newSignal);
                     botState.signalsGenerated24h++;
@@ -304,12 +369,31 @@ async function startServer() {
                   if (action.type === 'HIT_TARGET2') {
                     await updateSignalStatus(action.signalId, 'TARGET_REACHED', action.reason);
                     console.log(`🎯 [TARGET 2 HIT] ${symbol} hit final take profit.`);
+                    signalLedgerDao.recordEvent({
+                      signalId: action.signalId,
+                      eventType: 'TARGET2',
+                      price: processed.price,
+                      timestamp: Date.now()
+                    }).catch(e => console.warn('Ledger event TARGET2 error:', e));
                   } else if (action.type === 'STOPPED_OUT') {
                     await updateSignalStatus(action.signalId, 'STOPPED_OUT', action.reason);
                     console.log(`🛑 [STOPPED OUT] ${symbol} (${action.reason})`);
+                    const isBreakeven = action.reason?.includes('Breakeven');
+                    signalLedgerDao.recordEvent({
+                      signalId: action.signalId,
+                      eventType: isBreakeven ? 'BREAKEVEN' : 'STOP',
+                      price: processed.price,
+                      timestamp: Date.now()
+                    }).catch(e => console.warn('Ledger event STOP/BREAKEVEN error:', e));
                   } else {
                     console.log(`🛡️ [BREAKEVEN ACTIVATED] ${symbol} stop moved to entry.`);
                     await updateSignal(action.signal);
+                    signalLedgerDao.recordEvent({
+                      signalId: action.signal.id,
+                      eventType: 'PARTIAL',
+                      price: processed.price,
+                      timestamp: Date.now()
+                    }).catch(e => console.warn('Ledger event PARTIAL error:', e));
                   }
                 }
               }

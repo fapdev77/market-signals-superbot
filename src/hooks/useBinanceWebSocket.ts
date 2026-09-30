@@ -18,9 +18,9 @@ export interface WSLogEntry {
   message: string;
 }
 
+// Phase 5 / M0: Migrated to Binance Futures routed /market endpoint
 const WS_URLS = [
-  'wss://fstream.binance.com/ws/!ticker@arr',
-  'wss://stream.binance.com/ws/!ticker@arr'
+  'wss://fstream.binance.com/market/stream?streams=!ticker@arr'
 ];
 
 export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdate?: (updated: TickerData[]) => void) {
@@ -47,7 +47,6 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
 
   const [logs, setLogs] = useState<WSLogEntry[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
-  const activeUrlIndex = useRef<number>(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const addLog = useCallback((level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS', message: string) => {
@@ -65,7 +64,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
       return;
     }
 
-    const currentUrl = WS_URLS[activeUrlIndex.current];
+    const currentUrl = WS_URLS[0];
     setStatus(prev => ({
       ...prev,
       connecting: true,
@@ -73,7 +72,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
       lastError: null
     }));
 
-    addLog('INFO', `Abrindo conexão WebSocket navegador cliente: ${currentUrl}`);
+    addLog('INFO', `Abrindo conexão WebSocket Binance Futures (/market): ${currentUrl}`);
 
     try {
       const ws = new WebSocket(currentUrl);
@@ -86,13 +85,14 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
           connecting: false,
           lastError: null
         }));
-        addLog('SUCCESS', `Conexão WebSocket navegador estabelecida com sucesso com ${currentUrl}`);
+        addLog('SUCCESS', `Conexão WebSocket navegador estabelecida com sucesso com Binance Futures (/market)`);
       };
 
       ws.onmessage = (event) => {
         try {
           const raw = JSON.parse(event.data);
-          if (Array.isArray(raw)) {
+          const data = raw.data ? raw.data : raw;
+          if (Array.isArray(data)) {
             setStatus(prev => ({
               ...prev,
               messagesReceived: prev.messagesReceived + 1,
@@ -101,7 +101,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
 
             // Map incoming websocket ticker array to fast symbol lookup
             const wsMap = new Map<string, any>();
-            for (const item of raw) {
+            for (const item of data) {
               if (item && item.s) {
                 wsMap.set(item.s, item);
               }
@@ -138,13 +138,13 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
         }
       };
 
-      ws.onerror = (err: any) => {
+      ws.onerror = (_err: any) => {
         const errorMsg = 'Erro de rede ou bloqueio CORS/WSS no WebSocket';
         setStatus(prev => ({
           ...prev,
           lastError: errorMsg
         }));
-        addLog('ERROR', `Erro na conexão WebSocket navegador (${currentUrl}): ${errorMsg}`);
+        addLog('ERROR', `Erro na conexão WebSocket navegador: ${errorMsg}`);
       };
 
       ws.onclose = (event) => {
@@ -154,14 +154,11 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
           connecting: false
         }));
 
-        addLog('WARN', `Conexão WebSocket encerrada (Código: ${event.code}). Alternando servidor e reconectando em 3s...`);
-
-        // Switch fallback URL index
-        activeUrlIndex.current = (activeUrlIndex.current + 1) % WS_URLS.length;
+        addLog('WARN', `Conexão WebSocket encerrada (Código: ${event.code}). Reconectando em 4s...`);
 
         reconnectTimeoutRef.current = setTimeout(() => {
           connectWebSocket();
-        }, 3000);
+        }, 4000);
       };
 
     } catch (err: any) {
@@ -175,7 +172,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
 
       reconnectTimeoutRef.current = setTimeout(() => {
         connectWebSocket();
-      }, 4000);
+      }, 5000);
     }
   }, [addLog]);
 
@@ -190,11 +187,18 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
         wsRef.current.close();
       }
     };
-  }, []);
+  }, [connectWebSocket]);
+
+  const reconnect = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    connectWebSocket();
+  }, [connectWebSocket]);
 
   return {
     status,
     logs,
-    reconnect: connectWebSocket
+    reconnect
   };
 }

@@ -97,6 +97,9 @@ export interface TickerData {
     unavailableFactors?: string[];
   };
 
+  /** TradFi trading session if instrument is TRADIFI_PERPETUAL (M1.6 / Phase 5). */
+  tradfiSession?: 'REGULAR' | 'PRE_MARKET' | 'AFTER_MARKET' | 'OVERNIGHT' | 'NO_TRADING';
+
   updatedAt: number;                // timestamp
 }
 
@@ -235,6 +238,9 @@ export interface TradeSignal {
   expirationReason?: string;        // Razão de encerramento (ex: "TTL Expirado", "Stop Loss", "Alvo 2", "Invalidação Técnica")
   isBreakevenActive?: boolean;      // True se atingiu Alvo 1 e o Stop Loss foi movido para o preço de entrada
   status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
+
+  /** TradFi trading session at time of signal generation (M1.6 / Phase 5). */
+  tradfiSession?: 'REGULAR' | 'PRE_MARKET' | 'AFTER_MARKET' | 'OVERNIGHT' | 'NO_TRADING';
 
   /**
    * R-2: proveniência do sinal. `DEMO` só é gravado quando o sinal nasceu de dado
@@ -526,6 +532,14 @@ export interface BacktestResult {
   disabledFactors?: string[];
   /** Cost/parameter assumptions baked into the simulation, surfaced so results are not over-read. */
   assumptions?: string[];
+  /** True when any historical factor (OI, funding, long/short) has < 100% coverage (M2.2 / Phase 5). */
+  reducedFactorSet?: boolean;
+  /** Coverage % across historical factors (M2.2 / Phase 5). */
+  factorCoverage?: {
+    openInterest: number;
+    funding: number;
+    longShort: number;
+  };
 }
 
 export interface LiquidityBucket {
@@ -585,6 +599,16 @@ export interface AutoTuneResult {
   oosValidation?: BacktestResult;
   /** R-10: timestamp the training slice ends at (parameters are only fitted before it). */
   trainedUntil?: number;
+  /** M2.6: Final holdout validation with bootstrap confidence interval. */
+  holdoutValidation?: {
+    isRobust: boolean;
+    trialsCount: number;
+    confidenceInterval: {
+      mean: number;
+      lowerBound: number;
+      upperBound: number;
+    };
+  };
 }
 
 // ============================================

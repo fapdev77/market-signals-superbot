@@ -321,19 +321,23 @@ export function createMarketRouter(
     }
   });
 
-  // TradFi Assets & Trading Schedule Status (Phase 2.4)
+  // TradFi Assets & Trading Schedule Status (Phase 2.4 & Phase 5 M1)
   router.get('/tradfi/assets', async (req: Request, res: Response) => {
     try {
-      const { TRADFI_ASSETS, isTradfiMarketOpen } = await import('../binanceService.js');
+      const { TRADFI_ASSETS, isTradfiMarketOpen, getTradfiSession, getTradfiExtendedScoreBonus } = await import('../binanceService.js');
       const tickerCache = getTickerCache();
 
       const items = TRADFI_ASSETS.map(asset => {
         const liveTicker = tickerCache[asset.symbol];
+        const session = getTradfiSession(asset.tradfiCategory);
         const isOpen = isTradfiMarketOpen(asset.tradfiCategory);
+        const scoreBonus = getTradfiExtendedScoreBonus(session?.type);
 
         return {
           ...asset,
           isOpen,
+          tradfiSession: session?.type || (isOpen ? 'REGULAR' : 'NO_TRADING'),
+          sessionScoreBonus: scoreBonus,
           price: liveTicker?.price || null,
           priceChangePercent24h: liveTicker?.priceChangePercent24h || 0,
           volume24h: liveTicker?.volume24h || 0,

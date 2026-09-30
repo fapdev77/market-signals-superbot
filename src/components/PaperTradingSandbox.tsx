@@ -466,10 +466,13 @@ export const PaperTradingSandbox: React.FC<PaperTradingSandboxProps> = ({
                 <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-mono">
                   100% SEM RISCO
                 </span>
+                <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">
+                  SIMULAÇÃO LOCAL (DISTINTA DO LEDGER)
+                </span>
               </h3>
             </div>
             <p className="text-[11px] text-neutral-400 font-sans">
-              Simulador em tempo real com book ao vivo, cálculo de corretagem (maker/taker), slippage e rastreamento de PnL/ROE.
+              Simulador em tempo real no navegador (armazenamento local). Não compõe o Signal Ledger institucional do servidor.
             </p>
           </div>
         </div>

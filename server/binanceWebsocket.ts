@@ -4,6 +4,9 @@ import { LiquidationEvent, LiquidationSummary } from '../src/types.js';
 import { simulateLiquidationSummary } from './demo/syntheticMarket.js';
 // R-13: health por feed.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
+import { buildFuturesWsUrl, calculateWsBackoff } from './utils/wsUrl.js';
+
+export const WS_SILENCE_MS = 15000; // 15 seconds watchdog limit for active tickers
 
 export interface WSStatus {
   connected: boolean;
@@ -51,9 +54,11 @@ export function getBinanceLogs(): BinanceLogEntry[] {
 let wsInstance: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let watchdogTimer: NodeJS.Timeout | null = null;
+let connectionRotationTimer: NodeJS.Timeout | null = null;
 
 let liqWsInstance: WebSocket | null = null;
 let liqReconnectTimer: NodeJS.Timeout | null = null;
+let liqReconnectAttempts = 0;
 
 // In-memory liquidation events buffer per symbol (rolling 30 mins, max 60 per symbol)
 const liquidationBuffer: Record<string, LiquidationEvent[]> = {};
@@ -86,9 +91,6 @@ export function getLiquidationsSummary(symbol: string, currentPrice?: number): L
     }
   });
 
-  // Phase 2.5.2: an empty buffer means "no liquidations observed", not "invent a plausible number".
-  // The old sine-wave estimate was presented to the operator as real flow. It is now opt-in and
-  // explicitly flagged as simulated so the UI can label it.
   if (recent.length === 0 && currentPrice && currentPrice > 0 && process.env.ALLOW_SYNTHETIC_DATA === 'true') {
     return simulateLiquidationSummary(cleanSymbol, currentPrice);
   }
@@ -107,7 +109,7 @@ export function getLiquidationsSummary(symbol: string, currentPrice?: number): L
 const wsStatus: WSStatus = {
   connected: false,
   connecting: false,
-  url: 'wss://fstream.binance.com/ws/!ticker@arr',
+  url: buildFuturesWsUrl('market', ['!ticker@arr']),
   lastConnectedAt: null,
   lastTickAt: null,
   messagesReceived: 0,
@@ -130,6 +132,46 @@ export function getWebSocketStatus(): WSStatus {
   return { ...wsStatus };
 }
 
+export function evaluateWsFeedHealth(params: {
+  connected: boolean;
+  lastTickAt: number | null;
+  now?: number;
+}): { isHealthy: boolean; isDegraded: boolean; reason?: string; needsReconnect: boolean } {
+  const now = params.now ?? Date.now();
+  if (!params.connected) {
+    return {
+      isHealthy: false,
+      isDegraded: true,
+      reason: 'WebSocket desconectado',
+      needsReconnect: true
+    };
+  }
+
+  if (!params.lastTickAt) {
+    return {
+      isHealthy: true,
+      isDegraded: false,
+      needsReconnect: false
+    };
+  }
+
+  const silenceDuration = now - params.lastTickAt;
+  if (silenceDuration > WS_SILENCE_MS) {
+    return {
+      isHealthy: false,
+      isDegraded: true,
+      reason: `Feed WebSocket sem mensagens de ticker há ${Math.round(silenceDuration / 1000)}s (> ${WS_SILENCE_MS / 1000}s).`,
+      needsReconnect: true
+    };
+  }
+
+  return {
+    isHealthy: true,
+    isDegraded: false,
+    needsReconnect: false
+  };
+}
+
 function cleanupSocket() {
   if (wsInstance) {
     try {
@@ -140,22 +182,60 @@ function cleanupSocket() {
   }
 }
 
+function cleanupLiqSocket() {
+  if (liqWsInstance) {
+    try {
+      liqWsInstance.removeAllListeners();
+      liqWsInstance.terminate();
+    } catch (_) {}
+    liqWsInstance = null;
+  }
+}
+
+export function stopBinanceWebSocket() {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+  if (connectionRotationTimer) {
+    clearTimeout(connectionRotationTimer);
+    connectionRotationTimer = null;
+  }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (liqReconnectTimer) {
+    clearTimeout(liqReconnectTimer);
+    liqReconnectTimer = null;
+  }
+  cleanupSocket();
+  cleanupLiqSocket();
+  wsStatus.connected = false;
+  wsStatus.connecting = false;
+}
+
 function startWatchdog() {
   if (watchdogTimer) return;
   watchdogTimer = setInterval(() => {
-    // If connected but no tick received in the last 45 seconds, socket is a silent zombie
-    if (wsStatus.connected && wsStatus.lastTickAt && Date.now() - wsStatus.lastTickAt > 45000) {
+    const health = evaluateWsFeedHealth({
+      connected: wsStatus.connected,
+      lastTickAt: wsStatus.lastTickAt
+    });
+
+    if (health.needsReconnect && wsStatus.connected) {
       addBinanceLog(
         'WARN',
         'WEBSOCKET',
-        'Stream WebSocket sem ticks por mais de 45 segundos. Reiniciando conexão preventiva...'
+        `Watchdog de silêncio: ${health.reason} Reiniciando conexão preventiva...`
       );
+      recordFeedFailure('ws', health.reason);
       cleanupSocket();
       wsStatus.connected = false;
       wsStatus.connecting = false;
       initBinanceWebSocket();
     }
-  }, 15000);
+  }, 5000);
 }
 
 export function initBinanceWebSocket() {
@@ -173,9 +253,10 @@ export function initBinanceWebSocket() {
   cleanupSocket();
 
   wsStatus.connecting = true;
-  const wsUrl = wsStatus.url;
+  const wsUrl = buildFuturesWsUrl('market', ['!ticker@arr']);
+  wsStatus.url = wsUrl;
 
-  addBinanceLog('INFO', 'WEBSOCKET', `Iniciando conexão WebSocket com Binance Futures: ${wsUrl}`);
+  addBinanceLog('INFO', 'WEBSOCKET', `Iniciando conexão WebSocket Binance Futures (/market): ${wsUrl}`);
 
   try {
     wsInstance = new WebSocket(wsUrl);
@@ -186,9 +267,21 @@ export function initBinanceWebSocket() {
       wsStatus.lastConnectedAt = Date.now();
       wsStatus.lastTickAt = Date.now();
       wsStatus.lastError = null;
+      // Reset backoff on healthy connection
+      wsStatus.reconnectCount = 0;
       recordFeedSuccess('ws');
 
       addBinanceLog('SUCCESS', 'WEBSOCKET', `Conexão WebSocket estabelecida com sucesso com Binance Futures (${wsUrl})`);
+
+      // 24-hour proactive connection rotation as per Binance documentation
+      if (connectionRotationTimer) clearTimeout(connectionRotationTimer);
+      connectionRotationTimer = setTimeout(() => {
+        addBinanceLog('INFO', 'WEBSOCKET', 'Rotação preventiva da conexão WebSocket (24h de atividade).');
+        cleanupSocket();
+        wsStatus.connected = false;
+        wsStatus.connecting = false;
+        initBinanceWebSocket();
+      }, 23 * 3600 * 1000);
     });
 
     wsInstance.on('ping', () => {
@@ -199,13 +292,14 @@ export function initBinanceWebSocket() {
 
     wsInstance.on('message', (data: WebSocket.Data) => {
       try {
-        const json = JSON.parse(data.toString());
+        const raw = JSON.parse(data.toString());
+        // Handle combined stream payload or raw array
+        const json = raw.data ? raw.data : raw;
         wsStatus.messagesReceived++;
         wsStatus.lastTickAt = Date.now();
 
         if (Array.isArray(json)) {
           for (const item of json) {
-            // item.s = symbol (e.g. BTCUSDT), item.c = last price, item.P = price change percent
             if (item && item.s) {
               liveWSTickers[item.s] = {
                 symbol: item.s,
@@ -221,7 +315,6 @@ export function initBinanceWebSocket() {
           }
         }
 
-        // Log periodic ticker metrics every 100 messages to avoid cluttering console
         if (wsStatus.messagesReceived % 100 === 0) {
           addBinanceLog(
             'INFO',
@@ -245,32 +338,36 @@ export function initBinanceWebSocket() {
       wsStatus.connecting = false;
       const reasonStr = reason ? reason.toString() : '';
 
+      wsStatus.reconnectCount++;
+      const delayMs = calculateWsBackoff(wsStatus.reconnectCount, { baseMs: 1000, maxMs: 60000, jitter: 0.2 });
+
       addBinanceLog(
         'WARN',
         'WEBSOCKET',
-        `Conexão WebSocket encerrada (Código: ${code}, Motivo: "${reasonStr}"). Tentando reconectar em 4 segundos...`
+        `Conexão WebSocket encerrada (Código: ${code}, Motivo: "${reasonStr}"). Tentando reconectar em ${Math.round(delayMs / 1000)}s (tentativa ${wsStatus.reconnectCount})...`
       );
 
-      wsStatus.reconnectCount++;
       cleanupSocket();
 
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(() => {
         initBinanceWebSocket();
-      }, 4000);
+      }, delayMs);
     });
 
   } catch (err: any) {
     wsStatus.connected = false;
     wsStatus.connecting = false;
     wsStatus.lastError = err.message;
+    wsStatus.reconnectCount++;
+    const delayMs = calculateWsBackoff(wsStatus.reconnectCount, { baseMs: 2000, maxMs: 60000, jitter: 0.2 });
     addBinanceLog('ERROR', 'WEBSOCKET', `Falha ao instanciar cliente WebSocket: ${err.message}`);
     cleanupSocket();
 
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
       initBinanceWebSocket();
-    }, 5000);
+    }, delayMs);
   }
 
   // Also initiate background liquidation stream
@@ -288,13 +385,18 @@ export function initLiquidationWebSocket() {
     liqReconnectTimer = null;
   }
 
-  const url = 'wss://fstream.binance.com/ws/!forceOrder@arr';
+  const url = buildFuturesWsUrl('market', ['!forceOrder@arr']);
   try {
     liqWsInstance = new WebSocket(url);
 
+    liqWsInstance.on('open', () => {
+      liqReconnectAttempts = 0;
+    });
+
     liqWsInstance.on('message', (data: WebSocket.Data) => {
       try {
-        const json = JSON.parse(data.toString());
+        const raw = JSON.parse(data.toString());
+        const json = raw.data ? raw.data : raw;
         const o = json.o || json;
         if (o && o.s && o.S && o.p && o.q) {
           const price = parseFloat(o.p);
@@ -315,17 +417,13 @@ export function initLiquidationWebSocket() {
     liqWsInstance.on('error', () => {});
 
     liqWsInstance.on('close', () => {
-      if (liqWsInstance) {
-        try {
-          liqWsInstance.removeAllListeners();
-          liqWsInstance.terminate();
-        } catch (_) {}
-        liqWsInstance = null;
-      }
+      cleanupLiqSocket();
+      liqReconnectAttempts++;
+      const delayMs = calculateWsBackoff(liqReconnectAttempts, { baseMs: 2000, maxMs: 60000, jitter: 0.2 });
       if (liqReconnectTimer) clearTimeout(liqReconnectTimer);
       liqReconnectTimer = setTimeout(() => {
         initLiquidationWebSocket();
-      }, 6000);
+      }, delayMs);
     });
   } catch (_) {}
 }

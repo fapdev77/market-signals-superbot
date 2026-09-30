@@ -1,0 +1,28 @@
+services:
+  superbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: superbot-futures:latest
+    container_name: superbot-engine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - ALLOW_PUBLIC_BIND=true
+      - PORT=3000
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_signal: SIGTERM
+    stop_grace_period: 15s

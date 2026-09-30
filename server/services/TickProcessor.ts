@@ -1,4 +1,5 @@
 import type { TickerData, LongShortRatioData, TradeSignal } from '../../src/types.js';
+import { resolvePosition, type PositionState } from './positionResolution.js';
 
 /**
  * TickProcessor (Phase 2.5.1)
@@ -167,8 +168,6 @@ export function evaluatePositionManagement(
   const actions: PositionAction[] = [];
 
   for (const signal of signals) {
-    let signalModified = false;
-
     // Ignore the candle range when the position was opened inside that same candle: the high/low would
     // include price action from before the entry.
     const rangeApplies =
@@ -178,53 +177,53 @@ export function evaluatePositionManagement(
     const high = rangeApplies ? range!.high : price;
     const low = rangeApplies ? range!.low : price;
 
-    if (signal.direction === 'LONG') {
-      if (low <= signal.stopLoss) {
-        // Stop first: if the candle touched both, assume the adverse move happened.
+    const entryPrice = signal.direction === 'LONG'
+      ? (signal.entryZone?.[0] ?? signal.currentPrice)
+      : (signal.entryZone?.[1] ?? signal.currentPrice);
+
+    const posState: PositionState = {
+      direction: signal.direction,
+      entryPrice,
+      stopLoss: signal.stopLoss,
+      target1: signal.target1,
+      target2: signal.target2,
+      isBreakevenActive: !!signal.isBreakevenActive,
+      partialTaken: !!signal.isBreakevenActive
+    };
+
+    const resolution = resolvePosition({
+      position: posState,
+      high,
+      low,
+      currentPrice: price
+    });
+
+    if (resolution.hasClosedFull) {
+      const isBreakeven = signal.isBreakevenActive;
+      const isTarget2 = resolution.exitLegs.some(l => l.price === signal.target2 || (signal.direction === 'LONG' ? l.price >= signal.target2 : l.price <= signal.target2));
+      if (isTarget2 && resolution.isWin) {
+        actions.push({
+          type: 'HIT_TARGET2',
+          signalId: signal.id,
+          reason: 'Alvo 2 atingido (+100% expansão de lucro)'
+        });
+      } else {
         actions.push({
           type: 'STOPPED_OUT',
           signalId: signal.id,
-          reason: signal.isBreakevenActive ? 'Saída no Breakeven (Risco Zero)' : 'Stop Loss Atingido'
+          reason: isBreakeven ? 'Saída no Breakeven (Risco Zero)' : 'Stop Loss Atingido'
         });
-        continue;
       }
+      continue;
+    }
 
-      // Target 1 reached -> activate breakeven (stop moves to entry)
-      if (!signal.isBreakevenActive && high >= signal.target1) {
-        signal.isBreakevenActive = true;
-        signal.stopLoss = signal.entryZone[0];
-        signalModified = true;
-      }
-
-      if (high >= signal.target2) {
-        actions.push({ type: 'HIT_TARGET2', signalId: signal.id, reason: 'Alvo 2 atingido (+100% expansão de lucro)' });
-      } else if (signalModified) {
-        actions.push({ type: 'UPDATE_SIGNAL', signal });
-      }
-    } else if (signal.direction === 'SHORT') {
-      if (high >= signal.stopLoss) {
-        actions.push({
-          type: 'STOPPED_OUT',
-          signalId: signal.id,
-          reason: signal.isBreakevenActive ? 'Saída no Breakeven (Risco Zero)' : 'Stop Loss Atingido'
-        });
-        continue;
-      }
-
-      // Target 1 reached -> activate breakeven (stop moves to entry)
-      if (!signal.isBreakevenActive && low <= signal.target1) {
-        signal.isBreakevenActive = true;
-        signal.stopLoss = signal.entryZone[1];
-        signalModified = true;
-      }
-
-      if (low <= signal.target2) {
-        actions.push({ type: 'HIT_TARGET2', signalId: signal.id, reason: 'Alvo 2 atingido (+100% expansão de lucro)' });
-      } else if (signalModified) {
-        actions.push({ type: 'UPDATE_SIGNAL', signal });
-      }
+    if (resolution.hasPartialClose) {
+      signal.isBreakevenActive = true;
+      signal.stopLoss = resolution.nextPositionState.stopLoss;
+      actions.push({ type: 'UPDATE_SIGNAL', signal });
     }
   }
 
   return actions;
 }
+

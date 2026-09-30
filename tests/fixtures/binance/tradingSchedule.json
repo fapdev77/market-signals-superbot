@@ -1,0 +1,47 @@
+{
+  "capturedAt": "2026-09-29T18:00:00.000Z",
+  "marketSchedules": {
+    "EQUITY": {
+      "sessions": [
+        {
+          "startTime": 1774857600000,
+          "endTime": 1774877400000,
+          "type": "PRE_MARKET"
+        },
+        {
+          "startTime": 1774877400000,
+          "endTime": 1774900800000,
+          "type": "REGULAR"
+        },
+        {
+          "startTime": 1774900800000,
+          "endTime": 1774915200000,
+          "type": "AFTER_MARKET"
+        },
+        {
+          "startTime": 1774915200000,
+          "endTime": 1774944000000,
+          "type": "OVERNIGHT"
+        }
+      ]
+    },
+    "COMMODITY": {
+      "sessions": [
+        {
+          "startTime": 1774857600000,
+          "endTime": 1774944000000,
+          "type": "REGULAR"
+        }
+      ]
+    },
+    "FX": {
+      "sessions": [
+        {
+          "startTime": 1774857600000,
+          "endTime": 1774944000000,
+          "type": "REGULAR"
+        }
+      ]
+    }
+  }
+}

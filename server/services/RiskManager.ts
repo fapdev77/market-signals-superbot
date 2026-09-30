@@ -1,4 +1,5 @@
 import type { TradeSignal, StrategyCategory } from '../../src/types.js';
+import type { Database } from 'sql.js';
 import { dAdd, dDiv, dMul, dSub, dRound } from '../utils/decimal.js';
 
 /**
@@ -32,6 +33,20 @@ export const DEFAULT_RISK_LIMITS: RiskLimits = {
   maxPortfolioRiskPct: 6,
   maxSignalsPerCategory: 3
 };
+
+let currentRiskLimits: RiskLimits = { ...DEFAULT_RISK_LIMITS };
+
+export function getRiskLimits(): RiskLimits {
+  return { ...currentRiskLimits };
+}
+
+export function updateRiskLimits(limits: Partial<RiskLimits>): RiskLimits {
+  currentRiskLimits = {
+    ...currentRiskLimits,
+    ...limits
+  };
+  return { ...currentRiskLimits };
+}
 
 export interface PositionSize {
   valid: boolean;
@@ -221,3 +236,97 @@ export function isTradingHalted(): boolean {
 export function resetKillSwitchForTests(): void {
   killSwitch = { enabled: false, reason: null, activatedAt: null, activatedBy: null };
 }
+
+export function resetRiskManagerForTests(): void {
+  resetKillSwitchForTests();
+  currentRiskLimits = { ...DEFAULT_RISK_LIMITS };
+}
+
+/**
+ * Persists kill-switch state into app_state table.
+ */
+export async function saveKillSwitchToDb(db: Database): Promise<void> {
+  const serialized = JSON.stringify(killSwitch);
+  db.run(
+    `INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES ('kill_switch', ?, ?);`,
+    [serialized, Date.now()]
+  );
+}
+
+/**
+ * Persists risk limits into app_state table.
+ */
+export async function saveRiskLimitsToDb(db: Database): Promise<void> {
+  const serialized = JSON.stringify(currentRiskLimits);
+  db.run(
+    `INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES ('risk_limits', ?, ?);`,
+    [serialized, Date.now()]
+  );
+}
+
+/**
+ * Loads app_state from DB at boot (M4.2 / R-25).
+ * Fail-closed: If state is unreadable or corrupted, starts suspended.
+ */
+export async function loadAppStateFromDb(db: Database): Promise<{
+  success: boolean;
+  failClosedTriggered: boolean;
+  error?: string;
+}> {
+  try {
+    const res = db.exec(`SELECT key, value FROM app_state WHERE key IN ('kill_switch', 'risk_limits');`);
+    if (!res || res.length === 0 || !res[0].values) {
+      return { success: true, failClosedTriggered: false };
+    }
+
+    for (const row of res[0].values) {
+      const key = String(row[0]);
+      const rawValue = String(row[1]);
+
+      if (key === 'kill_switch') {
+        try {
+          const parsed = JSON.parse(rawValue);
+          if (typeof parsed !== 'object' || parsed === null || typeof parsed.enabled !== 'boolean') {
+            throw new Error('Kill switch state schema invalid');
+          }
+          killSwitch = {
+            enabled: parsed.enabled,
+            reason: parsed.reason || null,
+            activatedAt: parsed.activatedAt || null,
+            activatedBy: parsed.activatedBy || null
+          };
+        } catch (err: any) {
+          // CA-4.2: Estado ilegivel em app_state faz o sistema iniciar suspenso (Fail-closed)
+          killSwitch = {
+            enabled: true,
+            reason: `Fail-closed: Estado app_state corrompido ou ilegível no boot (${err?.message || err}).`,
+            activatedAt: Date.now(),
+            activatedBy: 'SYSTEM_FAIL_CLOSED'
+          };
+          return { success: false, failClosedTriggered: true, error: err?.message };
+        }
+      } else if (key === 'risk_limits') {
+        try {
+          const parsed = JSON.parse(rawValue);
+          if (typeof parsed === 'object' && parsed !== null) {
+            updateRiskLimits(parsed);
+          }
+        } catch (err) {
+          console.warn('⚠️ Falha ao carregar limites de risco do app_state; mantendo padrões.');
+        }
+      }
+    }
+
+    return { success: true, failClosedTriggered: false };
+  } catch (err: any) {
+    // If table read fails altogether, fail-closed as safety measure
+    killSwitch = {
+      enabled: true,
+      reason: `Fail-closed: Erro crítico ao ler app_state do banco (${err?.message || err}).`,
+      activatedAt: Date.now(),
+      activatedBy: 'SYSTEM_FAIL_CLOSED'
+    };
+    return { success: false, failClosedTriggered: true, error: err?.message };
+  }
+}
+

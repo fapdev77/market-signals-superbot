@@ -7,6 +7,7 @@ import { createMarketRouter } from './routes/marketRoutes.js';
 import { createAIRouter } from './routes/aiRoutes.js';
 import { createBacktestRouter } from './routes/backtestRoutes.js';
 import { createSystemRouter } from './routes/systemRoutes.js';
+import { createEvidenceRouter } from './routes/evidenceRoutes.js';
 import { requireAuth, getEffectiveAuthToken, validateTokenConstantTime } from './middleware/auth.js';
 
 /**
@@ -130,6 +131,7 @@ export function createApp(ctx: AppContext): express.Express {
   app.use('/api/ai', createAIRouter(() => botState, () => tickerStateCache));
   app.use('/api/backtest', createBacktestRouter(() => botState));
   app.use('/api/system', createSystemRouter(() => botState, triggerMarketScan));
+  app.use('/api/evidence', createEvidenceRouter());
 
   return app;
 }
