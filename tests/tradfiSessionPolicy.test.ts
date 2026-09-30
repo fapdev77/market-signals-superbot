@@ -19,25 +19,21 @@ describe('M1.4 & CA-1.1: TradFi Session Policy', () => {
   });
 
   it('identifies sessions from tradingSchedule fixture', () => {
-    // 1774857600000 + 1000 = inside PRE_MARKET (EQUITY)
-    const preMarketDate = new Date(1774857600000 + 1000);
-    const sessionPre = getTradfiSession('EQUITY', preMarketDate);
-    expect(sessionPre?.type).toBe('PRE_MARKET');
+    const sessions = (tradingScheduleFixture as any).marketSchedules.EQUITY.sessions as Array<{
+      startTime: number;
+      endTime: number;
+      type: string;
+    }>;
+    const at = (type: string): Date => {
+      const s = sessions.find((x) => x.type === type);
+      expect(s).toBeTruthy();
+      return new Date(s!.startTime + 1000);
+    };
 
-    // 1774877400000 + 1000 = inside REGULAR
-    const regularDate = new Date(1774877400000 + 1000);
-    const sessionReg = getTradfiSession('EQUITY', regularDate);
-    expect(sessionReg?.type).toBe('REGULAR');
-
-    // 1774900800000 + 1000 = inside AFTER_MARKET
-    const afterDate = new Date(1774900800000 + 1000);
-    const sessionAfter = getTradfiSession('EQUITY', afterDate);
-    expect(sessionAfter?.type).toBe('AFTER_MARKET');
-
-    // 1774915200000 + 1000 = inside OVERNIGHT
-    const overnightDate = new Date(1774915200000 + 1000);
-    const sessionOvernight = getTradfiSession('EQUITY', overnightDate);
-    expect(sessionOvernight?.type).toBe('OVERNIGHT');
+    expect(getTradfiSession('EQUITY', at('PRE_MARKET'))?.type).toBe('PRE_MARKET');
+    expect(getTradfiSession('EQUITY', at('REGULAR'))?.type).toBe('REGULAR');
+    expect(getTradfiSession('EQUITY', at('AFTER_MARKET'))?.type).toBe('AFTER_MARKET');
+    expect(getTradfiSession('EQUITY', at('OVERNIGHT'))?.type).toBe('OVERNIGHT');
   });
 
   it('allows REGULAR, PRE_MARKET, and AFTER_MARKET, and blocks OVERNIGHT and NO_TRADING (D2 & CA-1.1)', () => {

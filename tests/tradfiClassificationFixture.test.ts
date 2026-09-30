@@ -1,45 +1,49 @@
 import { describe, it, expect } from 'vitest';
 import exchangeInfoFixture from './fixtures/binance/exchangeInfo.json';
-import { classifyTradfiContract } from '../server/binanceService.js';
+import { classifyTradfiContract, TRADFI_UNDERLYING_NO_CALENDAR } from '../server/binanceService.js';
 
-describe('M1.2 & CA-1.5: TradFi classification against fixtures', () => {
-  it('classifies every TRADIFI_PERPETUAL symbol from the fixture', () => {
-    const tradfiSymbols = exchangeInfoFixture.symbols.filter(
-      (s: any) => s.contractType === 'TRADIFI_PERPETUAL'
-    );
+const tradfiSymbols = exchangeInfoFixture.symbols.filter(
+  (s: any) => s.contractType === 'TRADIFI_PERPETUAL'
+);
 
+function symbolWithUnderlyingType(type: string): any {
+  return tradfiSymbols.find((s: any) => String(s.underlyingType || '').toUpperCase() === type);
+}
+
+describe('M1.2 & CA-1.5: TradFi classification against the real fixture', () => {
+  it('classifica todo TRADIFI_PERPETUAL, exceto categorias documentadas como sem calendário', () => {
     expect(tradfiSymbols.length).toBeGreaterThan(0);
 
-    const unclassified: string[] = [];
+    const unclassified = tradfiSymbols.filter((s: any) => classifyTradfiContract(s) === null);
 
-    for (const s of tradfiSymbols) {
-      const category = classifyTradfiContract(s);
-      if (!category) {
-        unclassified.push(s.symbol);
-      }
+    // CA-1.4: o não classificado só é aceitável quando a categoria está documentada como sem calendário.
+    for (const s of unclassified) {
+      expect(TRADFI_UNDERLYING_NO_CALENDAR.has(String(s.underlyingType || '').toUpperCase())).toBe(true);
     }
-
-    // CA-1.5: Nenhum TRADIFI_PERPETUAL da fixture fica sem categoria fora da lista documentada.
-    expect(unclassified).toEqual([]);
   });
 
-  it('correctly categorizes AAPLUSDT as EQUITY', () => {
-    const aapl = exchangeInfoFixture.symbols.find((s: any) => s.symbol === 'AAPLUSDT');
-    expect(classifyTradfiContract(aapl)).toBe('EQUITY');
+  it('classifica um contrato EQUITY como EQUITY', () => {
+    const equity = symbolWithUnderlyingType('EQUITY');
+    expect(equity).toBeTruthy();
+    expect(classifyTradfiContract(equity)).toBe('EQUITY');
   });
 
-  it('correctly categorizes SPYUSDT as INDEX', () => {
-    const spy = exchangeInfoFixture.symbols.find((s: any) => s.symbol === 'SPYUSDT');
-    expect(classifyTradfiContract(spy)).toBe('INDEX');
+  it('classifica um contrato COMMODITY como COMMODITY', () => {
+    const commodity = symbolWithUnderlyingType('COMMODITY');
+    expect(commodity).toBeTruthy();
+    expect(classifyTradfiContract(commodity)).toBe('COMMODITY');
   });
 
-  it('correctly categorizes EURUSDT as FOREX', () => {
-    const eur = exchangeInfoFixture.symbols.find((s: any) => s.symbol === 'EURUSDT');
-    expect(classifyTradfiContract(eur)).toBe('FOREX');
+  it('classifica um contrato FX como FOREX', () => {
+    const fx = symbolWithUnderlyingType('FX');
+    expect(fx).toBeTruthy();
+    expect(classifyTradfiContract(fx)).toBe('FOREX');
   });
 
-  it('correctly categorizes XAUUSDT as COMMODITY', () => {
-    const xau = exchangeInfoFixture.symbols.find((s: any) => s.symbol === 'COMMODITY' || s.symbol === 'XAUUSDT');
-    expect(classifyTradfiContract(xau)).toBe('COMMODITY');
+  it('classifica contratos de equity regional (KR/HK/CN) como EQUITY', () => {
+    for (const type of ['KR_EQUITY', 'HK_EQUITY', 'CN_EQUITY']) {
+      const s = symbolWithUnderlyingType(type);
+      if (s) expect(classifyTradfiContract(s)).toBe('EQUITY');
+    }
   });
 });

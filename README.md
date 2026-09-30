@@ -101,8 +101,11 @@ cd market-signals-superbot
 ```
 
 ### Passo 2: Instalar as Dependências
+> **Somente npm.** Este projeto é instalado e testado exclusivamente com `npm` (`npm ci` em clone limpo). Lockfiles de outros gerenciadores (`bun.lock`, `bun.lockb`, `pnpm-lock.yaml`, `yarn.lock`) são ignorados e reprovados pelo teste `tests/repoHygiene.test.ts`.
 ```bash
 npm install
+# ou, em clone limpo / CI:
+npm ci
 ```
 
 ### Passo 3: Configurar as Variáveis de Ambiente

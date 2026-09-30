@@ -1,10 +1,30 @@
 {
-  "symbol": "BTCUSDT",
-  "markPrice": "68500.25000000",
-  "indexPrice": "68490.10000000",
-  "estimatedSettlePrice": "68495.00000000",
-  "lastFundingRate": "0.00010000",
-  "nextFundingTime": 1774915200000,
-  "interestRate": "0.00010000",
-  "time": 1774900000000
+  "_meta": {
+    "capturedAt": "2026-09-30T11:29:24.870Z",
+    "endpoint": "/fapi/v1/premiumIndex",
+    "query": "symbol=BTCUSDT,XAUUSDT",
+    "serverTimeFromTimeEndpoint": 1790767762103
+  },
+  "samples": {
+    "BTCUSDT": {
+      "symbol": "BTCUSDT",
+      "markPrice": "83829.80000000",
+      "indexPrice": "83844.93847826",
+      "estimatedSettlePrice": "83791.57678285",
+      "lastFundingRate": "0.00004558",
+      "interestRate": "0.00010000",
+      "nextFundingTime": 1790784000000,
+      "time": 1790767764002
+    },
+    "XAUUSDT": {
+      "symbol": "XAUUSDT",
+      "markPrice": "4187.85000000",
+      "indexPrice": "4185.66627452",
+      "estimatedSettlePrice": "4183.45601434",
+      "lastFundingRate": "0.00004820",
+      "interestRate": "0.00000000",
+      "nextFundingTime": 1790769600000,
+      "time": 1790767763307
+    }
+  }
 }

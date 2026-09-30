@@ -9,3 +9,11 @@ coverage/
 data/
 backtest.db
 superbot.sqlite
+
+# Somente npm: lockfiles de outros gerenciadores não são suportados (Fase 6.0 / G-01).
+bun.lock
+bun.lockb
+
+# Evidências operacionais (Fase 6.1.6): logs de smoke/auditoria são versionados de propósito.
+!docs/evidence/
+!docs/evidence/*.log

@@ -77,7 +77,7 @@
 - **6.0.4** Teste de higiene do repositório que falha se existir `bun.lock`/`bun.lockb` ou se alguma dependência declarada no `package.json` estiver ausente do `package-lock.json`.
 
 **Critérios de aceitação**
-- CA-0.1 `npm ci` em clone limpo termina com código 0 (job de CI).
+- CA-0.1 `npm ci` em clone limpo termina com código 0 (job de CI). *(Verificado localmente em 2026-09-30 com exit 0; ver detalhes em `specs/phase-6-plan.md`.)*
 - CA-0.2 `tests/repoHygiene.test.ts` passa e falha ao reintroduzir `bun.lock` (verificado com um arquivo temporário).
 - CA-0.3 CI verde nas versões 20 e 22.
 

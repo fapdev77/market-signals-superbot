@@ -1,0 +1,26 @@
+npm notice run market-signals-superbot@1.0.0 smoke:binance
+npm notice run tsx scripts/binance-smoke.ts
+======================================================
+🚀 [BINANCE SMOKE TEST] REST FAPI + WebSocket
+======================================================
+
+✅ PASSOU - REST /fapi/v1/time (411ms) serverTime=1790768577188 (diff=304ms)
+✅ PASSOU - REST /fapi/v1/exchangeInfo (610ms) serverTime=1790758843592 (informativo, sem checagem de relógio); 919 símbolos
+✅ PASSOU - REST /fapi/v1/tradingSchedule (331ms) mercados: FX, CN_EQUITY, EQUITY, KR_EQUITY, HK_EQUITY, COMMODITY
+✅ PASSOU - REST /fapi/v1/fundingInfo (362ms) 803 contratos
+✅ PASSOU - REST /fapi/v1/fundingRate?symbol=BTCUSDT (316ms) 5 registros
+✅ PASSOU - REST /fapi/v1/premiumIndex?symbol=BTCUSDT (329ms) markPrice=83887.90000000 lastFundingRate=0.00005620
+✅ PASSOU - REST /futures/data/openInterestHist?symbol=BTCUSDT (318ms) 5 pontos
+✅ PASSOU - REST /fapi/v1/depth?symbol=BTCUSDT (321ms) 20 bids / 20 asks
+✅ PASSOU - REST /fapi/v1/klines?symbol=BTCUSDT&interval=1m (322ms) 5 candles
+✅ PASSOU - WS /market !ticker@arr (8018ms) 6 mensagens (conectado)
+✅ PASSOU - WS /public btcusdt@bookTicker (8008ms) 4918 mensagens (conectado)
+✅ PASSOU - WS /market !forceOrder@arr (8009ms) 1 mensagens (conectado)
+
+======================================================
+📊 RESUMO DO SMOKE TEST
+======================================================
+Peso usado (x-mbx-used-weight-1m): 51
+Resultado: ✅ TUDO OK
+======================================================
+

@@ -264,12 +264,34 @@ export interface TradingMarketSchedule {
 export type TradingSchedule = Record<string, TradingMarketSchedule>;
 
 /** Categorias TradFi do projeto → chaves de mercado do endpoint. */
-const TRADFI_CATEGORY_TO_SCHEDULE_MARKET: Record<TradfiCategory, string> = {
+export const TRADFI_CATEGORY_TO_SCHEDULE_MARKET: Record<TradfiCategory, string> = {
   EQUITY: 'EQUITY',
   INDEX: 'EQUITY',   // índices seguem o mesmo calendário de equities (observado na API real)
   COMMODITY: 'COMMODITY',
   FOREX: 'FX'
 };
+
+/**
+ * 6.1.4 — `underlyingType` reportado pelo `exchangeInfo` → chave do `tradingSchedule`.
+ * Validado contra as chaves reais capturadas em `tests/fixtures/binance/tradingSchedule.json`
+ * (EQUITY, COMMODITY, FX, CN_EQUITY, HK_EQUITY, KR_EQUITY).
+ */
+export const TRADFI_UNDERLYING_TO_SCHEDULE_MARKET: Record<string, string> = {
+  EQUITY: 'EQUITY',
+  INDEX: 'EQUITY',
+  COMMODITY: 'COMMODITY',
+  FX: 'FX',
+  CN_EQUITY: 'CN_EQUITY',
+  HK_EQUITY: 'HK_EQUITY',
+  KR_EQUITY: 'KR_EQUITY'
+};
+
+/**
+ * 6.1.4 — Categorias TradFi para as quais a exchange NÃO publica calendário.
+ * O gate deve fechar (fail-closed): não existe sessão para avaliar, então esses símbolos
+ * ficam fora do conjunto monitorado em vez de receberem horário inventado.
+ */
+export const TRADFI_UNDERLYING_NO_CALENDAR: ReadonlySet<string> = new Set(['PREMARKET']);
 
 const TRADING_SCHEDULE_TTL_MS = 24 * 60 * 60 * 1000; // cache diário
 
