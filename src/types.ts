@@ -247,6 +247,17 @@ export interface TradeSignal {
    * sintético (ALLOW_SYNTHETIC_DATA='true'); ausente em registros anteriores = `LIVE`.
    */
   origin?: DataOrigin;
+
+  /** 6.5.2: quantidade sugerida pelo RiskManager já arredondada para baixo ao stepSize. */
+  suggestedQuantity?: number;
+  /** 6.5.2/6.5.3: sinal executável segundo os filtros do exchange e o slippage estimado. */
+  executable?: boolean;
+  /** Motivo quando `executable: false` (minQty, notional mínimo ou slippage acima do limite). */
+  nonExecutableReason?: string;
+  /** 6.5.3: slippage estimado pela profundidade do book (%). Ausente quando o book não é real. */
+  estimatedSlippagePct?: number;
+  /** 6.5.3: o book usado na estimativa era real (REST/limiter)? TradFi não tem depth real. */
+  executionBookAvailable?: boolean;
 }
 
 /**

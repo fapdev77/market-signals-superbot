@@ -156,18 +156,26 @@
 
 ## Fase 6.5 — Precisão e executabilidade (G-12)
 
-- [ ] **T6.5.1 — Aritmética decimal em PnL/taxas/slippage/R** (M)
+- [x] **T6.5.1 — Aritmética decimal em PnL/taxas/slippage/R** (M)
   - *CA:* CA-5.1 (0,1 + 0,2 exato) e CA-5.2 (teste estático proíbe `toFixed` nos arquivos de cálculo).
   - *Testes:* `tests/decimalPnl.test.ts`, `tests/noToFixedInCalc.test.ts`. *Arquivos:* `server/utils/decimal.ts` (novo), `BacktestEngine.ts`, `positionResolution*`, `EvidenceService.ts`, `server/db.ts`.
-- [ ] **T6.5.2 — Filtros do exchange + `executable`** (M)
+- [x] **T6.5.2 — Filtros do exchange + `executable`** (M)
   - *CA:* CA-5.3 — preços múltiplos do `tickSize`; quantidade abaixo do mínimo ⇒ `executable: false` com motivo; `suggestedQuantity` arredondada ao `stepSize`.
   - *Teste:* `tests/exchangeFilters.test.ts`.
-- [ ] **T6.5.3 — Slippage por profundidade** (S)
+- [x] **T6.5.3 — Slippage por profundidade** (S)
   - *CA:* CA-5.4 — book raso ⇒ slippage > `MAX_ESTIMATED_SLIPPAGE_PCT` e sinal marcado.
   - *Teste:* `tests/depthSlippage.test.ts`.
 
-### Checkpoint F (após 6.5)
-- [ ] Nenhum `toFixed` em cálculo · sinais executáveis com preço/quantidade válidos.
+### Checkpoint F (após 6.5) — ✅ 2026-09-30
+- [x] Nenhum `toFixed` em cálculo · sinais executáveis com preço/quantidade válidos. (`tsc` limpo · **81 arquivos / 443 testes verdes** · `build` ok.)
+
+#### Notas de implementação (6.5, 2026-09-30)
+- **6.5.1/CA-5.1:** `server/utils/decimal.ts` já existia (Fase 3.4) e foi promovido a base de todo o cálculo: `positionResolution.ts` reescrito em decimal (fills com slippage, PnL por perna e soma com `dAdd`; `dRound(8dp)` no resultado) — pernas como `0.5*(0.1-0.090045)/0.1*100` fecham exatamente 4.9775 (float dava 4.97750000000001). Formatação/agregação em `BacktestEngine`, `EvidenceService` e `db.ts` migrada de `parseFloat(x.toFixed(n))` para `dRound(x, n)`.
+- **6.5.1/CA-5.2:** teste estático `tests/noToFixedInCalc.test.ts` com a lista EXPLÍCITA de arquivos de cálculo (positionResolution, BacktestEngine, EvidenceService, TickProcessor, FundingService, RiskManager, db, decimal); ignora comentários; qualquer `.toFixed(` que reapareça quebra a suíte. `toFixed` restante no repo é só de apresentação (aiMotor, binanceService/normalizações de UI, demo).
+- **6.5.2/CA-5.3:** módulo puro `server/services/exchangeFilters.ts` — `extractSymbolFilters` valida os NOMES na fixture real (fapi usa `MIN_NOTIONAL.notional`, não `minNotional`); `roundPriceToTick` (nearest + modos conservadores: stop LONG floor, stop SHORT ceil, escala inteira 1e12); `checkExecutability` (quantidade arredondada para baixo ao `stepSize`, rejeita `minQty` e notional mínimo com motivo). `buildTradeSignal` recebe `filters` + `riskParams`: preços alinhados ao tick, R:R recalculado sobre o risco pós-arredondamento, `suggestedQuantity` (via `computePositionSize`) e `executable/nonExecutableReason` no `TradeSignal`. Cache por símbolo em `binanceService` (`refreshSymbolFilters`, TTL 1h, fail-open: sem filtros o sinal nasce sem veredito). Migração v11 + persistência/mapeamento em `db.ts`.
+- **6.5.3/CA-5.4:** módulo puro `server/services/depthSlippage.ts` — VWAP varrendo o lado do book (asks p/ LONG, bids p/ SHORT), extrapolação além do último nível para book raso (nunca slippage falso-baixo), book vazio ⇒ `Infinity` (fail-closed). Limite `MAX_ESTIMATED_SLIPPAGE_PCT` (env, default 0,15%). Integrado no tick de `server.ts` para perpétuos cripto (TradFi não tem depth real): book real via `fetchOrderBookDepth` (limiter); `estimatedSlippagePct`/`executionBookAvailable` no sinal; acima do limite ou sem liquidez ⇒ `executable: false` com motivo + métrica nova `signals_not_executable`.
+- Achados da auto-review aplicados: R:R recalculado após o arredondamento do stop; book vazio marca `executable: false` (antes só slippages finitos eram checados).
+- Testes novos (24): `tests/decimalPnl.test.ts` (6), `tests/noToFixedInCalc.test.ts` (2), `tests/exchangeFilters.test.ts` (9, contra a fixture real), `tests/depthSlippage.test.ts` (7).
 
 ---
 

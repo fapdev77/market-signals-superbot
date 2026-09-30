@@ -16,6 +16,7 @@ export const METRIC_NAMES = {
   signalsBlockedDatagate: 'signals_blocked_datagate',
   signalsBlockedRiskLimit: 'signals_blocked_risk_limit',
   signalsSuppressedLedgerFailure: 'signals_suppressed_ledger_failure',
+  signalsNotExecutable: 'signals_not_executable',
   signalsEvaluated: 'signals_evaluated',
   tradingScheduleBlocks: 'trading_schedule_blocks',
   ledgerWriteFailures: 'ledger_write_failures',
@@ -32,6 +33,7 @@ counters.set(METRIC_NAMES.signalsSuppressedKillswitch, 0);
 counters.set(METRIC_NAMES.signalsBlockedDatagate, 0);
 counters.set(METRIC_NAMES.signalsBlockedRiskLimit, 0);
 counters.set(METRIC_NAMES.signalsSuppressedLedgerFailure, 0);
+counters.set(METRIC_NAMES.signalsNotExecutable, 0);
 counters.set(METRIC_NAMES.signalsEvaluated, 0);
 counters.set(METRIC_NAMES.tradingScheduleBlocks, 0);
 counters.set(METRIC_NAMES.ledgerWriteFailures, 0);

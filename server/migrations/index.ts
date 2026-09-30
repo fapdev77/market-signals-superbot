@@ -297,6 +297,19 @@ export const MIGRATIONS: Migration[] = [
         );
       }
     }
+  },
+  {
+    version: 11,
+    id: '011-signals-executability',
+    description:
+      'Fase 6.5: executabilidade nos sinais — suggested_quantity, executable, non_executable_reason, estimated_slippage_pct e execution_book_available em trade_signals.',
+    up: db => {
+      addColumnIfMissing(db, 'trade_signals', 'suggested_quantity', 'REAL');
+      addColumnIfMissing(db, 'trade_signals', 'executable', 'INTEGER');
+      addColumnIfMissing(db, 'trade_signals', 'non_executable_reason', 'TEXT');
+      addColumnIfMissing(db, 'trade_signals', 'estimated_slippage_pct', 'REAL');
+      addColumnIfMissing(db, 'trade_signals', 'execution_book_available', 'INTEGER');
+    }
   }
 ];
 

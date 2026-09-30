@@ -328,7 +328,7 @@ export function calculateWilsonScoreInterval(
   const lower = Math.max(0, center - margin);
   const upper = Math.min(1, center + margin);
 
-  return [parseFloat(lower.toFixed(4)), parseFloat(upper.toFixed(4))];
+  return [dRound(lower, 4), dRound(upper, 4)];
 }
 
 /**
@@ -373,11 +373,11 @@ function aggregateMetrics(signals: ClosedSignalEvidence[]): EvidenceGroupMetrics
   }
 
   const losses = n - wins;
-  const winRate = parseFloat(((wins / n) * 100).toFixed(2));
+  const winRate = dRound((wins / n) * 100, 2);
   const wilsonInterval = calculateWilsonScoreInterval(wins, n, 0.95);
-  const rExpectancy = parseFloat((totalNetR / n).toFixed(4));
-  const avgMfe = parseFloat((totalMfe / n).toFixed(4));
-  const avgMae = parseFloat((totalMae / n).toFixed(4));
+  const rExpectancy = dRound(totalNetR / n, 4);
+  const avgMfe = dRound(totalMfe / n, 4);
+  const avgMae = dRound(totalMae / n, 4);
 
   return {
     n,
@@ -388,8 +388,8 @@ function aggregateMetrics(signals: ClosedSignalEvidence[]): EvidenceGroupMetrics
     rExpectancy,
     avgMfe,
     avgMae,
-    cumulativeR: parseFloat(cumR.toFixed(4)),
-    maxDrawdownR: parseFloat(maxDd.toFixed(4))
+    cumulativeR: dRound(cumR, 4),
+    maxDrawdownR: dRound(maxDd, 4)
   };
 }
 
@@ -491,21 +491,21 @@ export function evaluateGoNoGo(input: GoNoGoInput): GoNoGoResult {
   // 3. Net expectancy >= +0.10 R
   if (input.netExpectancyR < 0.10) {
     reasons.push(
-      `Expectativa líquida insuficiente: ${input.netExpectancyR.toFixed(3)} R (mínimo exigido: +0.10 R).`
+      `Expectativa líquida insuficiente: ${dRound(input.netExpectancyR, 3)} R (mínimo exigido: +0.10 R).`
     );
   }
 
   // 4. Lower bound of 95% bootstrap CI > 0
   if (input.bootstrapLower95R <= 0) {
     reasons.push(
-      `Limite inferior do intervalo de confiança bootstrap de 95% (${input.bootstrapLower95R.toFixed(3)} R) não é estritamente positivo (> 0).`
+      `Limite inferior do intervalo de confiança bootstrap de 95% (${dRound(input.bootstrapLower95R, 3)} R) não é estritamente positivo (> 0).`
     );
   }
 
   // 5. Maximum drawdown <= 15.0 R
   if (input.maxDrawdownR > 15.0) {
     reasons.push(
-      `Drawdown máximo excedeu o limite estipulado: ${input.maxDrawdownR.toFixed(2)} R (limite máximo: 15.0 R).`
+      `Drawdown máximo excedeu o limite estipulado: ${dRound(input.maxDrawdownR, 2)} R (limite máximo: 15.0 R).`
     );
   }
 
@@ -514,7 +514,7 @@ export function evaluateGoNoGo(input: GoNoGoInput): GoNoGoResult {
     for (const tier of input.scoreTiers) {
       if (tier.n >= 30 && tier.netExpectancyR < 0 && tier.enabled) {
         reasons.push(
-          `Faixa de score '${tier.tier}' possui expectativa negativa (${tier.netExpectancyR.toFixed(2)} R em ${tier.n} sinais) e permanece habilitada.`
+          `Faixa de score '${tier.tier}' possui expectativa negativa (${dRound(tier.netExpectancyR, 2)} R em ${tier.n} sinais) e permanece habilitada.`
         );
       }
     }

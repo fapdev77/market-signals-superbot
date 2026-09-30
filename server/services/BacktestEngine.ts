@@ -5,6 +5,8 @@ import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoT
 import { PROFILE_PRESETS } from '../../src/constants.js';
 import { processTickerState, buildTradeSignal, SIGNAL_LOOKBACK_CANDLES } from '../signalEngine.js';
 import { resolvePosition, type PositionState } from './positionResolution.js';
+// 6.5.1/CA-5.2: formatação de cálculo usa dRound (decimal exato), nunca toFixed.
+import { dRound } from '../utils/decimal.js';
 import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './FundingService.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
@@ -256,8 +258,8 @@ export function aggregateWalkForward(
   }
 
   windowResults.forEach((wr, i) => {
-    wr.oosWinRate = wr.oosTrades > 0 ? Number(((windowWins[i] / wr.oosTrades) * 100).toFixed(1)) : 0;
-    wr.oosProfitPct = Number(wr.oosProfitPct.toFixed(2));
+    wr.oosWinRate = wr.oosTrades > 0 ? dRound((windowWins[i] / wr.oosTrades) * 100, 1) : 0;
+    wr.oosProfitPct = dRound(wr.oosProfitPct, 2);
   });
 
   return {
@@ -422,7 +424,7 @@ export class BacktestEngine {
     const assumptions = [
       hasFundingHistory
         ? `Funding cobrado a partir de ${historicalFundingRecords.length} eventos históricos reais da Binance`
-        : `Funding cost charged at a flat ${(fundingRatePer8h * 100).toFixed(3)}%/8h baseline (not the observed rate)`,
+        : `Funding cost charged at a flat ${dRound(fundingRatePer8h * 100, 3)}%/8h baseline (not the observed rate)`,
       `Taker fee ${feePct}% per side, slippage ${slipPct}% applied to fill prices`
     ];
     // 6.3.4 — contadores de cobertura de funding por trade.
@@ -494,7 +496,7 @@ export class BacktestEngine {
         const rawTicker = {
           symbol: config.symbol,
           lastPrice: candle.close.toString(),
-          priceChangePercent: (((candle.close - windowSlice[0].open) / windowSlice[0].open) * 100).toFixed(2),
+          priceChangePercent: String(dRound(((candle.close - windowSlice[0].open) / windowSlice[0].open) * 100, 2)),
           highPrice: Math.max(...windowSlice.map(k => k.high)).toString(),
           lowPrice: Math.min(...windowSlice.map(k => k.low)).toString(),
           volume: windowSlice.reduce((a, k) => a + k.volume, 0).toString(),
@@ -602,30 +604,30 @@ export class BacktestEngine {
 
           equityCurve.push({
             time: candle.timestamp,
-            balance: parseFloat(balance.toFixed(2)),
-            drawdown: parseFloat(maxDrawdown.toFixed(2))
+            balance: dRound(balance, 2),
+            drawdown: dRound(maxDrawdown, 2)
           });
 
           trades.push({
             id: crypto.randomUUID(),
             symbol: config.symbol,
             direction: posDirection,
-            entryPrice: parseFloat(entryPrice.toFixed(4)),
-            exitPrice: parseFloat(resolution.exitPrice.toFixed(4)),
+            entryPrice: dRound(entryPrice, 4),
+            exitPrice: dRound(resolution.exitPrice, 4),
             entryTime,
             exitTime: candle.timestamp,
-            pnlPct: parseFloat(tradePnlPct.toFixed(2)),
-            pnlValue: parseFloat(profit.toFixed(2)),
-            stopLoss: parseFloat(stopLoss.toFixed(4)),
-            takeProfit1: parseFloat(takeProfit1.toFixed(4)),
-            takeProfit2: parseFloat(takeProfit2.toFixed(4)),
+            pnlPct: dRound(tradePnlPct, 2),
+            pnlValue: dRound(profit, 2),
+            stopLoss: dRound(stopLoss, 4),
+            takeProfit1: dRound(takeProfit1, 4),
+            takeProfit2: dRound(takeProfit2, 4),
             isWin: tradePnlPct > 0,
             isBreakeven: isBreakevenActive,
             partialClosed: closedLegs.some(l => l.leg === 'PARTIAL'),
-            closedSize: parseFloat(closedSize.toFixed(2)),
+            closedSize: dRound(closedSize, 2),
             durationMinutes: durationMin,
-            fundingCostPct: parseFloat(fundingCostPct.toFixed(4)),
-            specialFundingCostPct: parseFloat(fundingResult.specialFundingCostPct.toFixed(4))
+            fundingCostPct: dRound(fundingCostPct, 4),
+            specialFundingCostPct: dRound(fundingResult.specialFundingCostPct, 4)
           });
 
           // Only the full close (TP2 or final stop) frees the engine for the
@@ -649,7 +651,7 @@ export class BacktestEngine {
     const avgDurationMinutes = totalTrades > 0 ? Math.round(totalDurationSum / totalTrades) : 0;
 
     // Advanced Institutional Metrics (Sharpe, Sortino, Slippage, Fees) - Phase 2.3
-    const totalFeesPaid = Number((trades.length * initialBalance * (roundtripFee / 100)).toFixed(2));
+    const totalFeesPaid = dRound(trades.length * initialBalance * (roundtripFee / 100), 2);
     const netReturns = trades.map(t => t.pnlPct);
     const meanReturn = netReturns.length > 0 ? netReturns.reduce((a, b) => a + b, 0) / netReturns.length : 0;
     const variance = netReturns.length > 0 ? netReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / netReturns.length : 0;
@@ -660,29 +662,29 @@ export class BacktestEngine {
     // Correct annualization factor: trades per day * 252 trading days per year
     const tradesPerDay = days > 0 ? totalTrades / days : 1;
     const annualFactor = Math.sqrt(Math.max(1, tradesPerDay * 252));
-    const sharpeRatio = stdDev > 0.0001 ? Number(((meanReturn / stdDev) * annualFactor).toFixed(2)) : 0;
-    const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * annualFactor).toFixed(2)) : (meanReturn > 0 ? 4.5 : 0);
+    const sharpeRatio = stdDev > 0.0001 ? dRound((meanReturn / stdDev) * annualFactor, 2) : 0;
+    const sortinoRatio = downsideDev > 0.0001 ? dRound((meanReturn / downsideDev) * annualFactor, 2) : (meanReturn > 0 ? 4.5 : 0);
 
     // R-10: rolling walk-forward metrics, aggregated from the closed trades.
     const wf = aggregateWalkForward(trades, walkForwardWindows);
     const inSampleTotal = wf.inSampleWins + wf.inSampleLosses;
     const outOfSampleTotal = wf.outOfSampleWins + wf.outOfSampleLosses;
-    const inSampleWinRate = inSampleTotal > 0 ? Number(((wf.inSampleWins / inSampleTotal) * 100).toFixed(1)) : winRate;
-    const outOfSampleWinRate = outOfSampleTotal > 0 ? Number(((wf.outOfSampleWins / outOfSampleTotal) * 100).toFixed(1)) : winRate;
+    const inSampleWinRate = inSampleTotal > 0 ? dRound((wf.inSampleWins / inSampleTotal) * 100, 1) : winRate;
+    const outOfSampleWinRate = outOfSampleTotal > 0 ? dRound((wf.outOfSampleWins / outOfSampleTotal) * 100, 1) : winRate;
     // Phase 2.5.4 (kept): robustness is measured on profit per trade so the period split does not bias
     // the ratio. An uncomputable ratio stays 0 — defaulting it high made a *losing* out-of-sample run
     // pass the ≥0.5 threshold whenever the win rate happened to be ≥45%.
     const inSamplePerTrade = inSampleTotal > 0 ? wf.inSampleProfit / inSampleTotal : 0;
     const outOfSamplePerTrade = outOfSampleTotal > 0 ? wf.outOfSampleProfit / outOfSampleTotal : 0;
     const overfitRatio = inSamplePerTrade > 0 && outOfSamplePerTrade > 0
-      ? Number((outOfSamplePerTrade / inSamplePerTrade).toFixed(2))
+      ? dRound(outOfSamplePerTrade / inSamplePerTrade, 2)
       : 0;
 
     const walkForward = {
       inSampleWinRate,
-      inSampleProfit: Number(wf.inSampleProfit.toFixed(2)),
+      inSampleProfit: dRound(wf.inSampleProfit, 2),
       outOfSampleWinRate,
-      outOfSampleProfit: Number(wf.outOfSampleProfit.toFixed(2)),
+      outOfSampleProfit: dRound(wf.outOfSampleProfit, 2),
       overfitRatio,
       isRobust: overfitRatio >= 0.5 && outOfSampleWinRate >= 45,
       windows: walkForwardWindows.length,
@@ -711,20 +713,20 @@ export class BacktestEngine {
       assumptions,
       reducedFactorSet: factorCoverageResult.reducedFactorSet,
       factorCoverage: factorCoverageResult.factorCoverage,
-      fundingCoverage: parseFloat(fundingCoverage.toFixed(2)),
+      fundingCoverage: dRound(fundingCoverage, 2),
       startTime: klines[0].openTime,
       endTime: klines[klines.length - 1].openTime,
       totalCandlesTested: klines.length,
       totalTrades,
       winningTrades: wins,
       losingTrades: losses,
-      winRate: parseFloat(winRate.toFixed(2)),
-      profitFactor: parseFloat(profitFactor.toFixed(2)),
-      maxDrawdown: parseFloat(maxDrawdown.toFixed(2)),
-      netProfit: parseFloat(netProfitPct.toFixed(2)),
-      avgWinPct: parseFloat(avgWinPct.toFixed(2)),
-      avgLossPct: parseFloat(avgLossPct.toFixed(2)),
-      avgRiskReward: parseFloat(avgRiskReward.toFixed(2)),
+      winRate: dRound(winRate, 2),
+      profitFactor: dRound(profitFactor, 2),
+      maxDrawdown: dRound(maxDrawdown, 2),
+      netProfit: dRound(netProfitPct, 2),
+      avgWinPct: dRound(avgWinPct, 2),
+      avgLossPct: dRound(avgLossPct, 2),
+      avgRiskReward: dRound(avgRiskReward, 2),
       avgDurationMinutes,
       equityCurve,
       diagnostic: {
@@ -743,7 +745,7 @@ export class BacktestEngine {
       sortinoRatio,
       makerTakerFeePct: feePct,
       slippagePct: slipPct,
-      grossProfit: parseFloat(totalProfit.toFixed(2)),
+      grossProfit: dRound(totalProfit, 2),
       totalFeesPaid,
       walkForward
     };
@@ -826,7 +828,7 @@ export class BacktestEngine {
       profitFactor: initialResult.profitFactor,
       netProfit: initialResult.netProfit,
       maxDrawdown: initialResult.maxDrawdown,
-      fitnessScore: parseFloat(bestScore.toFixed(2)),
+      fitnessScore: dRound(bestScore, 2),
       weights: { ...currentWeights }
     }];
 
@@ -859,16 +861,16 @@ export class BacktestEngine {
         profitFactor: candidateResult.profitFactor,
         netProfit: candidateResult.netProfit,
         maxDrawdown: candidateResult.maxDrawdown,
-        fitnessScore: parseFloat(candidateScore.toFixed(2)),
+        fitnessScore: dRound(candidateScore, 2),
         weights: { ...candidateWeights }
       });
     }
 
     // Generate AutoTune summary report
-    const wrDiff = (bestResult.winRate - initialResult.winRate).toFixed(1);
-    const pfDiff = (bestResult.profitFactor - initialResult.profitFactor).toFixed(2);
-    const ddDiff = (initialResult.maxDrawdown - bestResult.maxDrawdown).toFixed(1);
-    const profitDiff = (bestResult.netProfit - initialResult.netProfit).toFixed(1);
+    const wrDiff = dRound(bestResult.winRate - initialResult.winRate, 1);
+    const pfDiff = dRound(bestResult.profitFactor - initialResult.profitFactor, 2);
+    const ddDiff = dRound(initialResult.maxDrawdown - bestResult.maxDrawdown, 1);
+    const profitDiff = dRound(bestResult.netProfit - initialResult.netProfit, 1);
 
     const tuningSummary = `O Auto-Tuning executou ${iterations} iterações de simulação quantitativa no perfil ${PROFILE_PRESETS[profile].name} (${symbol}). ` +
       `Resultado: Win Rate ${bestResult.winRate}% (${Number(wrDiff) >= 0 ? '+' : ''}${wrDiff}%), Profit Factor ${bestResult.profitFactor} (${Number(pfDiff) >= 0 ? '+' : ''}${pfDiff}), ` +

@@ -3,6 +3,10 @@ import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrapped
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
+// 6.5.1/CA-5.2: cálculo de preço/risco usa decimal exato; toFixed fica só na apresentação.
+import { dRound } from './utils/decimal.js';
+import { roundPriceToTick, checkExecutability, type SymbolFilters } from './services/exchangeFilters.js';
+import { computePositionSize } from './services/RiskManager.js';
 
 /**
  * Shared Lookback Window Constant (M2.3 - Phase 5)
@@ -14,12 +18,12 @@ export function normalizePricePrecision(value: number | null | undefined): numbe
   if (value === null || value === undefined || isNaN(value)) return 0;
   const abs = Math.abs(value);
   if (abs === 0) return 0;
-  if (abs >= 1000) return parseFloat(value.toFixed(2));
-  if (abs >= 50) return parseFloat(value.toFixed(3));
-  if (abs >= 1) return parseFloat(value.toFixed(4));
+  if (abs >= 1000) return dRound(value, 2);
+  if (abs >= 50) return dRound(value, 3);
+  if (abs >= 1) return dRound(value, 4);
   const leadingZeros = Math.floor(-Math.log10(abs));
   const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
-  return parseFloat(value.toFixed(decimals));
+  return dRound(value, decimals);
 }
 
 export function formatPriceString(value: number | null | undefined): string {
@@ -27,11 +31,11 @@ export function formatPriceString(value: number | null | undefined): string {
   const abs = Math.abs(value);
   if (abs === 0) return '0.00';
   if (abs >= 1000) return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (abs >= 50) return value.toFixed(2);
-  if (abs >= 1) return value.toFixed(3);
+  if (abs >= 50) return String(dRound(value, 2));
+  if (abs >= 1) return String(dRound(value, 3));
   const leadingZeros = Math.floor(-Math.log10(abs));
   const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
-  return value.toFixed(decimals);
+  return String(dRound(value, decimals));
 }
 
 export function processTickerState(
@@ -480,7 +484,11 @@ export function buildTradeSignal(
   customTimeframe?: string,
   ttlSettings?: SignalTtlSettings,
   /** R-7: carries maxStopLossAtrMultiple (and future risk knobs) from operator settings. */
-  weights?: IndicatorWeights
+  weights?: IndicatorWeights,
+  /** 6.5.2: filtros do exchange para arredondamento de preços e executabilidade. */
+  filters?: SymbolFilters | null,
+  /** 6.5.2: equity/risco para sugerir quantidade (defaults do RiskManager). */
+  riskParams?: { equity?: number; riskPerTradePct?: number }
 ): TradeSignal | null {
   if (ticker.signalType === 'NEUTRAL' || ticker.confluenceScore < 50) {
     return null;
@@ -491,8 +499,8 @@ export function buildTradeSignal(
 
   // Entry zone calculation
   const entrySpread = price * 0.003;
-  const entryMin = isLong ? price - entrySpread : price;
-  const entryMax = isLong ? price : price + entrySpread;
+  let entryMin = isLong ? price - entrySpread : price;
+  let entryMax = isLong ? price : price + entrySpread;
 
   // Stop loss distance scaled by strategy category
   let slPct = 0.015;
@@ -602,7 +610,8 @@ export function buildTradeSignal(
   }
 
   // Targets based on natural R:R constraints
-  const riskAmount = Math.abs(price - stopLoss) || (price * slPct);
+  // 6.5.2: `let` porque o risco de referência é refinado após o arredondamento do stop ao tickSize.
+  let riskAmount = Math.abs(price - stopLoss) || (price * slPct);
 
   // Sanity check to ensure targets are in the correct direction
   if (isLong) {
@@ -613,11 +622,49 @@ export function buildTradeSignal(
     if (target2 >= target1) target2 = target1 - riskAmount * 1.5;
   }
 
-  const riskRewardRatio = parseFloat((Math.abs(target2 - price) / riskAmount).toFixed(2));
+  // 6.5.2/CA-5.3: preços alinhados ao tickSize do exchange. O stop arredonda para o lado
+  // conservador (dispara antes); entrada e alvos para o múltiplo mais próximo. R:R recalculado
+  // sobre os preços já arredondados.
+  if (filters) {
+    entryMin = roundPriceToTick(entryMin, filters.tickSize);
+    entryMax = roundPriceToTick(entryMax, filters.tickSize);
+    stopLoss = roundPriceToTick(stopLoss, filters.tickSize, isLong ? 'conservative-long-stop' : 'conservative-short-stop');
+    target1 = roundPriceToTick(target1, filters.tickSize);
+    target2 = roundPriceToTick(target2, filters.tickSize);
+    // R:R sobre o risco real pós-arredondamento (o stop pode ter andado um tick).
+    riskAmount = Math.abs(price - stopLoss) || riskAmount;
+  }
+
+  const riskRewardRatio = dRound(Math.abs(target2 - price) / riskAmount, 2);
 
   // If the natural ratio doesn't meet the minimum configured requirement, reject it entirely.
   if (riskRewardRatio < minRiskRewardRatio) {
     return null;
+  }
+
+  // 6.5.2 — quantidade sugerida (RiskManager) e executabilidade contra os filtros do exchange.
+  // Ausente = filtros indisponíveis (executabilidade desconhecida); `false` só com motivo.
+  let suggestedQuantity: number | undefined = undefined;
+  let executable: boolean | undefined = undefined;
+  let nonExecutableReason: string | undefined = undefined;
+  if (filters) {
+    const sizing = computePositionSize({
+      entryPrice: price,
+      stopLossPrice: stopLoss,
+      equity: riskParams?.equity,
+      riskPerTradePct: riskParams?.riskPerTradePct,
+      minQuantity: filters.minQty,
+      quantityDecimals: 8
+    });
+    if (sizing.valid) {
+      const check = checkExecutability({ quantity: sizing.quantity, entryPrice: price, filters });
+      suggestedQuantity = check.suggestedQuantity;
+      executable = check.executable;
+      nonExecutableReason = check.reason;
+    } else {
+      executable = false;
+      nonExecutableReason = sizing.reason;
+    }
   }
 
   // --- 1m & 5m MULTI-TIMEFRAME VALIDATION ENGINE ---
@@ -732,6 +779,10 @@ export function buildTradeSignal(
     isBreakevenActive: false,
     status: 'ACTIVE',
     tradfiSession: ticker.tradfiSession,
+    // 6.5.2/6.5.3: executabilidade (estimativa de slippage é anexada pelo caller, que tem o book).
+    suggestedQuantity,
+    executable,
+    nonExecutableReason,
     // R-2: a proveniência do sinal é herdada do ticker. Só é DEMO quando o próprio dado é
     // sintético (o que exige ALLOW_SYNTHETIC_DATA='true' para chegar aqui — o DataGate bloqueia
     // o contrário), nunca por causa do ambiente.

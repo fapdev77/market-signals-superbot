@@ -7,6 +7,9 @@ import {
   getTradfiAsset,
   evaluateTickTradfiGate,
   refreshTradfiRegistry,
+  refreshSymbolFilters,
+  getSymbolFilters,
+  fetchOrderBookDepth,
   refreshTradingSchedule,
   fetchBinanceFuturesTickers,
   fetchOpenInterest,
@@ -41,6 +44,8 @@ import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } 
 import { canGenerateSignals, canEvaluateActiveTrades } from './server/services/DataGate.js';
 import { resolveRawTicker, resolveMarketInputs, evaluatePositionManagement } from './server/services/TickProcessor.js';
 import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted, loadAppStateFromDb, getRiskLimits } from './server/services/RiskManager.js';
+// 6.5.3: slippage estimado pela profundidade do book (limite default 0,15%).
+import { estimateDepthSlippagePct, isSlippageAboveLimit, getMaxEstimatedSlippagePct } from './server/services/depthSlippage.js';
 import { resolveServerHost, enforceHostBinding } from './server/utils/hostGuard.js';
 import { initOrLoadSessionToken } from './server/middleware/auth.js';
 import { initOrRestoreDatabase, createScheduledBackup, ensureSqlInstance } from './server/services/BackupService.js';
@@ -227,6 +232,8 @@ async function startServer() {
       // are emitted so the concurrency and exposure limits hold within the same tick.
       // R-2: o motor enxerga todas as origens — se ele gerou um sinal DEMO, tem que gerenciá-lo.
       const openSignals = await getActiveSignals('ALL');
+      // 6.5.2: mantém os filtros do exchange quentes (TTL interno de 1h; no-op barato).
+      void refreshSymbolFilters().catch(() => {});
       const tradingHalted = isTradingHalted();
 
       // 1. Fetch live Binance Futures 24h Tickers
@@ -352,15 +359,53 @@ async function startServer() {
                   incrementMetric(METRIC_NAMES.tradingScheduleBlocks);
                   logJson('INFO', 'tick', 'Sinal bloqueado: mercado TradFi subjacente fechado', { symbol, category: targetCategory, correlationId: currentTickId });
                 } else if (gateDecision.allow && isTradfiAllowed && processed.confluenceScore >= minScore) {
+                  const riskLimits = getRiskLimits();
                   const newSignal = buildTradeSignal(
                     processed,
                     klines,
                     stratConfig.minRiskRewardRatio,
                     targetCategory,
                     targetTimeframe,
-                    weights.signalTtlSettings
+                    weights.signalTtlSettings,
+                    undefined, // weights: default do R-7 preservado (como antes do 6.5)
+                    getSymbolFilters(symbol),
+                    { equity: riskLimits.accountEquity, riskPerTradePct: riskLimits.riskPerTradePct }
                   );
                   if (newSignal) {
+                    // 6.5.3: slippage estimado pela profundidade do book real (sob o limiter).
+                    // Só para perpétuos cripto — TradFi não tem depth real. Falha no book não
+                    // bloqueia o sinal: a estimativa fica ausente e o veredito de preço
+                    // (filtros do exchange, já calculado no buildTradeSignal) permanece.
+                    if (getTradfiAsset(symbol) === null) {
+                      try {
+                        const book = await fetchOrderBookDepth(symbol, newSignal.currentPrice);
+                        const notional = (newSignal.suggestedQuantity ?? 0) * newSignal.currentPrice;
+                        const slip = estimateDepthSlippagePct({
+                          notional,
+                          midPrice: book.midPrice > 0 ? book.midPrice : newSignal.currentPrice,
+                          book,
+                          side: newSignal.direction
+                        });
+                        newSignal.executionBookAvailable = true;
+                        if (!Number.isFinite(slip)) {
+                          // 6.5.3 fail-closed: book vazio/sem liquidez ⇒ não executável com motivo.
+                          newSignal.executable = false;
+                          newSignal.nonExecutableReason = 'Book sem liquidez para estimar execução do notional sugerido (slippage indeterminado).';
+                        } else {
+                          newSignal.estimatedSlippagePct = slip;
+                          if (isSlippageAboveLimit(slip)) {
+                            newSignal.executable = false;
+                            newSignal.nonExecutableReason = `Slippage estimado ${slip}% acima do limite (${getMaxEstimatedSlippagePct()}%) para o notional sugerido.`;
+                          }
+                        }
+                      } catch {
+                        newSignal.executionBookAvailable = false;
+                      }
+                    }
+                    if (newSignal.executable === false) {
+                      incrementMetric(METRIC_NAMES.signalsNotExecutable);
+                      logJson('INFO', 'tick', 'Sinal marcado não executável', { symbol, category: targetCategory, reason: newSignal.nonExecutableReason, correlationId: currentTickId });
+                    }
                     // 6.2.3: sinal + ledger na MESMA transação, fail-closed —
                     // se o ledger não puder ser gravado, o sinal NÃO é emitido
                     // (o alerta e a marca de degradado acontecem dentro da função).
@@ -503,6 +548,10 @@ async function startServer() {
     refreshTradfiRegistry()
       .then(assets => console.log(`📊 Registro TradFi: ${assets.length} contrato(s) descoberto(s).`))
       .catch(err => console.warn('TradFi registry discovery warning:', err));
+
+    // 6.5.2: filtros por símbolo (tickSize/stepSize/minQty/notional) para executabilidade.
+    // Fail-open: sem filtros o sinal nasce sem veredito de executabilidade.
+    void refreshSymbolFilters().catch(err => console.warn('Symbol filters refresh warning:', err));
 
     // R-11: calendário oficial de feriados/horários reduzidos (cache diário). Sem isso o gate
     // TradFi decide só pelo relógio de NY, que trata feriado como dia útil.

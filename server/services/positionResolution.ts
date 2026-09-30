@@ -1,5 +1,5 @@
 /**
- * Shared Position Resolution Engine (M2.4 - Phase 5)
+ * Shared Position Resolution Engine (M2.4 - Phase 5; 6.5.1 decimal)
  *
  * Implements the single authoritative position resolution rules for both
  * live monitoring (`TickProcessor`) and historical simulation (`BacktestEngine`):
@@ -8,7 +8,13 @@
  *  2. TP1: 50% partial execution at Target 1, moving stop-loss to breakeven (entry price).
  *  3. TP2: Runner closes the remaining 50% (or full size if no partial).
  *  4. Pure function: fully deterministic, testable, and reusable.
+ *
+ * 6.5.1 (G-12): todo o caminho de PnL usa aritmética decimal exata (`server/utils/decimal.ts`).
+ * Antes, pernas como 0.5*(0.1-0.090045)/0.1*100 davam 4.97750000000001 em IEEE-754; em
+ * decimal fecham exatamente 4.9775 (CA-5.1). Sem `toFixed` aqui (CA-5.2).
  */
+
+import { dAdd, dDiv, dMul, dRound, dSub } from '../utils/decimal.js';
 
 export interface PositionState {
   direction: 'LONG' | 'SHORT';
@@ -43,6 +49,18 @@ export interface PositionResolutionResult {
   nextPositionState: PositionState;
 }
 
+/** Preço de execução com slippage adverso: LONG vende mais baixo, SHORT compra mais alto. */
+function slipFill(price: number, slippagePct: number, isLong: boolean): number {
+  const adj = dMul(price, dSub(1, dDiv(slippagePct, 100)));
+  return isLong ? adj : dAdd(price, dMul(price, dDiv(slippagePct, 100)));
+}
+
+/** PnL % de uma perna: LONG (fill−entry)/entry; SHORT (entry−fill)/entry, escalado por size. */
+function legPnlPct(fillPrice: number, entryPrice: number, size: number, isLong: boolean): number {
+  const diff = isLong ? dSub(fillPrice, entryPrice) : dSub(entryPrice, fillPrice);
+  return dMul(dDiv(dMul(diff, 100), entryPrice), size);
+}
+
 export function resolvePosition(params: ResolvePositionParams): PositionResolutionResult {
   const { position, high, low, slippagePct = 0 } = params;
   const isLong = position.direction === 'LONG';
@@ -60,14 +78,12 @@ export function resolvePosition(params: ResolvePositionParams): PositionResoluti
   // ---- STOP-FIRST RULE ----
   // If stop is breached, it takes absolute precedence over any target touch
   if (stopBreached) {
-    const fillPrice = isLong
-      ? currentStop * (1 - slippagePct / 100)
-      : currentStop * (1 + slippagePct / 100);
+    const fillPrice = slipFill(currentStop, slippagePct, isLong);
 
     const legSize = partialTaken ? 0.5 : 1.0;
     const legType: 'FULL' | 'RUNNER' = partialTaken ? 'RUNNER' : 'FULL';
 
-    const pnlPct = legSize * (isLong ? (fillPrice - position.entryPrice) : (position.entryPrice - fillPrice)) / position.entryPrice * 100;
+    const pnlPct = legPnlPct(fillPrice, position.entryPrice, legSize, isLong);
 
     return {
       hasClosedFull: true,
@@ -94,12 +110,10 @@ export function resolvePosition(params: ResolvePositionParams): PositionResoluti
 
   // ---- TP1: 50% partial + breakeven stop ----
   if (target1Breached) {
-    const t1Fill = isLong
-      ? position.target1 * (1 - slippagePct / 100)
-      : position.target1 * (1 + slippagePct / 100);
+    const t1Fill = slipFill(position.target1, slippagePct, isLong);
 
     exitLegs.push({ leg: 'PARTIAL', price: t1Fill, size: 0.5 });
-    grossPnlPct += 0.5 * (isLong ? (t1Fill - position.entryPrice) : (position.entryPrice - t1Fill)) / position.entryPrice * 100;
+    grossPnlPct = dAdd(grossPnlPct, legPnlPct(t1Fill, position.entryPrice, 0.5, isLong));
 
     nextPartialTaken = true;
     nextBreakeven = true;
@@ -109,13 +123,11 @@ export function resolvePosition(params: ResolvePositionParams): PositionResoluti
 
   // ---- TP2: runner full closure ----
   if (target2Breached) {
-    const t2Fill = isLong
-      ? position.target2 * (1 - slippagePct / 100)
-      : position.target2 * (1 + slippagePct / 100);
+    const t2Fill = slipFill(position.target2, slippagePct, isLong);
 
     const runnerSize = nextPartialTaken ? 0.5 : 1.0;
     exitLegs.push({ leg: 'RUNNER', price: t2Fill, size: runnerSize });
-    grossPnlPct += runnerSize * (isLong ? (t2Fill - position.entryPrice) : (position.entryPrice - t2Fill)) / position.entryPrice * 100;
+    grossPnlPct = dAdd(grossPnlPct, legPnlPct(t2Fill, position.entryPrice, runnerSize, isLong));
     hasClosedFull = true;
   }
 
@@ -126,7 +138,7 @@ export function resolvePosition(params: ResolvePositionParams): PositionResoluti
     hasPartialClose,
     exitLegs,
     isWin,
-    grossPnlPct,
+    grossPnlPct: dRound(grossPnlPct, 8),
     nextPositionState: {
       ...position,
       stopLoss: nextStop,

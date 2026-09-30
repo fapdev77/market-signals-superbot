@@ -14,6 +14,7 @@ import {
 import { getDefaultStrategyConfigs } from '../src/constants/strategyPresets.js';
 import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
+import { dRound } from './utils/decimal.js';
 import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/index.js';
 import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence } from './services/EvidenceService.js';
 import { calculateSignalOutcomeR } from './services/EvidenceService.js';
@@ -510,7 +511,13 @@ export function rowToTradeSignal(columns: string[], row: any[]): TradeSignal {
     isBreakevenActive: obj.is_breakeven_active === 1,
     status: obj.status,
     // R-2: linhas anteriores à migração 006 não têm a coluna; o default aprovado é LIVE.
-    origin: obj.origin === 'DEMO' ? 'DEMO' : 'LIVE'
+    origin: obj.origin === 'DEMO' ? 'DEMO' : 'LIVE',
+    // 6.5.2/6.5.3: executabilidade (null = desconhecida em linhas antigas).
+    suggestedQuantity: obj.suggested_quantity ?? undefined,
+    executable: obj.executable === null || obj.executable === undefined ? undefined : obj.executable === 1,
+    nonExecutableReason: obj.non_executable_reason || undefined,
+    estimatedSlippagePct: obj.estimated_slippage_pct ?? undefined,
+    executionBookAvailable: obj.execution_book_available === null || obj.execution_book_available === undefined ? undefined : obj.execution_book_available === 1
   };
 }
 
@@ -531,8 +538,9 @@ export async function saveSignal(signal: TradeSignal, dbOverride?: Database) {
       current_price, stop_loss, target1, target2, risk_reward, confluence_score,
       confluence_factors, timeframe, validation_status, validation_stage, 
       candle_1m_confirmed, candle_5m_confirmed, ai_review, ai_confidence, created_at, validated_at, rejected_at, status, strategy_category,
-      expires_at, ttl_minutes, expiration_reason, is_breakeven_active, origin
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      expires_at, ttl_minutes, expiration_reason, is_breakeven_active, origin,
+      suggested_quantity, executable, non_executable_reason, estimated_slippage_pct, execution_book_available
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       signal.id,
       signal.symbol,
@@ -564,7 +572,13 @@ export async function saveSignal(signal: TradeSignal, dbOverride?: Database) {
       signal.ttlMinutes || null,
       signal.expirationReason || null,
       signal.isBreakevenActive ? 1 : 0,
-      resolveSignalOrigin(signal)
+      resolveSignalOrigin(signal),
+      // 6.5.2/6.5.3: executabilidade (null = desconhecida; false sempre com motivo).
+      signal.suggestedQuantity ?? null,
+      signal.executable === undefined ? null : (signal.executable ? 1 : 0),
+      signal.nonExecutableReason || null,
+      signal.estimatedSlippagePct ?? null,
+      signal.executionBookAvailable === undefined ? null : (signal.executionBookAvailable ? 1 : 0)
     ]
   );
   if (!dbOverride) {
@@ -1243,7 +1257,7 @@ export async function getDatabaseStats(): Promise<DatabaseStats> {
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return dRound(bytes / Math.pow(k, i), 2) + ' ' + sizes[i];
   };
 
   // Integrity Check
@@ -1380,7 +1394,7 @@ export async function vacuumDatabase(): Promise<{
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return dRound(bytes / Math.pow(k, i), 2) + ' ' + sizes[i];
   };
 
   const freed = Math.max(0, oldSizeBytes - newSizeBytes);

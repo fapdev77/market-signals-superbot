@@ -1,6 +1,7 @@
 import { TickerData, KlineCandle, OrderBookDepthData, OrderBookLevel, LongShortRatioData, TrappedTradersData, LiquidationSummary } from '../src/types.js';
 import { addBinanceLog, getLiveWSTickers, getLiquidationsSummary } from './binanceWebsocket.js';
 import { requestJson, requestJsonLimited } from './utils/httpClient.js';
+import { extractSymbolFilters, type SymbolFilters } from './services/exchangeFilters.js';
 import { BinanceRateLimiter } from './utils/binanceRateLimiter.js';
 // R-13: health por feed — todo caminho de fetch grava sucesso/falha no registro central.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
@@ -136,6 +137,33 @@ export function classifyTradfiContract(symbolInfo: any): TradfiCategory | null {
  * Never force-adds a symbol: if discovery returns nothing, the registry is empty and the caller must
  * treat TradFi monitoring as unavailable.
  */
+// 6.5.2 — cache dos filtros por símbolo (PRICE_FILTER/LOT_SIZE/MIN_NOTIONAL do exchangeInfo).
+// Preenchido na mesma busca do registry TradFi (TTL compartilhado); nunca bloqueia: sem
+// filtros, o sinal nasce sem veredito de executabilidade em vez de ser descartado.
+const symbolFiltersCache = new Map<string, SymbolFilters>();
+let symbolFiltersRefreshedAt = 0;
+const SYMBOL_FILTERS_TTL_MS = 60 * 60 * 1000; // 1h (mesma janela do registry TradFi)
+
+export function getSymbolFilters(symbol: string): SymbolFilters | null {
+  return symbolFiltersCache.get(symbol.toUpperCase()) ?? null;
+}
+
+export async function refreshSymbolFilters(): Promise<void> {
+  const now = Date.now();
+  if (symbolFiltersCache.size > 0 && now - symbolFiltersRefreshedAt < SYMBOL_FILTERS_TTL_MS) return;
+  try {
+    const { data } = await fetchWithFallback(() => '/fapi/v1/exchangeInfo');
+    const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
+    for (const s of symbols) {
+      const f = extractSymbolFilters(s);
+      if (f && s?.symbol) symbolFiltersCache.set(String(s.symbol).toUpperCase(), f);
+    }
+    symbolFiltersRefreshedAt = now;
+  } catch {
+    // fail-open deliberado: sem filtros o sinal segue sem veredito de executabilidade.
+  }
+}
+
 export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
   const now = Date.now();
   if (TRADFI_ASSETS.length > 0 && now - tradfiRegistryRefreshedAt < TRADFI_REGISTRY_TTL_MS) {
