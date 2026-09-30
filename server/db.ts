@@ -1751,7 +1751,55 @@ export const signalLedgerDao = {
         events
       );
 
-      if (outcome.isClosed) {
+      // 6.3.5: desconta do R os eventos de funding reais atravessados pelo
+      // sinal (mesmo método do backtest). Import dinâmico evita o ciclo
+      // db.ts ↔ backtest_db. Falha aqui é fail-open (R sem funding) — a
+      // leitura de evidência não pode quebrar por ausência de histórico.
+      let fundingOptions: any;
+      try {
+        const { historicalFundingDao } = await import('./backtest_db/index.js');
+        const fundingRows = await historicalFundingDao.getBySymbolAndRange(
+          symbol,
+          createdAt,
+          events[events.length - 1].timestamp
+        );
+        if (fundingRows.length > 0) {
+          fundingOptions = {
+            funding: {
+              records: fundingRows.map(r => ({
+                symbol: r.symbol,
+                fundingTime: r.fundingTime,
+                fundingRate: r.fundingRate,
+                markPrice: r.markPrice ?? undefined,
+                rateType: r.rateType
+              }))
+            }
+          };
+        }
+      } catch {
+        fundingOptions = undefined;
+      }
+
+      const finalOutcome = fundingOptions
+        ? calculateSignalOutcomeR(
+            {
+              id,
+              symbol,
+              category,
+              direction,
+              entryPrice,
+              stopLoss,
+              takeProfit1,
+              takeProfit2,
+              score,
+              origin: rowOrigin
+            },
+            events,
+            fundingOptions
+          )
+        : outcome;
+
+      if (finalOutcome.isClosed) {
         const closedAt = events.length > 0 ? events[events.length - 1].timestamp : createdAt;
         const lastEvent = events.length > 0 ? events[events.length - 1] : undefined;
         signals.push({
@@ -1763,14 +1811,14 @@ export const signalLedgerDao = {
           scoreTier: `${Math.floor(score / 10) * 10}-${Math.floor(score / 10) * 10 + 9}`,
           tradfiSession,
           origin: rowOrigin,
-          netR: outcome.netR,
+          netR: finalOutcome.netR,
           mfeR: 0,
           maeR: 0,
-          isWin: outcome.netR > 0,
+          isWin: finalOutcome.netR > 0,
           closedAt,
-          outcomeType: outcome.outcomeType,
+          outcomeType: finalOutcome.outcomeType,
           expiredReason:
-            outcome.outcomeType === 'EXPIRED'
+            finalOutcome.outcomeType === 'EXPIRED'
               ? String(lastEvent?.metadata?.reason || lastEvent?.metadata?.reasonText || 'UNKNOWN')
               : undefined
         });

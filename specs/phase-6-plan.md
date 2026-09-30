@@ -93,22 +93,30 @@
 
 ## Fase 6.3 — Funding real (G-09)
 
-- [ ] **T6.3.1 — `FundingSyncService` paginado e idempotente** (M)
+- [x] **T6.3.1 — `FundingSyncService` paginado e idempotente** (M)
   - *CA:* CA-3.1 — >1000 registros paginam e gravam; 2ª execução não duplica. *CA-3.4* respeita limiter.
   - *Testes:* `tests/fundingSyncPaging.test.ts`, `tests/fundingSyncIdempotent.test.ts`. *Arquivos:* `server/services/FundingSyncService.ts` (novo), `server/backtest_db/index.ts`.
-- [ ] **T6.3.2 — `rateType` por registro** (S)
+- [x] **T6.3.2 — `rateType` por registro** (S)
   - *CA:* validar na fixture real; coluna por migração se faltar. *Arquivos:* `server/migrations/index.ts`, `FundingService.ts`.
-- [ ] **T6.3.3 — Gatilhos de sincronização** (S)
+- [x] **T6.3.3 — Gatilhos de sincronização** (S)
   - *CA:* antes de cada backtest cobre o intervalo; diário para monitorados com orçamento/minuto.
-- [ ] **T6.3.4 — Backtest cobra funding real por trecho** (M)
+- [x] **T6.3.4 — Backtest cobra funding real por trecho** (M)
   - *CA:* CA-3.2/3.3 — soma exata dos registros da janela, `fundingCoverage` correto; trecho sem dado usa taxa fixa e declara em `assumptions`.
   - *Teste:* `tests/backtestFundingCoverage.test.ts`. *Arquivos:* `server/backtest_db/index.ts`, `server/services/BacktestEngine.ts`.
-- [ ] **T6.3.5 — R do ledger desconta funding real** (M)
+- [x] **T6.3.5 — R do ledger desconta funding real** (M)
   - *CA:* CA-3.5 — sinal atravessando 2 eventos bate o cálculo manual em decimal.
   - *Teste:* `tests/ledgerFundingR.test.ts`.
 
-### Checkpoint D (após 6.3)
-- [ ] `historical_funding` alimentada · backtest com cobertura real · R com funding.
+### Checkpoint D (após 6.3) — ✅ 2026-09-30
+- [x] `historical_funding` alimentada · backtest com cobertura real · R com funding. (`tsc` limpo · **72 arquivos / 400 testes verdes** · `build` ok.)
+
+#### Notas de implementação (6.3, 2026-09-30)
+- **6.3.1:** `server/services/FundingSyncService.ts` novo — paginação por `startTime` com `limit=1000` (máximo do endpoint), avançando estritamente além do último registro recebido; gravação idempotente via `INSERT OR REPLACE` na chave única `symbol+funding_time` (migração 007). Resultado traz `status` (`COMPLETE`/`BUDGET_EXHAUSTED`) e `nextStartTime` para retomada.
+- **6.3.2:** fixture real de 2026-09-30 traz `rateType: "Regular"` em 200/200 registros → coluna já existia (migração 007, default `Normal`) e é persistida por registro; ausência na resposta vira `Normal`.
+- **6.3.3/CA-3.4:** orçamento de páginas/minuto (`FUNDING_SYNC_BUDGET_PER_MINUTE`, default 60; o endpoint divide com `fundingInfo` o limite de 500 req/5min) e gatilhos em `FundingCoverageTrigger`: `ensureFundingCoverage` antes de cada `POST /api/backtest/run` (incremental a partir do último registro, não bloqueante) e `scheduleDailyFundingSync` no boot para os símbolos monitorados (idempotente por dia UTC). Toda chamada REST passa pelo `requestJsonLimited` (limiter).
+- **6.3.4/CA-3.2/3.3:** `calculateFundingCostWithCoverage` em `FundingService` — eventos esperados = piso(janela/intervalo); real onde há registro, taxa fixa SOMENTE nos eventos sem dado; `fundingCoverage` agregado no `BacktestResult` + suposição declarada em `assumptions` quando há trecho de fallback. Corrige o comportamento anterior, que zerava o custo do trecho sem dado.
+- **6.3.5/CA-3.5:** `calculateSignalOutcomeR` aceita `options.funding` e expõe `fundingR`; `getClosedSignalsEvidence` busca o histórico do símbolo (import dinâmico para evitar ciclo db↔backtest_db) e desconta com o mesmo método do backtest. Falha na busca é fail-open (R sem funding), não quebra a leitura.
+- Testes novos: `tests/fundingSyncPaging.test.ts` (3), `tests/fundingSyncIdempotent.test.ts` (2), `tests/backtestFundingCoverage.test.ts` (4), `tests/ledgerFundingR.test.ts` (2).
 
 ---
 

@@ -540,6 +540,8 @@ export interface BacktestResult {
     funding: number;
     longShort: number;
   };
+  /** 6.3.4 — % dos eventos de funding da janela cobertos por registros reais. */
+  fundingCoverage?: number;
 }
 
 export interface LiquidityBucket {

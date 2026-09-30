@@ -7,6 +7,7 @@
  */
 
 import { dAdd, dSub, dMul, dDiv, dRound } from '../utils/decimal.js';
+import { calculateFundingCostWithCoverage, type HistoricalFundingRecord } from './FundingService.js';
 
 export interface LedgerSignalParams {
   id: string;
@@ -48,6 +49,8 @@ export interface SignalOutcomeResult {
   grossR: number;
   netR: number;
   costsR: number;
+  /** 6.3.5 — funding real (e fallback por trecho) descontado do netR, em R. */
+  fundingR?: number;
   realizedPnlPct?: number;
 }
 
@@ -153,6 +156,12 @@ export function calculateSignalOutcomeR(
   options?: {
     feePct?: number;       // default 0.04% per order
     slippagePct?: number;  // default 0.02% roundtrip
+    /** 6.3.5 — eventos de funding reais atravessados pelo sinal (mesmo método do backtest). */
+    funding?: {
+      records?: HistoricalFundingRecord[];
+      fallbackFundingRatePer8h?: number;
+      fundingIntervalHours?: number;
+    };
   }
 ): SignalOutcomeResult {
   const isLong = signal.direction === 'LONG';
@@ -224,14 +233,36 @@ export function calculateSignalOutcomeR(
 
   // Net R deducts trading cost in R
   const costsR = dRound(costPerUnitR, 4);
-  const netR = dRound(dSub(grossR, costsR), 4);
+
+  // 6.3.5 — funding descontado do R: eventos reais atravessados na vida do
+  // sinal (ENTRY → último evento), com o MESMO método do backtest
+  // (calculateFundingCostWithCoverage: real onde há registro, taxa fixa por
+  // trecho onde não há). Sem opções de funding, nada é descontado.
+  let fundingR = 0;
+  if (options?.funding?.records && options.funding.records.length > 0 && events.length > 0) {
+    const entryTime = signal.createdAt ?? events[0].timestamp;
+    const exitTime = events[events.length - 1].timestamp;
+    const fundingResult = calculateFundingCostWithCoverage({
+      direction: signal.direction,
+      positionSize: 1,
+      entryTime,
+      exitTime,
+      fundingRecords: options.funding.records,
+      fallbackFundingRatePer8h: options.funding.fallbackFundingRatePer8h ?? 0.0001,
+      fundingIntervalHours: options.funding.fundingIntervalHours ?? 8
+    });
+    fundingR = dRound(dDiv(fundingResult.totalFundingCostPct, riskPctNotional), 6);
+  }
+
+  const netR = dRound(dSub(dSub(grossR, costsR), fundingR), 4);
 
   return {
     isClosed,
     outcomeType,
     grossR: dRound(grossR, 4),
     netR,
-    costsR
+    costsR,
+    fundingR
   };
 }
 

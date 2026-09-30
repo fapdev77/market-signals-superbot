@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { HistoricalDataService } from '../services/HistoricalDataService.js';
 import { BacktestEngine } from '../services/BacktestEngine.js';
 import { BotState } from '../../src/types.js';
+import { ensureFundingCoverage, defaultFundingBudgetPerMinute } from '../services/FundingCoverageTrigger.js';
 
 export function createBacktestRouter(getBotState: () => BotState): Router {
   const router = Router();
@@ -32,9 +33,20 @@ export function createBacktestRouter(getBotState: () => BotState): Router {
       const { symbol, days, profile, weights, useCache } = req.body;
       const botState = getBotState();
       const activeWeights = weights || botState.weights;
+      const effectiveDays = days || 30;
+      // 6.3.3: garante cobertura de funding do intervalo do símbolo ANTES de
+      // cada backtest (incremental, idempotente, com orçamento/minuto). Falha
+      // aqui NÃO bloqueia o backtest — o resultado declara a cobertura menor.
+      try {
+        await ensureFundingCoverage(symbol, effectiveDays, {
+          budgetPerMinute: defaultFundingBudgetPerMinute()
+        });
+      } catch (fundErr: any) {
+        console.warn(`[backtest] Falha ao sincronizar funding para ${symbol} (seguindo com cobertura existente):`, fundErr?.message || fundErr);
+      }
       const result = await BacktestEngine.runBacktest({
         symbol,
-        days: days || 30,
+        days: effectiveDays,
         profile: profile || 'daytrade',
         weights: activeWeights
       }, useCache !== false);

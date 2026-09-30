@@ -7,6 +7,7 @@ import { processTickerState, buildTradeSignal, SIGNAL_LOOKBACK_CANDLES } from '.
 import { resolvePosition, type PositionState } from './positionResolution.js';
 import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './FundingService.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
+import { calculateFundingCostWithCoverage } from './FundingService.js';
 import { calculateFitnessExpectancy, evaluateAutoTuneHoldout } from './autoTuneOptimizer.js';
 
 // Deterministic Pseudo-Random Number Generator (Mulberry32) for reproducible backtests and mutations
@@ -424,6 +425,10 @@ export class BacktestEngine {
         : `Funding cost charged at a flat ${(fundingRatePer8h * 100).toFixed(3)}%/8h baseline (not the observed rate)`,
       `Taker fee ${feePct}% per side, slippage ${slipPct}% applied to fill prices`
     ];
+    // 6.3.4 — contadores de cobertura de funding por trade.
+    let fundingCoverageExpectedTotal = 0;
+    let fundingCoverageCoveredTotal = 0;
+    let fundingFallbackEventsTotal = 0;
 
     // Phase 2.5.4: entry is deferred to the next candle's open to remove lookahead bias.
     let pendingEntry: { direction: 'LONG' | 'SHORT'; stopLoss: number; target1: number; target2: number } | null = null;
@@ -553,8 +558,9 @@ export class BacktestEngine {
 
           const durationMin = Math.max(1, Math.round((candle.timestamp - entryTime) / (60 * 1000)));
 
-          // M2.1: Real funding cost per trade
-          const fundingResult = calculateHistoricalFundingCost({
+          // M2.1 / 6.3.4: funding por intervalo com cobertura — real onde há
+          // registro, taxa fixa somente no trecho sem dado (declarado).
+          const fundingResult = calculateFundingCostWithCoverage({
             direction: posDirection,
             positionSize: closedSize,
             entryTime,
@@ -563,6 +569,9 @@ export class BacktestEngine {
             fallbackFundingRatePer8h: fundingRatePer8h,
             fundingIntervalHours
           });
+          fundingCoverageExpectedTotal += fundingResult.expectedEvents;
+          fundingCoverageCoveredTotal += fundingResult.coveredEvents;
+          fundingFallbackEventsTotal += Math.max(0, fundingResult.expectedEvents - fundingResult.coveredEvents);
 
           // Net trade PnL = Gross % (this candle's legs) - fees on closed size - funding on closed size
           const feeCostPct = roundtripFee * closedSize;
@@ -681,6 +690,18 @@ export class BacktestEngine {
       windowResults: wf.windowResults
     };
 
+    // 6.3.4 — fundingCoverage da janela: % dos eventos esperados cobertos por
+    // registro real; trechos sem dado viram suposição declarada.
+    const fundingCoverage =
+      fundingCoverageExpectedTotal > 0
+        ? Math.min(100, (fundingCoverageCoveredTotal / fundingCoverageExpectedTotal) * 100)
+        : 100;
+    if (fundingFallbackEventsTotal > 0) {
+      assumptions.push(
+        `${fundingFallbackEventsTotal} evento(s) de funding sem registro real cobrado(s) à taxa fixa de ${fundingRatePer8h * 100}%/intervalo`
+      );
+    }
+
     const result: BacktestResult = {
       id: crypto.randomUUID(),
       symbol: config.symbol,
@@ -690,6 +711,7 @@ export class BacktestEngine {
       assumptions,
       reducedFactorSet: factorCoverageResult.reducedFactorSet,
       factorCoverage: factorCoverageResult.factorCoverage,
+      fundingCoverage: parseFloat(fundingCoverage.toFixed(2)),
       startTime: klines[0].openTime,
       endTime: klines[klines.length - 1].openTime,
       totalCandlesTested: klines.length,

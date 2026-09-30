@@ -35,6 +35,22 @@ export interface FundingCostResult {
   isFallback: boolean;
 }
 
+/** 6.3.4 — resultado do funding por trecho, com cobertura real vs. fallback. */
+export interface FundingCostCoverageResult extends FundingCostResult {
+  /** Eventos de funding esperados na janela (janela / intervalo, piso). */
+  expectedEvents: number;
+  /** Eventos com registro real dentro da janela. */
+  coveredEvents: number;
+  /** Percentual 0..100 de eventos cobertos por dado real. */
+  fundingCoverage: number;
+  /** Custo (%) dos eventos com registro real, já com sinal da direção. */
+  realFundingCostPct: number;
+  /** Custo (%) dos eventos cobrados pela taxa fixa (trecho sem dado). */
+  fallbackFundingCostPct: number;
+  /** Suposições declaradas quando parte da janela usa a taxa fixa. */
+  assumptions: string[];
+}
+
 export function calculateHistoricalFundingCost(params: CalculateFundingParams): FundingCostResult {
   const {
     direction,
@@ -94,5 +110,79 @@ export function calculateHistoricalFundingCost(params: CalculateFundingParams): 
     cyclesCrossed: relevantRecords.length,
     hasSpecialFunding: specialRateSum > 0,
     isFallback: false
+  };
+}
+
+/**
+ * 6.3.4 / CA-3.2 e CA-3.3 — funding POR INTERVALO com cobertura declarada.
+ *
+ * Onde houver registro real, usa o real (custo = soma exata dos registros da
+ * janela). Onde não houver, cobra a taxa fixa SOMENTE nos eventos esperados
+ * sem registro — nunca zera o trecho — e declara isso em `assumptions`.
+ * `fundingCoverage` é o percentual de eventos cobertos por dado real.
+ */
+export function calculateFundingCostWithCoverage(
+  params: CalculateFundingParams
+): FundingCostCoverageResult {
+  const {
+    direction,
+    positionSize = 1,
+    entryTime,
+    exitTime,
+    fundingRecords = [],
+    fallbackFundingRatePer8h = 0.0001,
+    fundingIntervalHours = 8
+  } = params;
+
+  const intervalMs = Math.max(1, fundingIntervalHours) * 3600 * 1000;
+  const durationMs = Math.max(0, exitTime - entryTime);
+  const expectedEvents = Math.floor(durationMs / intervalMs);
+
+  // Eventos com registro real na janela (mesma regra de atravessamento).
+  const relevantRecords = fundingRecords.filter(
+    r => r.fundingTime > entryTime && r.fundingTime <= exitTime
+  );
+  const coveredEvents = Math.min(relevantRecords.length, expectedEvents);
+  const fallbackEvents = Math.max(0, expectedEvents - relevantRecords.length);
+
+  const sign = direction === 'LONG' ? 1 : -1;
+
+  let realRateSum = 0;
+  let specialRateSum = 0;
+  for (const record of relevantRecords) {
+    if (record.rateType === 'Special') {
+      specialRateSum += record.fundingRate;
+    } else {
+      realRateSum += record.fundingRate;
+    }
+  }
+
+  const realFundingCostPct = sign * (realRateSum + specialRateSum) * 100 * positionSize;
+  const fallbackFundingCostPct = sign * fallbackEvents * (fallbackFundingRatePer8h * 100) * positionSize;
+  const totalFundingCostPct = realFundingCostPct + fallbackFundingCostPct;
+
+  const fundingCoverage =
+    expectedEvents > 0 ? Math.min(100, (coveredEvents / expectedEvents) * 100) : 100;
+
+  const assumptions: string[] = [];
+  if (fallbackEvents > 0) {
+    assumptions.push(
+      `${fallbackEvents} evento(s) de funding sem registro real cobrado(s) à taxa fixa de ${fallbackFundingRatePer8h * 100}%/intervalo`
+    );
+  }
+
+  return {
+    totalFundingCostPct,
+    normalFundingCostPct: realFundingCostPct,
+    specialFundingCostPct: 0,
+    cyclesCrossed: relevantRecords.length,
+    hasSpecialFunding: specialRateSum !== 0,
+    isFallback: relevantRecords.length === 0,
+    expectedEvents,
+    coveredEvents,
+    fundingCoverage,
+    realFundingCostPct,
+    fallbackFundingCostPct,
+    assumptions
   };
 }

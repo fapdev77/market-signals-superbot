@@ -47,6 +47,7 @@ import { initOrRestoreDatabase, createScheduledBackup, ensureSqlInstance } from 
 import { checkBinanceServerTimeDrift } from './server/services/ClockService.js';
 import { getDb } from './server/db.js';
 import { createApp } from './server/app.js';
+import { scheduleDailyFundingSync } from './server/services/FundingCoverageTrigger.js';
 // R-15: logger estruturado + métricas em memória.
 import { logJson } from './server/utils/logger.js';
 import { incrementMetric, METRIC_NAMES } from './server/utils/metrics.js';
@@ -154,6 +155,16 @@ async function startServer() {
   } catch (err: any) {
     console.warn('⚠️ Falha na reconciliação do ledger no boot:', err?.message || err);
   }
+
+  // 6.3.3: gatilho diário de sincronização de funding para os símbolos
+  // monitorados, com orçamento de páginas por minuto (rate limiter).
+  scheduleDailyFundingSync(() => {
+    try {
+      return marketScreener.getMonitoredSymbols();
+    } catch {
+      return [];
+    }
+  });
 
   // M4.6: Clock drift initial verification and 10m periodic check
   checkBinanceServerTimeDrift().catch(err => console.warn('Falha no check inicial de relógio:', err));
