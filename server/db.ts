@@ -1,6 +1,7 @@
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'node:child_process';
 import {
   TradeSignal,
   IndicatorWeights,
@@ -16,7 +17,8 @@ import { DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
 import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/index.js';
 import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence } from './services/EvidenceService.js';
 import { calculateSignalOutcomeR } from './services/EvidenceService.js';
-import { defaultAlertService } from './services/AlertService.js';
+import { defaultAlertService, AlertService } from './services/AlertService.js';
+import { incrementMetric, METRIC_NAMES } from './utils/metrics.js';
 
 let db: Database | null = null;
 const DEFAULT_DB_FILE_PATH = path.join(process.cwd(), 'data', 'superbot.sqlite');
@@ -521,8 +523,8 @@ function originClause(origin: OriginFilter): string {
   return origin === 'ALL' ? '' : ` AND origin = '${origin}'`;
 }
 
-export async function saveSignal(signal: TradeSignal) {
-  const database = await getDb();
+export async function saveSignal(signal: TradeSignal, dbOverride?: Database) {
+  const database = dbOverride || (await getDb());
   database.run(
     `INSERT OR REPLACE INTO trade_signals (
       id, symbol, market_type, signal_type, direction, entry_min, entry_max,
@@ -565,7 +567,9 @@ export async function saveSignal(signal: TradeSignal) {
       resolveSignalOrigin(signal)
     ]
   );
-  scheduleDbSave();
+  if (!dbOverride) {
+    scheduleDbSave();
+  }
 }
 
 /**
@@ -618,36 +622,123 @@ export async function getSignalById(id: string): Promise<TradeSignal | null> {
   return rowToTradeSignal(res[0].columns, res[0].values[0]);
 }
 
+// 6.2.1 — razões canônicas de expiração (texto humano + código do evento).
+const REASON_STRATEGY_RESET = 'Estratégia Redefinida';
+const REASON_MANUAL_RESET = 'Reset Manual de Sinais';
+const REASON_TTL = 'TTL Expirado (Tempo Limite Atingido)';
+
+function reasonToCode(reason: string): 'TTL' | 'STRATEGY_RESET' | 'MANUAL_RESET' {
+  if (reason === REASON_TTL) return 'TTL';
+  if (reason === REASON_STRATEGY_RESET) return 'STRATEGY_RESET';
+  return 'MANUAL_RESET';
+}
+
+/** Último preço conhecido do símbolo (ticker_snapshots), mais recente primeiro. */
+function getLastKnownPrice(database: Database, symbol: string): number | null {
+  const res = database.exec(
+    `SELECT price FROM ticker_snapshots WHERE symbol = ? AND price IS NOT NULL ORDER BY updated_at DESC LIMIT 1`,
+    [symbol]
+  );
+  if (!res.length || !res[0].values.length) return null;
+  const p = Number(res[0].values[0][0]);
+  return Number.isFinite(p) && p > 0 ? p : null;
+}
+
+/**
+ * 6.2.1 — grava o evento EXPIRED para cada sinal recém-expirado, fechando a
+ * mercado pelo último preço conhecido (fallback: current_price do sinal, depois
+ * entry_price). O sweep em si é fail-open: o sinal já está EXPIRADO em
+ * trade_signals; qualquer evento perdido aqui é criado retroativamente pelo
+ * reconcileLedgerWithSignals() no boot (6.2.4).
+ */
+function recordExpiryEventsFor(
+  database: Database,
+  ids: string[],
+  reasonCode: 'TTL' | 'STRATEGY_RESET' | 'MANUAL_RESET',
+  humanReason: string,
+  closedAt: number
+): void {
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = database.exec(
+    `SELECT id, symbol, current_price, entry_min FROM trade_signals WHERE id IN (${placeholders})`,
+    ids
+  );
+  if (!rows.length || !rows[0].values) return;
+
+  for (const row of rows[0].values) {
+    const id = String(row[0]);
+    const symbol = String(row[1]);
+    const currentPrice = Number(row[2]);
+    const entryMin = Number(row[3]);
+    let closePrice = getLastKnownPrice(database, symbol);
+    if (closePrice === null) {
+      closePrice = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : entryMin;
+    }
+    try {
+      database.run(
+        `INSERT INTO signal_events (signal_id, event_type, price, timestamp, metadata) VALUES (?, ?, ?, ?, ?)`,
+        [id, 'EXPIRED', closePrice, closedAt, JSON.stringify({ reason: reasonCode, reasonText: humanReason })]
+      );
+    } catch (e: any) {
+      console.warn(`[ledger] Falha ao gravar EXPIRED para ${id} (${reasonCode}):`, e?.message || e);
+      incrementMetric(METRIC_NAMES.ledgerWriteFailures);
+    }
+  }
+}
+
 export async function expireActiveSignalsByCategory(category: string) {
   const database = await getDb();
-  database.run(
-    `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = 'Estratégia Redefinida' WHERE (strategy_category = ? OR (strategy_category IS NULL AND ? = 'INTRADAY')) AND status = 'ACTIVE'`,
+  const res = database.exec(
+    `SELECT id FROM trade_signals WHERE (strategy_category = ? OR (strategy_category IS NULL AND ? = 'INTRADAY')) AND status = 'ACTIVE'`,
     [category, category]
   );
+  const ids = res.length && res[0].values ? res[0].values.map(r => String(r[0])) : [];
+  if (ids.length > 0) {
+    database.run(
+      `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = ? WHERE id IN (${ids.map(() => '?').join(', ')})`,
+      [REASON_STRATEGY_RESET, ...ids]
+    );
+  }
   scheduleDbSave();
+  recordExpiryEventsFor(database, ids, 'STRATEGY_RESET', REASON_STRATEGY_RESET, Date.now());
 }
 
 export async function expireAllActiveSignals() {
   const database = await getDb();
-  database.run(`UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = 'Reset Manual de Sinais' WHERE status = 'ACTIVE'`);
+  const res = database.exec(`SELECT id FROM trade_signals WHERE status = 'ACTIVE'`);
+  const ids = res.length && res[0].values ? res[0].values.map(r => String(r[0])) : [];
+  if (ids.length > 0) {
+    database.run(
+      `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = ? WHERE id IN (${ids.map(() => '?').join(', ')})`,
+      [REASON_MANUAL_RESET, ...ids]
+    );
+  }
   scheduleDbSave();
+  recordExpiryEventsFor(database, ids, 'MANUAL_RESET', REASON_MANUAL_RESET, Date.now());
 }
 
 /**
- * Sweeps the database and automatically marks signals whose TTL expired as EXPIRED
+ * Sweeps the database and automatically marks signals whose TTL expired as
+ * EXPIRED, gravando o evento EXPIRED no ledger (6.2.1). Retorna quantos sinais
+ * foram expirados nesta chamada.
  */
 export async function expireStaleSignals(now: number = Date.now()): Promise<number> {
   const database = await getDb();
-  const checkRes = database.exec(`SELECT count(*) FROM trade_signals WHERE status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ${now}`);
-  const count = checkRes.length && checkRes[0].values.length ? Number(checkRes[0].values[0][0]) : 0;
-  if (count > 0) {
+  const checkRes = database.exec(
+    `SELECT id FROM trade_signals WHERE status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?`,
+    [now]
+  );
+  const ids = checkRes.length && checkRes[0].values ? checkRes[0].values.map(r => String(r[0])) : [];
+  if (ids.length > 0) {
     database.run(
-      `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = 'TTL Expirado (Tempo Limite Atingido)' WHERE status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?`,
-      [now]
+      `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = ? WHERE id IN (${ids.map(() => '?').join(', ')})`,
+      [REASON_TTL, ...ids]
     );
     scheduleDbSave();
+    recordExpiryEventsFor(database, ids, 'TTL', REASON_TTL, now);
   }
-  return count;
+  return ids.length;
 }
 
 export async function updateSignalStatus(id: string, status: string, reason?: string) {
@@ -1503,8 +1594,9 @@ export const signalLedgerDao = {
     database.run(
       `INSERT INTO signal_ledger (
         id, symbol, category, direction, entry_price, stop_loss, take_profit1, take_profit2,
-        score, factors, unavailable_factors, origin, data_source, tradfi_session, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        score, factors, unavailable_factors, origin, data_source, tradfi_session, created_at,
+        tradfi_category, engine_version, weights_hash, strategy_profile
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         params.id,
         params.symbol,
@@ -1520,7 +1612,11 @@ export const signalLedgerDao = {
         params.origin || 'LIVE',
         params.dataSource || 'BINANCE',
         params.tradfiSession || null,
-        params.createdAt || Date.now()
+        params.createdAt || Date.now(),
+        params.tradfiCategory || null,
+        params.engineVersion || null,
+        params.weightsHash || null,
+        params.strategyProfile || null
       ]
     );
     if (!dbOverride) {
@@ -1545,6 +1641,53 @@ export const signalLedgerDao = {
     if (!dbOverride) {
       scheduleDbSave();
     }
+  },
+
+  /** 6.2 — leitura crua de eventos (testes e reconciliação). */
+  async getRawEvents(
+    signalId: string,
+    dbOverride?: Database
+  ): Promise<Array<{ eventType: string; price: number; timestamp: number; metadata?: Record<string, any> }>> {
+    const database = dbOverride || (await getDb());
+    const res = database.exec(
+      `SELECT event_type, price, timestamp, metadata FROM signal_events WHERE signal_id = ? ORDER BY timestamp ASC, id ASC`,
+      [signalId]
+    );
+    if (!res.length || !res[0].values) return [];
+    return res[0].values.map(row => ({
+      eventType: String(row[0]),
+      price: Number(row[1]),
+      timestamp: Number(row[2]),
+      metadata: row[3] ? JSON.parse(String(row[3])) : undefined
+    }));
+  },
+
+  /** 6.2 — leitura crua de uma linha do ledger (testes). */
+  async getRawLedgerRow(
+    signalId: string,
+    dbOverride?: Database
+  ): Promise<{
+    id: string; symbol: string; category: string; tradfiSession: string | null; tradfiCategory: string | null;
+    engineVersion: string | null; weightsHash: string | null; strategyProfile: string | null;
+  } | null> {
+    const database = dbOverride || (await getDb());
+    const res = database.exec(
+      `SELECT id, symbol, category, tradfi_session, tradfi_category, engine_version, weights_hash, strategy_profile
+       FROM signal_ledger WHERE id = ?`,
+      [signalId]
+    );
+    if (!res.length || !res[0].values || !res[0].values.length) return null;
+    const r = res[0].values[0];
+    return {
+      id: String(r[0]),
+      symbol: String(r[1]),
+      category: String(r[2]),
+      tradfiSession: r[3] != null ? String(r[3]) : null,
+      tradfiCategory: r[4] != null ? String(r[4]) : null,
+      engineVersion: r[5] != null ? String(r[5]) : null,
+      weightsHash: r[6] != null ? String(r[6]) : null,
+      strategyProfile: r[7] != null ? String(r[7]) : null
+    };
   },
 
   async getClosedSignalsEvidence(origin: OriginFilter = 'LIVE', dbOverride?: Database): Promise<ClosedSignalEvidence[]> {
@@ -1610,6 +1753,7 @@ export const signalLedgerDao = {
 
       if (outcome.isClosed) {
         const closedAt = events.length > 0 ? events[events.length - 1].timestamp : createdAt;
+        const lastEvent = events.length > 0 ? events[events.length - 1] : undefined;
         signals.push({
           id,
           symbol,
@@ -1623,13 +1767,323 @@ export const signalLedgerDao = {
           mfeR: 0,
           maeR: 0,
           isWin: outcome.netR > 0,
-          closedAt
+          closedAt,
+          outcomeType: outcome.outcomeType,
+          expiredReason:
+            outcome.outcomeType === 'EXPIRED'
+              ? String(lastEvent?.metadata?.reason || lastEvent?.metadata?.reasonText || 'UNKNOWN')
+              : undefined
         });
       }
     }
     return signals;
   }
 };
+
+// ============================================================================
+// 6.2.3 — Escrita transacional / fail-closed + alerta + símbolo degradado
+// ============================================================================
+
+/** Hook de teste para simular indisponibilidade do ledger dentro da transação. */
+let ledgerWriteHookForTests: (() => void) | null = null;
+export function setLedgerWriteHookForTests(hook: (() => void) | null): void {
+  ledgerWriteHookForTests = hook;
+}
+
+/** 6.2.3 — permite injetar um AlertService espiado nos testes. */
+let ledgerAlertServiceOverride: AlertService | null = null;
+export function setLedgerAlertServiceForTests(service: AlertService | null): void {
+  ledgerAlertServiceOverride = service;
+}
+export function resetLedgerAlertServiceForTests(): void {
+  ledgerAlertServiceOverride = null;
+}
+function getLedgerAlertService(): AlertService {
+  return ledgerAlertServiceOverride || defaultAlertService;
+}
+
+/** 6.2.3 — símbolos com gravação de ledger degradada (in-memory; reinicia com o processo). */
+const degradedSymbols = new Set<string>();
+export function markSymbolDegraded(symbol: string): void {
+  degradedSymbols.add(String(symbol || '').toUpperCase());
+}
+export function isSymbolDegraded(symbol: string): boolean {
+  return degradedSymbols.has(String(symbol || '').toUpperCase());
+}
+export function clearDegradedSymbols(): void {
+  degradedSymbols.clear();
+}
+
+function ledgerParamsFromSignal(signal: TradeSignal, options?: SaveSignalAndLedgerOptions): LedgerSignalParams {
+  return {
+    id: signal.id,
+    symbol: signal.symbol,
+    category: signal.strategyCategory || 'INTRADAY',
+    direction: signal.direction,
+    entryPrice: signal.currentPrice,
+    stopLoss: signal.stopLoss,
+    takeProfit1: signal.target1,
+    takeProfit2: signal.target2,
+    score: signal.confluenceScore,
+    // M3.1: fatores de confluência seguem no ledger (mantido da emissão original).
+    factors: signal.confluenceFactors as unknown as Record<string, any>,
+    origin: resolveSignalOrigin(signal),
+    tradfiSession: signal.tradfiSession,
+    tradfiCategory: options?.tradfiCategory,
+    engineVersion: options?.engineVersion,
+    weightsHash: options?.weightsHash,
+    strategyProfile: options?.strategyProfile,
+    createdAt: signal.createdAt
+  };
+}
+
+export interface SaveSignalAndLedgerOptions {
+  /** Categoria TradFi do ativo (coluna própria; distinta da sessão calculada). */
+  tradfiCategory?: string;
+  /** 6.2.6 — hash do commit em execução. */
+  engineVersion?: string;
+  /** 6.2.6 — hash dos pesos vigentes. */
+  weightsHash?: string;
+  /** 6.2.6 — perfil de estratégia vigente. */
+  strategyProfile?: string;
+  /** Grava ENTRY logo após o ledger (default true). */
+  withEntryEvent?: boolean;
+  /** Sobrescreve o serviço de alertas (testes). */
+  alertService?: AlertService;
+}
+
+/**
+ * 6.2.3 — grava o sinal em `trade_signals` e no ledger na MESMA transação.
+ * Fail-closed: qualquer falha reverte tudo (o sinal NÃO é emitido), dispara
+ * exatamente 1 alerta e marca o símbolo como degradado.
+ */
+export async function saveSignalAndLedger(
+  signal: TradeSignal,
+  options?: SaveSignalAndLedgerOptions,
+  dbOverride?: Database
+): Promise<void> {
+  const database = dbOverride || (await getDb());
+  const alertService = options?.alertService || getLedgerAlertService();
+
+  try {
+    if (ledgerWriteHookForTests) ledgerWriteHookForTests();
+
+    database.run('BEGIN');
+    try {
+      await saveSignal(signal, database);
+      signalLedgerDao.recordSignal(ledgerParamsFromSignal(signal, options), database);
+      if (options?.withEntryEvent !== false) {
+        signalLedgerDao.recordEvent(
+          {
+            signalId: signal.id,
+            eventType: 'ENTRY',
+            price: signal.currentPrice,
+            timestamp: signal.createdAt || Date.now()
+          },
+          database
+        );
+      }
+      database.run('COMMIT');
+    } catch (txErr) {
+      try { database.run('ROLLBACK'); } catch { /* já revertida */ }
+      throw txErr;
+    }
+  } catch (err: any) {
+    // Fail-closed: sinal não emitido → alerta + símbolo degradado + métrica.
+    incrementMetric(METRIC_NAMES.ledgerWriteFailures);
+    markSymbolDegraded(signal.symbol);
+    try {
+      await alertService.emitAlert(
+        `ledger_write_failure`,
+        'CRITICAL',
+        `Ledger indisponível: sinal ${signal.id} (${signal.symbol}) NÃO foi emitido.`,
+        { signalId: signal.id, symbol: signal.symbol, error: err?.message || String(err) }
+      );
+    } catch (alertErr: any) {
+      console.warn('[ledger] Falha ao emitir alerta de ledger:', alertErr?.message || alertErr);
+    }
+    throw err;
+  }
+
+  if (!dbOverride) {
+    scheduleDbSave();
+  }
+}
+
+/**
+ * 6.2.3 — grava um evento de ledger aguardando a escrita, com até 3 tentativas
+ * e backoff exponencial (default). Falha persistente propaga para o caller
+ * (que deve alertar e incrementar métrica — aqui já incrementamos).
+ */
+export async function recordEventWithRetry(
+  event: LedgerEventRecord,
+  options?: {
+    maxAttempts?: number;
+    backoffMs?: number;
+    alertService?: AlertService;
+    writeFn?: (event: LedgerEventRecord) => Promise<void> | void;
+  },
+  dbOverride?: Database
+): Promise<void> {
+  const maxAttempts = options?.maxAttempts ?? 3;
+  const backoffMs = options?.backoffMs ?? 200;
+  const write = options?.writeFn ?? (async (ev: LedgerEventRecord) => { await signalLedgerDao.recordEvent(ev, dbOverride); });
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await write(event);
+      if (attempt > 1) {
+        console.warn(`[ledger] Evento ${event.eventType} de ${event.signalId} gravado na tentativa ${attempt}.`);
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, backoffMs * attempt));
+      }
+    }
+  }
+
+  incrementMetric(METRIC_NAMES.ledgerWriteFailures);
+  try {
+    await (options?.alertService || getLedgerAlertService()).emitAlert(
+      `ledger_event_write_failure`,
+      'HIGH',
+      `Evento ${event.eventType} de ${event.signalId} não gravado após ${maxAttempts} tentativas.`,
+      { signalId: event.signalId, eventType: event.eventType, error: lastErr instanceof Error ? lastErr.message : String(lastErr) }
+    );
+  } catch { /* alerta é best-effort aqui; a falha propaga */ }
+  throw lastErr;
+}
+
+// ============================================================================
+// 6.2.6 — Contexto de reprodutibilidade por emissão
+// ============================================================================
+
+/** Hash FNV-1a (32 bits) em hex — suficiente para fingerprints de config. */
+function fnv1aHex(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** 6.2.6 — versão do motor: hash curto do commit (env no runtime; git na dev/CI). */
+export function getEngineVersion(): string {
+  const fromEnv = process.env.ENGINE_VERSION || process.env.GIT_COMMIT_SHA;
+  if (fromEnv) return String(fromEnv).trim();
+  try {
+    const out = execSync('git rev-parse --short HEAD', { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'ignore'] });
+    return String(out).trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** 6.2.6 — fingerprint estável dos pesos de estratégia vigentes. */
+export function computeWeightsHash(weights: IndicatorWeights): string {
+  const canonical = JSON.stringify(weights, Object.keys(weights as any).sort());
+  return `fnv1a-${fnv1aHex(canonical)}`;
+}
+
+/** 6.2.6 — perfil de estratégia vigente (multi-strategy vs ativo único). */
+export function getActiveStrategyProfile(weights: IndicatorWeights): string {
+  if (weights.multiStrategyMode) {
+    const enabled = Array.isArray(weights.enabledStrategies) ? weights.enabledStrategies.join('+') : 'multi';
+    return `multi:${enabled}`;
+  }
+  return `single:${weights.activeStrategy || 'intraday'}`;
+}
+
+// ============================================================================
+// 6.2.4 — Reconciliação do ledger com os sinais (roda no boot; idempotente)
+// ============================================================================
+
+export interface LedgerReconcileSummary {
+  terminalSignals: number;
+  alreadyConsistent: number;
+  created: number;
+}
+
+const TERMINAL_EVENT_BY_STATUS: Record<string, string> = {
+  TARGET_REACHED: 'TARGET2',
+  STOPPED_OUT: 'STOP',
+  EXPIRED: 'EXPIRED'
+};
+
+/**
+ * Para todo sinal em `trade_signals` com estado terminal sem o evento terminal
+ * correspondente no ledger, cria o evento retroativo com `reconciled: true`.
+ * Idempotente: sinais já consistentes são apenas contados. Cobre o histórico
+ * anterior à correção (6.2.1).
+ */
+export async function reconcileLedgerWithSignals(dbOverride?: Database): Promise<LedgerReconcileSummary> {
+  const database = dbOverride || (await getDb());
+  const summary: LedgerReconcileSummary = { terminalSignals: 0, alreadyConsistent: 0, created: 0 };
+
+  const res = database.exec(
+    `SELECT id, symbol, current_price, entry_min, status, expiration_reason, created_at
+     FROM trade_signals
+     WHERE status IN ('TARGET_REACHED', 'STOPPED_OUT', 'EXPIRED')`
+  );
+  if (!res.length || !res[0].values) return summary;
+
+  const now = Date.now();
+  for (const row of res[0].values) {
+    const id = String(row[0]);
+    const symbol = String(row[1]);
+    const currentPrice = Number(row[2]);
+    const entryMin = Number(row[3]);
+    const status = String(row[4]);
+    const expirationReason = row[5] != null ? String(row[5]) : null;
+    const createdAt = Number(row[6]);
+
+    const terminalEvent = TERMINAL_EVENT_BY_STATUS[status];
+    if (!terminalEvent) continue;
+    summary.terminalSignals++;
+
+    const eventsRes = database.exec(
+      `SELECT count(*) FROM signal_events WHERE signal_id = ? AND event_type = ?`,
+      [id, terminalEvent]
+    );
+    const hasTerminalEvent =
+      eventsRes.length && eventsRes[0].values.length && Number(eventsRes[0].values[0][0]) > 0;
+    if (hasTerminalEvent) {
+      summary.alreadyConsistent++;
+      continue;
+    }
+
+    let price = getLastKnownPrice(database, symbol);
+    if (price === null) {
+      price = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : entryMin;
+    }
+    const metadata: Record<string, any> = { reconciled: true };
+    if (terminalEvent === 'EXPIRED') {
+      metadata.reason = expirationReason ? reasonToCode(expirationReason) : 'TTL';
+      metadata.reasonText = expirationReason || REASON_TTL;
+    }
+
+    try {
+      database.run(
+        `INSERT INTO signal_events (signal_id, event_type, price, timestamp, metadata) VALUES (?, ?, ?, ?, ?)`,
+        [id, terminalEvent, price, createdAt || now, JSON.stringify(metadata)]
+      );
+      summary.created++;
+    } catch (e: any) {
+      console.warn(`[ledger] Reconciliação falhou para ${id} (${terminalEvent}):`, e?.message || e);
+      incrementMetric(METRIC_NAMES.ledgerWriteFailures);
+    }
+  }
+
+  if (summary.created > 0 && !dbOverride) {
+    scheduleDbSave();
+    console.log(`🔁 [LEDGER RECONCILE] ${summary.created} evento(s) retroativo(s) criado(s) de ${summary.terminalSignals} sinal(is) terminal(is).`);
+  }
+  return summary;
+}
 
 
 

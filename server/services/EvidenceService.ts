@@ -22,7 +22,14 @@ export interface LedgerSignalParams {
   unavailableFactors?: string[];
   origin: 'LIVE' | 'DEMO';
   dataSource?: string;
+  /** Tipo de sessão TradFi calculado no sinal (REGULAR/PRE_MARKET/AFTER_MARKET/...). */
   tradfiSession?: string;
+  /** 6.2.2 — categoria TradFi do ativo (coluna própria, distinta da sessão). */
+  tradfiCategory?: string;
+  /** 6.2.6 — contexto de reprodutibilidade gravado por emissão. */
+  engineVersion?: string;
+  weightsHash?: string;
+  strategyProfile?: string;
   createdAt?: number;
 }
 
@@ -68,6 +75,10 @@ export interface ClosedSignalEvidence {
   maeR: number;
   isWin: boolean;
   closedAt: number;
+  /** 6.2.5 — desfecho terminal do sinal (para denominador completo). */
+  outcomeType?: SignalOutcomeResult['outcomeType'];
+  /** 6.2.5 — motivo da expiração (quando outcomeType === 'EXPIRED'). */
+  expiredReason?: string;
 }
 
 export interface EvidenceGroupMetrics {
@@ -96,6 +107,12 @@ export interface EvidenceSummary {
   byScoreTier: Record<string, EvidenceGroupMetrics>;
   byCategory: Record<string, EvidenceGroupMetrics>;
   byTradFiSession: Record<string, EvidenceGroupMetrics>;
+  /** 6.2.5 — quantidade de sinais fechados por expiração. */
+  expiredCount: number;
+  /** 6.2.5 — fração do denominador fechado por expiração (0..1). */
+  expiredShare: number;
+  /** 6.2.5 — expirados quebrados por motivo (TTL/STRATEGY_RESET/MANUAL_RESET). */
+  expiredByReason: Record<string, number>;
 }
 
 export interface ScoreTierSetting {
@@ -392,6 +409,15 @@ export function generateEvidenceSummary(
 
   const overall = aggregateMetrics(filtered);
 
+  // 6.2.5 — denominador completo: expirados são contados, compartilhados e
+  // quebrados por motivo (metadata do evento EXPIRED propagada na evidência).
+  const expired = filtered.filter(s => s.outcomeType === 'EXPIRED');
+  const expiredByReason: Record<string, number> = {};
+  for (const s of expired) {
+    const reason = s.expiredReason || 'UNKNOWN';
+    expiredByReason[reason] = (expiredByReason[reason] || 0) + 1;
+  }
+
   return {
     totalSignals: overall.n,
     wins: overall.wins,
@@ -404,7 +430,10 @@ export function generateEvidenceSummary(
     maxDrawdownR: overall.maxDrawdownR,
     byScoreTier: aggregatedByScoreTier,
     byCategory: aggregatedByCategory,
-    byTradFiSession: aggregatedByTradFiSession
+    byTradFiSession: aggregatedByTradFiSession,
+    expiredCount: expired.length,
+    expiredShare: overall.n > 0 ? expired.length / overall.n : 0,
+    expiredByReason
   };
 }
 

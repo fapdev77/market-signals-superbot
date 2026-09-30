@@ -18,7 +18,12 @@ import {
 import { initBinanceWebSocket } from './server/binanceWebsocket.js';
 import { processTickerState, buildTradeSignal, SIGNAL_LOOKBACK_CANDLES } from './server/signalEngine.js';
 import {
-  saveSignal,
+  saveSignalAndLedger,
+  recordEventWithRetry,
+  reconcileLedgerWithSignals,
+  getEngineVersion,
+  computeWeightsHash,
+  getActiveStrategyProfile,
   getIndicatorWeights,
   getActiveSignalsBySymbol,
   updateSignalStatus,
@@ -29,7 +34,6 @@ import {
   expireAllActiveSignals,
   getActiveSignals,
   flushDbSave,
-  signalLedgerDao
 } from './server/db.js';
 import { marketScreener } from './server/services/MarketScreenerService.js';
 import { TickerData, BotState, IndicatorWeights, LongShortRatioData } from './src/types.js';
@@ -46,6 +50,10 @@ import { createApp } from './server/app.js';
 // R-15: logger estruturado + métricas em memória.
 import { logJson } from './server/utils/logger.js';
 import { incrementMetric, METRIC_NAMES } from './server/utils/metrics.js';
+
+// 6.2.6: versão do motor é imutável durante o processo — resolvida uma única
+// vez (getEngineVersion consulta env ou git; repetir isso por tick seria caro).
+const ENGINE_VERSION = getEngineVersion();
 
 // correlationId do tick corrente (logs do tick carregam o mesmo id — critério 1).
 let currentTickId = '';
@@ -139,6 +147,14 @@ async function startServer() {
     console.warn('⚠️ Falha ao inicializar banco para app_state:', err?.message || err);
   }
 
+  // 6.2.4: Reconciliação ledger × sinais no boot — cria eventos terminais
+  // retroativos (reconciled) para sinais terminais sem evento no ledger.
+  try {
+    await reconcileLedgerWithSignals();
+  } catch (err: any) {
+    console.warn('⚠️ Falha na reconciliação do ledger no boot:', err?.message || err);
+  }
+
   // M4.6: Clock drift initial verification and 10m periodic check
   checkBinanceServerTimeDrift().catch(err => console.warn('Falha no check inicial de relógio:', err));
   const clockCheckTimer = setInterval(() => {
@@ -207,6 +223,11 @@ async function startServer() {
       const rawFutures = await fetchBinanceFuturesTickers(activeSymbols);
       const weights = botState.weights;
       botState.activeTickersCount = activeSymbols.length;
+
+      // 6.2.6: contexto de reprodutibilidade por emissão (uma vez por tick).
+      const engineVersion = ENGINE_VERSION;
+      const weightsHash = computeWeightsHash(weights);
+      const strategyProfile = getActiveStrategyProfile(weights);
 
       // Process in batches of 4 to prevent socket burst congestion and avoid rate limits
       const BATCH_SIZE = 4;
@@ -321,30 +342,22 @@ async function startServer() {
                     weights.signalTtlSettings
                   );
                   if (newSignal) {
-                    await saveSignal(newSignal);
-                    // M3.1: Server-authoritative append-only signal ledger & events
-                    signalLedgerDao.recordSignal({
-                      id: newSignal.id,
-                      symbol: newSignal.symbol,
-                      category: newSignal.strategyCategory || targetCategory,
-                      direction: newSignal.direction,
-                      entryPrice: newSignal.currentPrice,
-                      stopLoss: newSignal.stopLoss,
-                      takeProfit1: newSignal.target1,
-                      takeProfit2: newSignal.target2,
-                      score: newSignal.confluenceScore,
-                      factors: newSignal.confluenceFactors,
-                      origin: newSignal.origin || 'LIVE',
-                      tradfiSession: tradfiAsset?.tradfiCategory,
-                      createdAt: newSignal.createdAt
-                    }).catch(e => console.warn('Ledger signal record error:', e));
-
-                    signalLedgerDao.recordEvent({
-                      signalId: newSignal.id,
-                      eventType: 'ENTRY',
-                      price: newSignal.currentPrice,
-                      timestamp: newSignal.createdAt || Date.now()
-                    }).catch(e => console.warn('Ledger event entry error:', e));
+                    // 6.2.3: sinal + ledger na MESMA transação, fail-closed —
+                    // se o ledger não puder ser gravado, o sinal NÃO é emitido
+                    // (o alerta e a marca de degradado acontecem dentro da função).
+                    try {
+                      await saveSignalAndLedger(newSignal, {
+                        tradfiCategory: tradfiAsset?.tradfiCategory,
+                        engineVersion,
+                        weightsHash,
+                        strategyProfile
+                      });
+                    } catch (ledgerErr: any) {
+                      incrementMetric(METRIC_NAMES.signalsSuppressedLedgerFailure);
+                      logJson('ERROR', 'tick', 'Sinal suprimido: falha na gravação do ledger', { symbol, category: targetCategory, signalId: newSignal.id, correlationId: currentTickId });
+                      console.error(`⛔ [LEDGER FAIL-CLOSED] Sinal ${symbol}/${targetCategory} não emitido: ledger indisponível.`);
+                      return;
+                    }
 
                     // Keep the in-tick risk snapshot current so limits hold for the rest of this tick.
                     openSignals.push(newSignal);
@@ -369,31 +382,32 @@ async function startServer() {
                   if (action.type === 'HIT_TARGET2') {
                     await updateSignalStatus(action.signalId, 'TARGET_REACHED', action.reason);
                     console.log(`🎯 [TARGET 2 HIT] ${symbol} hit final take profit.`);
-                    signalLedgerDao.recordEvent({
+                    // 6.2.3: eventos posteriores são aguardados, com 3 tentativas/backoff.
+                    await recordEventWithRetry({
                       signalId: action.signalId,
                       eventType: 'TARGET2',
                       price: processed.price,
                       timestamp: Date.now()
-                    }).catch(e => console.warn('Ledger event TARGET2 error:', e));
+                    }).catch(e => console.error('Ledger event TARGET2 error:', e?.message || e));
                   } else if (action.type === 'STOPPED_OUT') {
                     await updateSignalStatus(action.signalId, 'STOPPED_OUT', action.reason);
                     console.log(`🛑 [STOPPED OUT] ${symbol} (${action.reason})`);
                     const isBreakeven = action.reason?.includes('Breakeven');
-                    signalLedgerDao.recordEvent({
+                    await recordEventWithRetry({
                       signalId: action.signalId,
                       eventType: isBreakeven ? 'BREAKEVEN' : 'STOP',
                       price: processed.price,
                       timestamp: Date.now()
-                    }).catch(e => console.warn('Ledger event STOP/BREAKEVEN error:', e));
+                    }).catch(e => console.error('Ledger event STOP/BREAKEVEN error:', e?.message || e));
                   } else {
                     console.log(`🛡️ [BREAKEVEN ACTIVATED] ${symbol} stop moved to entry.`);
                     await updateSignal(action.signal);
-                    signalLedgerDao.recordEvent({
+                    await recordEventWithRetry({
                       signalId: action.signal.id,
                       eventType: 'PARTIAL',
                       price: processed.price,
                       timestamp: Date.now()
-                    }).catch(e => console.warn('Ledger event PARTIAL error:', e));
+                    }).catch(e => console.error('Ledger event PARTIAL error:', e?.message || e));
                   }
                 }
               }

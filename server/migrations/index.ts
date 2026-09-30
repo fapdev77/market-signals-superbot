@@ -269,6 +269,34 @@ export const MIGRATIONS: Migration[] = [
          );`
       );
     }
+  },
+  {
+    version: 10,
+    id: '010-ledger-evidence-integrity',
+    description:
+      'Fase 6.2: colunas tradfi_category (categoria do ativo, distinta da sessão), engine_version, weights_hash e strategy_profile no signal_ledger; índice de reconciliação em signal_events.',
+    up: db => {
+      addColumnIfMissing(db, 'signal_ledger', 'tradfi_category', 'TEXT');
+      addColumnIfMissing(db, 'signal_ledger', 'engine_version', 'TEXT');
+      addColumnIfMissing(db, 'signal_ledger', 'weights_hash', 'TEXT');
+      addColumnIfMissing(db, 'signal_ledger', 'strategy_profile', 'TEXT');
+      exec(
+        db,
+        `CREATE INDEX IF NOT EXISTS idx_signal_events_reconcile
+         ON signal_events (signal_id, event_type);`
+      );
+      // 6.2.1: fecho a mercado consulta o último preço por símbolo a cada sinal expirado.
+      // `ticker_snapshots` é tabela baseline (criada fora das migrações), então a
+      // criação do índice só acontece quando ela existe (bancos de teste criados
+      // com applyMigrations puro não têm o baseline).
+      if (tableExists(db, 'ticker_snapshots')) {
+        exec(
+          db,
+          `CREATE INDEX IF NOT EXISTS idx_ticker_snapshots_symbol_updated
+           ON ticker_snapshots (symbol, updated_at);`
+        );
+      }
+    }
   }
 ];
 

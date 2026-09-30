@@ -58,27 +58,36 @@
 
 ## Fase 6.2 — Integridade da evidência (G-05, G-06, G-07, G-08)
 
-- [ ] **T6.2.1 — Evento `EXPIRED` em toda transição ACTIVE→EXPIRED** (M)
+- [x] **T6.2.1 — Evento `EXPIRED` em toda transição ACTIVE→EXPIRED** (M)
   - *CA:* CA-2.1 — após sweep de TTL o ledger tem `EXPIRED` com `reason` e o resumo conta o sinal; fechamento a mercado pelo último preço, mesmo taxas/slippage.
   - *Teste:* `tests/ledgerExpired.test.ts`. *Arquivos:* `server/db.ts`, `server/services/EvidenceService.ts`.
-- [ ] **T6.2.2 — Sessão e categoria no ledger** (S)
+- [x] **T6.2.2 — Sessão e categoria no ledger** (S)
   - *CA:* CA-2.2 — migração adiciona `tradfi_category`; resumo agrega por sessão **e** por categoria separadamente.
   - *Teste:* `tests/ledgerTradfiSession.test.ts`. *Arquivos:* `server/migrations/index.ts`, `server/db.ts`, `server/services/EvidenceService.ts`.
-- [ ] **T6.2.3 — Escrita transacional / fail-closed** (M)
+- [x] **T6.2.3 — Escrita transacional / fail-closed** (M)
   - *CA:* CA-2.3 — falha simulada na gravação do ledger ⇒ sinal não emitido + exatamente 1 alerta; eventos posteriores com 3 tentativas/backoff.
   - *Teste:* `tests/ledgerTransactional.test.ts`. *Arquivos:* `server.ts`, `server/db.ts`.
-- [ ] **T6.2.4 — Reconciliação no boot** (M)
+- [x] **T6.2.4 — Reconciliação no boot** (M)
   - *CA:* CA-2.4 — `reconcileLedgerWithSignals()` cria evento retroativo `reconciled`; rodar 2× não duplica.
   - *Teste:* `tests/ledgerReconcile.test.ts`. *Arquivos:* `server.ts`, `server/db.ts`.
-- [ ] **T6.2.5 — Denominador completo** (M)
+- [x] **T6.2.5 — Denominador completo** (M)
   - *CA:* CA-2.5 — 10 alvos + 10 expirados a preço de entrada ⇒ win rate 50% (nunca 100%); `expiredCount`/`expiredShare` e quebra por motivo.
   - *Teste:* `tests/evidenceDenominator.test.ts`. *Arquivos:* `server/services/EvidenceService.ts`.
-- [ ] **T6.2.6 — Contexto de reprodutibilidade por emissão** (S)
+- [x] **T6.2.6 — Contexto de reprodutibilidade por emissão** (S)
   - *CA:* CA-2.6 — toda linha nova do ledger tem `engineVersion` (hash do commit), `weightsHash` e perfil.
   - *Arquivos:* `server/db.ts`, `server.ts`.
 
-### Checkpoint C (após 6.2)
-- [ ] Ledger sem viés de sobrevivência · reconciliação idempotente · fail-closed testado.
+### Checkpoint C (após 6.2) — ✅ 2026-09-30
+- [x] Ledger sem viés de sobrevivência · reconciliação idempotente · fail-closed testado. (`tsc` limpo · **68 arquivos / 389 testes verdes** · `build` ok.)
+
+#### Notas de implementação (6.2, 2026-09-30)
+- **6.2.1:** razões canônicas `TTL`/`STRATEGY_RESET`/`MANUAL_RESET` mapeadas dos textos existentes; fechamento a mercado usa o último preço de `ticker_snapshots` (fallback: `current_price` → `entry_min`), com parcial já computada pelo cálculo de R existente. O sweep em si é fail-open (o sinal já está EXPIRADO); eventos perdidos são cobertos pela reconciliação no boot. `expireStaleSignals` agora retorna a quantidade **real** expirada (antes contava antes do UPDATE).
+- **6.2.2/6.2.3:** `saveSignalAndLedger()` grava `trade_signals` + ledger + ENTRY num único `BEGIN/COMMIT/ROLLBACK`. Falha ⇒ sinal NÃO emitido, exatamente 1 alerta (`ledger_write_failure`, dedup injetável), símbolo marcado degradado e métrica `ledger_write_failures`. Eventos posteriores via `recordEventWithRetry` (3 tentativas, backoff exponencial). **Correção de bug aproveitada:** o `server.ts` gravava a CATEGORIA do ativo em `tradfi_session`; agora grava a sessão calculada e a categoria vai para a coluna própria.
+- **6.2.2:** migração `010-ledger-evidence-integrity` (v10) adiciona `tradfi_category`, `engine_version`, `weights_hash`, `strategy_profile` + índice de reconciliação.
+- **6.2.4:** `reconcileLedgerWithSignals()` mapeia `TARGET_REACHED→TARGET2`, `STOPPED_OUT→STOP`, `EXPIRED→EXPIRED`, cria retroativo com `reconciled: true`, idempotente (2ª passada cria 0); chamada no boot do `server.ts`.
+- **6.2.5:** evidência carrega `outcomeType`/`expiredReason`; resumo expõe `expiredCount`, `expiredShare` e `expiredByReason`. Expirado a preço de entrada é perda líquida (custos), nunca vitória.
+- **6.2.6:** `engineVersion` de `ENGINE_VERSION`/`GIT_COMMIT_SHA` (env) com fallback `git rev-parse --short HEAD`; `weightsHash` = FNV-1a dos pesos; `strategyProfile` = `multi:<habilitadas>` ou `single:<ativa>`.
+- Métricas novas: `ledger_write_failures`, `signals_suppressed_ledger_failure`.
 
 ---
 
