@@ -237,7 +237,7 @@ export interface TradeSignal {
   expiresAt?: number;               // Timestamp exato em que o sinal perde validade (createdAt + ttl)
   expirationReason?: string;        // Razão de encerramento (ex: "TTL Expirado", "Stop Loss", "Alvo 2", "Invalidação Técnica")
   isBreakevenActive?: boolean;      // True se atingiu Alvo 1 e o Stop Loss foi movido para o preço de entrada
-  status: 'ACTIVE' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
+  status: 'ACTIVE' | 'PENDING_ENTRY' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
 
   /** TradFi trading session at time of signal generation (M1.6 / Phase 5). */
   tradfiSession?: 'REGULAR' | 'PRE_MARKET' | 'AFTER_MARKET' | 'OVERNIGHT' | 'NO_TRADING';

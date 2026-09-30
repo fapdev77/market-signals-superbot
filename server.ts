@@ -48,6 +48,9 @@ import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted, loadAppSta
 import { estimateDepthSlippagePct, isSlippageAboveLimit, getMaxEstimatedSlippagePct } from './server/services/depthSlippage.js';
 // 6.6: fachada de alertas operacionais + heartbeat externo opcional.
 import { emitOperationalAlert } from './server/services/operationalAlerts.js';
+// 6.7: confirmação de entrada + ciclo de vida PENDING_ENTRY (D1–D8).
+import { confirmEntry } from './server/services/entryConfirmation.js';
+import { evaluatePendingEntry, isPendingEntryEnabled, entryWaitCandlesFor } from './server/services/pendingEntryLifecycle.js';
 import { startHeartbeat } from './server/services/heartbeat.js';
 import { resolveServerHost, enforceHostBinding } from './server/utils/hostGuard.js';
 import { initOrLoadSessionToken } from './server/middleware/auth.js';
@@ -337,6 +340,14 @@ async function startServer() {
 
               // R-2: mesmo motivo do openSignals acima — o motor deduplica contra tudo que ele criou.
               const activeSignalsForCategory = await getActiveSignalsBySymbol(symbol, targetCategory, 'ALL');
+              // 6.7.3: pendentes seguem caminho próprio (checagem de entrada);
+              // a gestão de posição continua avaliando só sinais já ativos.
+              const pendingByCategory = isPendingEntryEnabled()
+                ? activeSignalsForCategory.filter(s => s.status === 'PENDING_ENTRY')
+                : [];
+              const activeOnlyForCategory = pendingByCategory.length > 0
+                ? activeSignalsForCategory.filter(s => s.status !== 'PENDING_ENTRY')
+                : activeSignalsForCategory;
 
               if (activeSignalsForCategory.length === 0) {
                 const minScore = weights.minConfluenceScore ?? 65;
@@ -422,12 +433,16 @@ async function startServer() {
                     // 6.2.3: sinal + ledger na MESMA transação, fail-closed —
                     // se o ledger não puder ser gravado, o sinal NÃO é emitido
                     // (o alerta e a marca de degradado acontecem dentro da função).
+                    // 6.7.3/D4: com a flag ON e sinal PENDING_ENTRY, o evento ENTRY
+                    // só nasce no preenchimento real (fill), não na emissão.
+                    const pendingEntryFlow = isPendingEntryEnabled() && newSignal.status === 'PENDING_ENTRY';
                     try {
                       await saveSignalAndLedger(newSignal, {
                         tradfiCategory: tradfiAsset?.tradfiCategory,
                         engineVersion,
                         weightsHash,
-                        strategyProfile
+                        strategyProfile,
+                        withEntryEvent: !pendingEntryFlow
                       });
                     } catch (ledgerErr: any) {
                       incrementMetric(METRIC_NAMES.signalsSuppressedLedgerFailure);
@@ -440,53 +455,130 @@ async function startServer() {
                     openSignals.push(newSignal);
                     botState.signalsGenerated24h++;
                     incrementMetric(METRIC_NAMES.signalsEmitted);
-                    logJson('INFO', 'tick', 'Novo sinal emitido', { symbol, category: targetCategory, direction: newSignal.direction, score: newSignal.confluenceScore, origin: newSignal.origin, correlationId: currentTickId });
-                    console.log(`⚡ [NEW ${targetCategory} SIGNAL] ${symbol} ${newSignal.direction} Score: ${newSignal.confluenceScore}% RR: 1:${newSignal.riskRewardRatio}`);
+                    logJson('INFO', 'tick', pendingEntryFlow ? 'Novo sinal pendente emitido' : 'Novo sinal emitido', { symbol, category: targetCategory, direction: newSignal.direction, score: newSignal.confluenceScore, origin: newSignal.origin, pending: pendingEntryFlow, correlationId: currentTickId });
+                    console.log(pendingEntryFlow
+                      ? `⏳ [NEW ${targetCategory} PENDING] ${symbol} ${newSignal.direction} Score: ${newSignal.confluenceScore}% — aguardando toque da zona + confirmação (máx ${entryWaitCandlesFor(targetCategory)} velas 1m).`
+                      : `⚡ [NEW ${targetCategory} SIGNAL] ${symbol} ${newSignal.direction} Score: ${newSignal.confluenceScore}% RR: 1:${newSignal.riskRewardRatio}`);
                   }
                 }
-              } else if (activeTradeGate.allow) {
-                // Monitor active trades for targets, stop-loss or breakeven updates
-                // Phase 2.5.1: decision logic lives in the unit-tested TickProcessor module.
-                // Phase 3.1: also pass the forming candle's range so a stop or target touched between
-                // ticks is not missed.
-                const lastKline = klines.length > 0 ? klines[klines.length - 1] : undefined;
-                const positionActions = evaluatePositionManagement(
-                  activeSignalsForCategory,
-                  processed.price,
-                  lastKline ? { high: lastKline.high, low: lastKline.low, openTime: lastKline.timestamp } : undefined
-                );
-                for (const action of positionActions) {
-                  if (action.type === 'HIT_TARGET2') {
-                    await updateSignalStatus(action.signalId, 'TARGET_REACHED', action.reason);
-                    console.log(`🎯 [TARGET 2 HIT] ${symbol} hit final take profit.`);
-                    // 6.2.3: eventos posteriores são aguardados, com 3 tentativas/backoff.
-                    await recordEventWithRetry({
-                      signalId: action.signalId,
-                      eventType: 'TARGET2',
-                      price: processed.price,
-                      timestamp: Date.now()
-                    }).catch(e => console.error('Ledger event TARGET2 error:', e?.message || e));
-                  } else if (action.type === 'STOPPED_OUT') {
-                    await updateSignalStatus(action.signalId, 'STOPPED_OUT', action.reason);
-                    console.log(`🛑 [STOPPED OUT] ${symbol} (${action.reason})`);
-                    const isBreakeven = action.reason?.includes('Breakeven');
-                    await recordEventWithRetry({
-                      signalId: action.signalId,
-                      eventType: isBreakeven ? 'BREAKEVEN' : 'STOP',
-                      price: processed.price,
-                      timestamp: Date.now()
-                    }).catch(e => console.error('Ledger event STOP/BREAKEVEN error:', e?.message || e));
-                  } else {
-                    console.log(`🛡️ [BREAKEVEN ACTIVATED] ${symbol} stop moved to entry.`);
-                    await updateSignal(action.signal);
-                    await recordEventWithRetry({
-                      signalId: action.signal.id,
-                      eventType: 'PARTIAL',
-                      price: processed.price,
-                      timestamp: Date.now()
-                    }).catch(e => console.error('Ledger event PARTIAL error:', e?.message || e));
+              } else {
+                // 6.7.3 e gestão de posição são independentes: um símbolo pode ter
+                // pendentes E ativos na mesma categoria, então cada bloco roda por si.
+                if (pendingByCategory.length > 0 && activeTradeGate.allow) {
+                  // 6.7.3 — ciclo de vida PENDING_ENTRY: toque da zona + confirmação (R1–R5)
+                  // ativa o sinal e grava o ENTRY no fill real (D3); invalidação/expiração
+                  // viram terminais com razão no ledger. Candles 1m REAIS do feed (limiter+cache).
+                  // A checagem é fail-open: falha transitória de feed deixa o pendente para o
+                  // próximo tick (o expira via TTL; sem dado real não há transição fabricada).
+                  try {
+                    const now = Date.now();
+                    const waitCandles = Math.max(...pendingByCategory.map(s => entryWaitCandlesFor(s.strategyCategory)));
+                    const candles1m = await fetchKlines(symbol, '1m', Math.min(100, waitCandles + 5));
+                    const klines5m = await fetchKlines(symbol, '5m', 2);
+
+                    if (candles1m.length > 0) {
+                      for (const pending of pendingByCategory) {
+                        const evaluation = evaluatePendingEntry({
+                          signal: pending,
+                          candles1m,
+                          confirm: (p) => confirmEntry({ ...p, confluenceScore: p.confluenceScore ?? pending.confluenceScore }),
+                          confluenceScore: pending.confluenceScore,
+                          klines5m,
+                          now
+                        });
+
+                        if (evaluation.transition === 'ACTIVATED' && evaluation.entryPrice !== undefined) {
+                          pending.status = 'ACTIVE';
+                          pending.currentPrice = evaluation.entryPrice;
+                          await updateSignal(pending);
+                          // Ledger é append-only: o fill real (D3) vai no PREÇO do evento
+                          // ENTRY com fillSource — o R da evidência prefere esse preço
+                          // ao entry_price da emissão (getClosedSignalsEvidence).
+                          await recordEventWithRetry({
+                            signalId: pending.id,
+                            eventType: 'ENTRY',
+                            price: evaluation.entryPrice,
+                            timestamp: evaluation.fillCandleOpenTime ?? now,
+                            metadata: { fillSource: 'PENDING_ENTRY_ACTIVATED' }
+                          });
+                          incrementMetric(METRIC_NAMES.pendingEntryActivated);
+                          logJson('INFO', 'tick', 'Pendente ATIVADO no preenchimento', { symbol, signalId: pending.id, entryPrice: evaluation.entryPrice, correlationId: currentTickId });
+                          console.log(`✅ [ENTRY FILLED] ${symbol} ${pending.direction} @ ${evaluation.entryPrice} — sinal ativo (R passa a correr do fill real).`);
+                        } else if (evaluation.transition === 'ENTRY_INVALIDATED') {
+                          await updateSignalStatus(pending.id, 'EXPIRED', evaluation.reason);
+                          await recordEventWithRetry({
+                            signalId: pending.id,
+                            eventType: 'EXPIRED',
+                            price: processed.price,
+                            timestamp: now,
+                            metadata: { reason: 'ENTRY_INVALIDATED', reasonText: evaluation.reason }
+                          });
+                          incrementMetric(METRIC_NAMES.pendingEntryInvalidated);
+                          logJson('INFO', 'tick', 'Pendente INVALIDADO antes do preenchimento', { symbol, signalId: pending.id, reason: evaluation.reason, correlationId: currentTickId });
+                          console.log(`🚫 [ENTRY INVALIDATED] ${symbol} ${pending.direction} — ${evaluation.reason}`);
+                        } else if (evaluation.transition === 'ENTRY_NOT_FILLED') {
+                          await updateSignalStatus(pending.id, 'EXPIRED', evaluation.reason);
+                          await recordEventWithRetry({
+                            signalId: pending.id,
+                            eventType: 'EXPIRED',
+                            price: processed.price,
+                            timestamp: now,
+                            metadata: { reason: 'ENTRY_NOT_FILLED', reasonText: evaluation.reason }
+                          });
+                          incrementMetric(METRIC_NAMES.pendingEntryNotFilled);
+                          logJson('INFO', 'tick', 'Pendente expirou sem preencher (não-evento p/ R — D4)', { symbol, signalId: pending.id, correlationId: currentTickId });
+                          console.log(`⌛ [ENTRY NOT FILLED] ${symbol} ${pending.direction} — ${evaluation.reason}`);
+                        }
+                      }
+                    }
+                  } catch (pendingErr: any) {
+                    console.warn(`[pending-entry] Falha ao avaliar pendentes de ${symbol} (segue no próximo tick):`, pendingErr?.message || pendingErr);
                   }
-                }
+                  }
+                if (activeOnlyForCategory.length > 0 && activeTradeGate.allow) {
+                  // Monitor active trades for targets, stop-loss or breakeven updates
+                  // Phase 2.5.1: decision logic lives in the unit-tested TickProcessor module.
+                  // Phase 3.1: also pass the forming candle's range so a stop or target touched between
+                  // ticks is not missed.
+                  const lastKline = klines.length > 0 ? klines[klines.length - 1] : undefined;
+                  const positionActions = evaluatePositionManagement(
+                    activeOnlyForCategory,
+                    processed.price,
+                    lastKline ? { high: lastKline.high, low: lastKline.low, openTime: lastKline.timestamp } : undefined
+                  );
+                  for (const action of positionActions) {
+                    if (action.type === 'HIT_TARGET2') {
+                      await updateSignalStatus(action.signalId, 'TARGET_REACHED', action.reason);
+                      console.log(`🎯 [TARGET 2 HIT] ${symbol} hit final take profit.`);
+                      // 6.2.3: eventos posteriores são aguardados, com 3 tentativas/backoff.
+                      await recordEventWithRetry({
+                        signalId: action.signalId,
+                        eventType: 'TARGET2',
+                        price: processed.price,
+                        timestamp: Date.now()
+                      }).catch(e => console.error('Ledger event TARGET2 error:', e?.message || e));
+                    } else if (action.type === 'STOPPED_OUT') {
+                      await updateSignalStatus(action.signalId, 'STOPPED_OUT', action.reason);
+                      console.log(`🛑 [STOPPED OUT] ${symbol} (${action.reason})`);
+                      const isBreakeven = action.reason?.includes('Breakeven');
+                      await recordEventWithRetry({
+                        signalId: action.signalId,
+                        eventType: isBreakeven ? 'BREAKEVEN' : 'STOP',
+                        price: processed.price,
+                        timestamp: Date.now()
+                      }).catch(e => console.error('Ledger event STOP/BREAKEVEN error:', e?.message || e));
+                    } else {
+                      console.log(`🛡️ [BREAKEVEN ACTIVATED] ${symbol} stop moved to entry.`);
+                      await updateSignal(action.signal);
+                      await recordEventWithRetry({
+                        signalId: action.signal.id,
+                        eventType: 'PARTIAL',
+                        price: processed.price,
+                        timestamp: Date.now()
+                      }).catch(e => console.error('Ledger event PARTIAL error:', e?.message || e));
+                    }
+                  }
+                  }
               }
             }
           } catch (itemErr) {

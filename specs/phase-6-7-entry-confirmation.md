@@ -1,8 +1,9 @@
-# Fase 6.7.1 — Confirmação de entrada e ciclo `PENDING_ENTRY` (proposta para aprovação)
+# Fase 6.7.1 — Confirmação de entrada e ciclo `PENDING_ENTRY`
 
-> **Status:** PROPOSTA — aguardando aprovação do dono do projeto.
-> **Regra do spec:** *"Não implementar regra alguma sem essa aprovação."* Nada em 6.7.2+ começa antes do item **"Aprovação"** ao final ficar marcado.
+> **Status:** APROVADO — decisões D1–D8 do dono em 2026-09-30 (checklist na seção 8).
+> **Regra do spec:** *"Não implementar regra alguma sem essa aprovação."* Aprovação concedida; implementação pode começar (6.7.2+), atrás da feature flag (D8).
 > **Base:** commit atual, `server/signalEngine.ts` (motor de validação 1m/5m já existente, linhas ~623-700).
+> **Fato registrado na revisão pré-implementação:** no tick ao vivo o motor hoje valida sobre velas de **15m** (`server.ts` busca `fetchKlines(symbol,'15m',…)`); o "1m" do motor só é real no backtest. A 6.7.2 passa a exigir klines 1m e 5m reais (limiter + cache) no momento da emissão.
 
 ---
 
@@ -88,13 +89,24 @@ Hoje o stop é o mais distante entre swing, suporte/resistência e ATR. Proposta
 
 ## 8. Aprovação — checklist do dono
 
-Marque cada item para liberar a implementação do 6.7.2+.
+Aprovado em 2026-09-30. Decisões:
 
-- [ ] **D1 — R1..R5 obrigatórias** como na tabela (ou indicar quais são opcionais).
-- [ ] **D2 — 5m:** usar **candles de 5m reais** em vez de 5×1m? (Sim / Não / Só se o delta em backtest for pequeno)
-- [ ] **D3 — Preenchimento:** `clamp(close_1m, entryMin, entryMax)` (midpoint) ou `entryMin` (favorável)?
-- [ ] **D4 — `ENTRY_NOT_FILLED` conta no denominador do 6.9?** (proposto: **não**, é um não-evento; o 6.2 já resolve o viés dos que *foram* emitidos como ativos)
-- [ ] **D5 — `ENTRY_MAX_WAIT_CANDLES`:** 3 (1m) por padrão?
-- [ ] **D6 — Thresholds** (`0.55`, `0.49/0.51`, `60`) confirmados?
-- [ ] **D7 — `MAX_STOP_PCT`:** autoriza definir por dados antes de fixar?
-- [ ] **D8 — Ativação:** atrás de feature flag até o backtest comparativo?
+- [x] **D1 — R1..R5 obrigatórias** como na tabela.
+- [x] **D2 — 5m:** **SIM** — velas de 5m reais (live: fetch 5m pelo limiter; backtest: agregação de 1m→5m).
+- [x] **D3 — Preenchimento:** `clamp(close_1m, entryMin, entryMax)` (midpoint).
+- [x] **D4 — `ENTRY_NOT_FILLED`:** **NÃO** conta no denominador do R/evidência (não-evento; contador próprio fora do `expiredShare`).
+- [x] **D5 — `ENTRY_MAX_WAIT_CANDLES`:** 3 velas para SCALP/DAY_TRADE + **multiplicador por categoria** para os demais timeframes (3 min global seria apertado p/ SWING/POSITION — apontado na revisão).
+- [x] **D6 — Thresholds:** confirmados (`0.55`, `0.49/0.51`, `60`), via env.
+- [x] **D7 — `MAX_STOP_PCT`:** definido por dados — script de calibração sobre o histórico de sinais (p25/p75 por categoria) antes de fixar defaults (env-overridable).
+- [x] **D8 — Ativação:** feature flag até o backtest comparativo; evidência 6.9 só após congelamento.
+
+## 9. Implementação (2026-09-30)
+
+- **Módulos puros:** `entryConfirmation.ts` (R1–R5, thresholds env D6), `pendingEntryLifecycle.ts` (`evaluatePendingEntry`, `entryWaitCandlesFor` com multiplicador D5, flag D8), `stopCap.ts` (caps calibrados D7 + env), `autoTuneSplit.ts` (split contíguo 60/20/20).
+- **Integração live:** ciclo pendente checado por tick em `server.ts` com velas 1m/5m REAIS (`fetchKlines`, limiter+cache); emissão PENDING_ENTRY não grava ENTRY (com `withEntryEvent: false`); transições persistem status + eventos com razão no metadata; checagem fail-open (falha de feed adia para o próximo tick; TTL é a rede de segurança).
+- **Integração ledger (append-only):** o preço de fill vai no PREÇO do evento ENTRY com `metadata.fillSource='PENDING_ENTRY_ACTIVATED'` (sem UPDATE — triggers `no_update` da CA-3.1); `getClosedSignalsEvidence` prefere esse preço (D3) e pula sinais sem ENTRY (D4).
+- **TTL:** `expireStaleSignals` cobre PENDING_ENTRY; EXPIRED de pendente nasce com `metadata.reason='ENTRY_NOT_FILLED'` (contador próprio fora do `expiredShare` — D4).
+- **Auto-tune:** `computeAutoTuneBoundaries` deriva treino/validação/holdout do MESMO split 60/20/20; candidatos truncados no fim do treino (`isOnlyUntil`); holdout = bloco final intocado (CA-7.4); espião no teste.
+- **Calibração D7 (dados reais, n≈15k):** p75 por categoria → SCALP 1.75, DAY_TRADE 1.85, INTRADAY 2.0, COUNTER_TRADE 2.30, SWING 3.2, POSITION 5.3, CUSTOM 2.0.
+- **Gate:** tsc 0 erros; 91 arquivos / 504 testes verdes; build ok.
+- **Gap conhecido:** UI (`SignalsMatrix`, `RiskExposureDashboard`) não exibe `PENDING_ENTRY` no contador "Ativos" (flag default OFF; tratamento no 6.8). O backtest comparativo (D8) permanece pendente antes de ligar a flag em produção.

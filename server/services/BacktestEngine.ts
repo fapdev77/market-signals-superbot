@@ -11,8 +11,13 @@ import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './
 import { calculateFactorCoverage } from './factorCoverage.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
 import { calculateFitnessExpectancy, evaluateAutoTuneHoldout } from './autoTuneOptimizer.js';
+// 6.7.5/G-15: split temporal 3-way — treino → validação → holdout intocado (blocos contíguos).
+import { splitThreeWay } from './autoTuneSplit.js';
 
 // Deterministic Pseudo-Random Number Generator (Mulberry32) for reproducible backtests and mutations
+// (também usado pelo alinhamento de janela do runAutoTune)
+const BACKTEST_CANDLE_MS = 15 * 60 * 1000;
+
 function createPRNG(seed: number = 42) {
   let s = Math.floor(seed) || 42;
   return function() {
@@ -21,6 +26,32 @@ function createPRNG(seed: number = 42) {
     let t = Math.imul(s ^ s >>> 15, 1 | s);
     t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * 6.7.5/G-15 — fronteiras do split 3-way do Auto-Tune (puro, exportado para o
+ * espião/teste CA-7.4). Com ≥9 velas reais na janela, usa o split contíguo
+ * 60/20/20 sobre os timestamps; abaixo disso, cai para frações temporais
+ * equivalentes (mesmas proporções, sem lançar erro numa janela mínima).
+ */
+export function computeAutoTuneBoundaries(params: {
+  startTime: number;
+  endTime: number;
+  klineTimestamps: number[];
+  seed: number;
+}): { trainedUntil: number; holdoutStart: number } {
+  if (params.klineTimestamps.length >= 9) {
+    const split = splitThreeWay(
+      params.klineTimestamps.map(ts => ({ timestamp: ts })),
+      { trainFraction: 0.6, validationFraction: 0.2, seed: params.seed }
+    );
+    return { trainedUntil: split.validation[0].timestamp, holdoutStart: split.holdoutStart! };
+  }
+  const span = Math.max(1, params.endTime - params.startTime);
+  return {
+    trainedUntil: params.startTime + Math.floor(span * 0.6),
+    holdoutStart: params.startTime + Math.floor(span * 0.8)
   };
 }
 
@@ -320,7 +351,6 @@ export class BacktestEngine {
     // raw wall clock meant two identical calls straddling a candle boundary selected different candles,
     // so even the seeded PRNG could return different results on a cache miss. Align to the candle
     // boundary (or honour an explicit `asOf`) so a run is reproducible.
-    const BACKTEST_CANDLE_MS = 15 * 60 * 1000;
     const now = config.asOf ? config.asOf : Math.floor(Date.now() / BACKTEST_CANDLE_MS) * BACKTEST_CANDLE_MS;
     const days = config.days || 30;
     const startTime = now - days * 24 * 60 * 60 * 1000;
@@ -799,13 +829,27 @@ export class BacktestEngine {
   ): Promise<AutoTuneResult> {
     const rng = createPRNG(seed);
 
-    // R-10: derive the training boundary from a full-range probe, then score every
-    // candidate with `isOnlyUntil` so parameter selection never sees OOS candles.
+    // R-10 + 6.7.5: as fronteiras derivam do MESMO corte 60/20/20 sobre a série REAL
+    // de velas 1m da janela de análise: o fim do bloco de TREINO (= início da
+    // validação) trunca a busca via `isOnlyUntil`, e o holdout (últimos 20%) fica
+    // DEPOIS da validação — um trecho que NENHUM candidato viu (CA-7.4). O probe
+    // full-range materializa a janela (sync/seed de dados) e fornece os limites.
     const probe = await this.runBacktest(
       { symbol, days, profile, weights: currentWeights, seed, asOf, walkForward },
       false
     );
-    const trainedUntil = buildWalkForwardWindows(probe.startTime, probe.endTime, walkForward, days)[0]?.isEnd;
+    const probeKlines = await historicalKlinesDao.getBySymbolAndRange(symbol, '1m', probe.startTime, probe.endTime);
+    const boundaries = computeAutoTuneBoundaries({
+      startTime: probe.startTime,
+      endTime: probe.endTime,
+      klineTimestamps: probeKlines.map(k => k.openTime),
+      seed
+    });
+    // trainedUntil = fim do bloco de TREINO (início da validação): os candidatos
+    // são simulados e ESCOLHIDOS só com velas < trainedUntil (isOnlyUntil).
+    // holdoutStart = fim da validação: o bloco final fica intocado (CA-7.4).
+    const trainedUntil = boundaries.trainedUntil;
+    const holdoutStart = boundaries.holdoutStart;
 
     const initialResult = await this.runBacktest({
       symbol,
@@ -875,8 +919,8 @@ export class BacktestEngine {
     const tuningSummary = `O Auto-Tuning executou ${iterations} iterações de simulação quantitativa no perfil ${PROFILE_PRESETS[profile].name} (${symbol}). ` +
       `Resultado: Win Rate ${bestResult.winRate}% (${Number(wrDiff) >= 0 ? '+' : ''}${wrDiff}%), Profit Factor ${bestResult.profitFactor} (${Number(pfDiff) >= 0 ? '+' : ''}${pfDiff}), ` +
       `Lucro Líquido ${bestResult.netProfit}% (${Number(profitDiff) >= 0 ? '+' : ''}${profitDiff}%) e Max Drawdown de ${bestResult.maxDrawdown}% (${Number(ddDiff) >= 0 ? 'redução de ' : ''}${ddDiff}%). ` +
-      `R-10: os candidatos foram avaliados apenas na janela de treino (sem vazamento do out-of-sample); ` +
-      `a validação do conjunto escolhido no trecho não visto está em \`oosValidation\`.`;
+      `R-10/6.7.5: os candidatos foram avaliados apenas no bloco de treino do split 60/20/20 (sem vazamento); ` +
+      `a validação do conjunto escolhido no trecho não visto está em \`oosValidation\` e a certificação final, no holdout intocado de \`holdoutValidation\`.`;
 
     // R-10 & M2.6: honest validation of the chosen weights on the unseen remainder of the series.
     const oosValidation = await this.runBacktest(
@@ -884,9 +928,16 @@ export class BacktestEngine {
       false
     );
 
-    // M2.6: Final holdout evaluation with bootstrap confidence interval and robustness certification
+    // M2.6/6.7.5: holdout evaluation on the truly unseen tail (bootstrap CI +
+    // robustness). `holdoutStart` (fim da validação) vem do MESMO split 60/20/20
+    // que gerou `trainedUntil` — os trades de holdout têm entrada no bloco final,
+    // que ficou FORA da busca (isOnlyUntil = fim do treino). A região de validação
+    // (treino..holdoutStart) aparece no `oosValidation`, mas a escolha do melhor
+    // candidato acima usou apenas fitness do treino (cada runBacktest de candidato
+    // foi truncado em `trainedUntil`), então nenhum dado ≥ trainedUntil influenciou
+    // a seleção — propriedade verificada pelo espião do CA-7.4 nos testes.
     const holdoutTrades = (oosValidation.trades || [])
-      .filter(t => (trainedUntil ? t.entryTime >= trainedUntil : true))
+      .filter(t => (holdoutStart ? t.entryTime >= holdoutStart : true))
       .map(t => t.pnlPct);
 
     const holdoutEval = evaluateAutoTuneHoldout({

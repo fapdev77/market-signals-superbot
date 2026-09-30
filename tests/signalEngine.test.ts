@@ -180,7 +180,22 @@ describe('Signal Engine & Multi-Timeframe Validation Suite', () => {
       updatedAt: Date.now()
     };
 
-    const signal = buildTradeSignal(tickerForLong, klinesWithSpike, 2.0);
+    // 6.7.4: o stopCap (INTRADAY 2.0% default) suprimiria este sinal antes da
+    // validação, porque os klines do fixture (~90k) ancoram o stop longe do
+    // preço do ticker (180). Este teste cobre o motor de validação de spike,
+    // então o cap é isolado via env e restaurado ao fim.
+    const originalStopCap = process.env.MAX_STOP_PCT_INTRADAY;
+    process.env.MAX_STOP_PCT_INTRADAY = '50';
+    let signal: ReturnType<typeof buildTradeSignal>;
+    try {
+      signal = buildTradeSignal(tickerForLong, klinesWithSpike, 2.0);
+    } finally {
+      if (originalStopCap === undefined) {
+        delete process.env.MAX_STOP_PCT_INTRADAY;
+      } else {
+        process.env.MAX_STOP_PCT_INTRADAY = originalStopCap;
+      }
+    }
     expect(signal).toBeDefined();
     expect(signal?.validationStatus).toBe('REJECTED_SPIKE');
     expect(signal?.validationStage).toContain('REJEITADO');

@@ -18,6 +18,12 @@ export const METRIC_NAMES = {
   signalsSuppressedLedgerFailure: 'signals_suppressed_ledger_failure',
   signalsNotExecutable: 'signals_not_executable',
   signalsEvaluated: 'signals_evaluated',
+  // 6.7.4/CA-7.3: sinais suprimidos por stop acima do teto MAX_STOP_PCT.
+  signalsSuppressedStopCap: 'signals_suppressed_stop_cap',
+  // 6.7.3: transições do ciclo PENDING_ENTRY.
+  pendingEntryActivated: 'pending_entry_activated',
+  pendingEntryNotFilled: 'pending_entry_not_filled',
+  pendingEntryInvalidated: 'pending_entry_invalidated',
   tradingScheduleBlocks: 'trading_schedule_blocks',
   ledgerWriteFailures: 'ledger_write_failures',
   feedErrors: 'feed_errors' // prefixo: feed_errors.<feed>
@@ -35,6 +41,10 @@ counters.set(METRIC_NAMES.signalsBlockedRiskLimit, 0);
 counters.set(METRIC_NAMES.signalsSuppressedLedgerFailure, 0);
 counters.set(METRIC_NAMES.signalsNotExecutable, 0);
 counters.set(METRIC_NAMES.signalsEvaluated, 0);
+counters.set(METRIC_NAMES.signalsSuppressedStopCap, 0);
+counters.set(METRIC_NAMES.pendingEntryActivated, 0);
+counters.set(METRIC_NAMES.pendingEntryNotFilled, 0);
+counters.set(METRIC_NAMES.pendingEntryInvalidated, 0);
 counters.set(METRIC_NAMES.tradingScheduleBlocks, 0);
 counters.set(METRIC_NAMES.ledgerWriteFailures, 0);
 

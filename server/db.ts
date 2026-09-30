@@ -600,7 +600,9 @@ export function resolveSignalOrigin(signal: Pick<TradeSignal, 'origin'>): DataOr
 /** `origin` default = LIVE: leituras de operador não veem dado demo sem pedido explícito. */
 export async function getActiveSignals(origin: OriginFilter = 'LIVE'): Promise<TradeSignal[]> {
   const database = await getDb();
-  const res = database.exec(`SELECT * FROM trade_signals WHERE status = 'ACTIVE'${originClause(origin)}`);
+  // 6.7.3: PENDING_ENTRY conta como sinal aberto (dedupe, risco e visibilidade do
+  // operador) — mas NÃO é gerenciado como posição (o caller filtra por status).
+  const res = database.exec(`SELECT * FROM trade_signals WHERE status IN ('ACTIVE', 'PENDING_ENTRY')${originClause(origin)}`);
   if (!res.length || !res[0].values) return [];
 
   const columns = res[0].columns;
@@ -615,7 +617,8 @@ export async function getActiveSignalsBySymbol(
   const database = await getDb();
   // Revisão R-2: symbol/category eram interpolados direto na SQL. Hoje os callers passam
   // valores controlados, mas o contrato correto é parametrizado (mesma disciplina de saveSignal).
-  let query = `SELECT * FROM trade_signals WHERE symbol = ? AND status = 'ACTIVE'${originClause(origin)}`;
+  // 6.7.3: pendentes também deduplicam (senão cada tick emitiria um novo sinal igual).
+  let query = `SELECT * FROM trade_signals WHERE symbol = ? AND status IN ('ACTIVE', 'PENDING_ENTRY')${originClause(origin)}`;
   const params: Array<string> = [symbol];
   if (category) {
     query += ` AND (strategy_category = ? OR (strategy_category IS NULL AND ? = 'INTRADAY'))`;
@@ -740,20 +743,73 @@ export async function expireAllActiveSignals() {
  */
 export async function expireStaleSignals(now: number = Date.now()): Promise<number> {
   const database = await getDb();
+  // 6.7.3: pendentes usam o MESMO `expires_at` (TTL calculado no buildTradeSignal).
+  // Um pendente que estoura o TTL sem preencher é terminal ENTRY_NOT_FILLED (D4/D5),
+  // com razão própria — diferente do TTL de um sinal já ativo.
   const checkRes = database.exec(
-    `SELECT id FROM trade_signals WHERE status = 'ACTIVE' AND expires_at IS NOT NULL AND expires_at <= ?`,
+    `SELECT id, status FROM trade_signals WHERE status IN ('ACTIVE', 'PENDING_ENTRY') AND expires_at IS NOT NULL AND expires_at <= ?`,
     [now]
   );
-  const ids = checkRes.length && checkRes[0].values ? checkRes[0].values.map(r => String(r[0])) : [];
-  if (ids.length > 0) {
+  const rows = checkRes.length && checkRes[0].values ? checkRes[0].values : [];
+  const activeIds: string[] = [];
+  const pendingIds: string[] = [];
+  for (const row of rows) {
+    if (String(row[1]) === 'PENDING_ENTRY') {
+      pendingIds.push(String(row[0]));
+    } else {
+      activeIds.push(String(row[0]));
+    }
+  }
+  const allIds = [...activeIds, ...pendingIds];
+  if (allIds.length > 0) {
     database.run(
-      `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = ? WHERE id IN (${ids.map(() => '?').join(', ')})`,
-      [REASON_TTL, ...ids]
+      `UPDATE trade_signals SET status = 'EXPIRED', expiration_reason = ? WHERE id IN (${allIds.map(() => '?').join(', ')})`,
+      [REASON_TTL, ...allIds]
     );
     scheduleDbSave();
-    recordExpiryEventsFor(database, ids, 'TTL', REASON_TTL, now);
+    // 6.7.3: o EXPIRED de um pendente JÁ NASCE com a razão ENTRY_NOT_FILLED no
+    // metadata (ledger é append-only — sem UPDATE pós-insert), distinguindo
+    // "nunca preencheu" de "entrou e expirou" (D4: não-evento para o R).
+    if (pendingIds.length === 0) {
+      recordExpiryEventsFor(database, allIds, 'TTL', REASON_TTL, now);
+    } else {
+      if (activeIds.length > 0) {
+        recordExpiryEventsFor(database, activeIds, 'TTL', REASON_TTL, now);
+      }
+      const pendingRows = database.exec(
+        `SELECT id, symbol, current_price, entry_min FROM trade_signals WHERE id IN (${pendingIds.map(() => '?').join(', ')})`,
+        pendingIds
+      );
+      const closePriceFor = (symbol: string, currentPrice: number, entryMin: number): number => {
+        const last = getLastKnownPrice(database, symbol);
+        if (last !== null) return last;
+        return Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : entryMin;
+      };
+      for (const row of pendingRows[0]?.values ?? []) {
+        const id = String(row[0]);
+        const closePrice = closePriceFor(String(row[1]), Number(row[2]), Number(row[3]));
+        try {
+          database.run(
+            `INSERT INTO signal_events (signal_id, event_type, price, timestamp, metadata) VALUES (?, ?, ?, ?, ?)`,
+            [
+              id,
+              'EXPIRED',
+              closePrice,
+              now,
+              JSON.stringify({
+                reason: 'ENTRY_NOT_FILLED',
+                reasonText: 'Pendente expirado por TTL sem preencher a zona (D4: não-evento para o R).'
+              })
+            ]
+          );
+        } catch (e: any) {
+          console.warn(`[ledger] Falha ao gravar EXPIRED de pendente para ${id}:`, e?.message || e);
+          incrementMetric(METRIC_NAMES.ledgerWriteFailures);
+        }
+      }
+    }
   }
-  return ids.length;
+  return allIds.length;
 }
 
 export async function updateSignalStatus(id: string, status: string, reason?: string) {
@@ -766,6 +822,18 @@ export async function updateSignalStatus(id: string, status: string, reason?: st
   scheduleDbSave();
 }
 
+/**
+ * 6.7.3/D3 — no preenchimento de um pendente, o R do EvidenceService deve medir o
+ * risco a partir do FILL real (clamp do close 1m na zona). O ledger é append-only,
+ * então o fill é carregado no PREÇO do evento ENTRY com metadata.fillSource — e
+ * `getClosedSignalsEvidence` prefere esse preço ao entry_price da emissão.
+ */
+function entryPriceForEvidence(entryPrice: number, events: LedgerEventRecord[]): number {
+  const fillEntry = events.find(
+    ev => ev.eventType === 'ENTRY' && ev.metadata?.fillSource === 'PENDING_ENTRY_ACTIVATED'
+  );
+  return fillEntry && Number.isFinite(fillEntry.price) && fillEntry.price > 0 ? fillEntry.price : entryPrice;
+}
 export async function updateSignal(signal: TradeSignal) {
   // same as saveSignal for INSERT OR REPLACE
   await saveSignal(signal);
@@ -1750,13 +1818,24 @@ export const signalLedgerDao = {
         }
       }
 
+      // 6.7.3/D4 — sinal pendente sem preenchimento é NÃO-EVENTO para o R:
+      // sem ENTRY no ledger o sinal nunca entrou no mercado (ENTRY_NOT_FILLED
+      // ou ENTRY_INVALIDATED antes do toque) e não entra no denominador.
+      // Sinais pré-6.7 sempre receberam ENTRY na emissão, então nada muda para eles.
+      if (!events.some(ev => ev.eventType === 'ENTRY')) {
+        continue;
+      }
+
+      // 6.7.3/D3: se o ENTRY veio de um fill de pendente (metadata.fillSource),
+      // o R corre a partir do preço de preenchimento, não da cotação da emissão.
+      const effectiveEntryPrice = entryPriceForEvidence(entryPrice, events);
       const outcome = calculateSignalOutcomeR(
         {
           id,
           symbol,
           category,
           direction,
-          entryPrice,
+          entryPrice: effectiveEntryPrice,
           stopLoss,
           takeProfit1,
           takeProfit2,
@@ -1802,7 +1881,7 @@ export const signalLedgerDao = {
               symbol,
               category,
               direction,
-              entryPrice,
+              entryPrice: effectiveEntryPrice,
               stopLoss,
               takeProfit1,
               takeProfit2,

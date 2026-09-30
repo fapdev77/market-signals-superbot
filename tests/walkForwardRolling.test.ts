@@ -234,11 +234,15 @@ describe('R-10 walk-forward rolante', () => {
       await HistoricalDataService.seedSyntheticKlines(SYM, start, asOf);
 
       const full = await run({});
-      const windows = buildWalkForwardWindows(full.startTime, full.endTime, OPTS, DAYS);
-      const isOnly = await run({ isOnlyUntil: windows[0].isEnd });
-
+      // 6.7.5: a fronteira de treino do AutoTune é o split 60/20/20 (fim do bloco de
+      // treino = início da validação), verificada contra a fronteira que o próprio
+      // resultado declara em `trainedUntil`.
       const autoTune = await BacktestEngine.runAutoTune(SYM, 'daytrade', DAYS, 1, weights, 777, asOf, OPTS);
+      expect(autoTune.trainedUntil).toBeGreaterThan(full.startTime);
+      expect(autoTune.trainedUntil).toBeLessThan(full.endTime);
+      expect(autoTune.holdoutValidation).toBeDefined();
 
+      const isOnly = await run({ isOnlyUntil: autoTune.trainedUntil });
       expect(autoTune.initialResult.totalTrades).toBe(isOnly.totalTrades);
       expect(autoTune.initialResult.totalTrades).toBeLessThan(full.totalTrades);
 

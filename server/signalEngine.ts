@@ -7,6 +7,12 @@ import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../sr
 import { dRound } from './utils/decimal.js';
 import { roundPriceToTick, checkExecutability, type SymbolFilters } from './services/exchangeFilters.js';
 import { computePositionSize } from './services/RiskManager.js';
+// R-15: métrica canônica da supressão por stop cap (CA-7.3 pede métrica + motivo).
+import { incrementMetric, METRIC_NAMES } from './utils/metrics.js';
+// 6.7: confirmação de entrada (R1–R5) e teto do stop (D1–D8 aprovados em 2026-09-30).
+import { confirmEntry } from './services/entryConfirmation.js';
+import { enforceStopCap } from './services/stopCap.js';
+import { isPendingEntryEnabled } from './services/pendingEntryLifecycle.js';
 
 /**
  * Shared Lookback Window Constant (M2.3 - Phase 5)
@@ -642,6 +648,20 @@ export function buildTradeSignal(
     return null;
   }
 
+  // 6.7.4/CA-7.3 — teto do stop por estratégia (D7: defaults calibrados por dados).
+  // Acima do teto o sinal é suprimido com motivo STOP_TOO_WIDE.
+  const stopCap = enforceStopCap({
+    strategyCategory,
+    entryPrice: price,
+    stopLoss
+  });
+  if (!stopCap.allowed) {
+    // CA-7.3: métrica + motivo (o warn carrega a razão STOP_TOO_WIDE completa).
+    incrementMetric(METRIC_NAMES.signalsSuppressedStopCap);
+    console.warn(`⛔ [STOP CAP] Sinal ${ticker.symbol}/${strategyCategory} suprimido: ${stopCap.reason}`);
+    return null;
+  }
+
   // 6.5.2 — quantidade sugerida (RiskManager) e executabilidade contra os filtros do exchange.
   // Ausente = filtros indisponíveis (executabilidade desconhecida); `false` só com motivo.
   let suggestedQuantity: number | undefined = undefined;
@@ -777,7 +797,9 @@ export function buildTradeSignal(
     ttlMinutes: effectiveTtl,
     expiresAt,
     isBreakevenActive: false,
-    status: 'ACTIVE',
+    // 6.7.3/D8: com a flag, o sinal nasce PENDING_ENTRY (só ativa ao tocar a zona com
+    // confirmação); sem a flag, comportamento atual preservado.
+    status: isPendingEntryEnabled() ? 'PENDING_ENTRY' : 'ACTIVE',
     tradfiSession: ticker.tradfiSession,
     // 6.5.2/6.5.3: executabilidade (estimativa de slippage é anexada pelo caller, que tem o book).
     suggestedQuantity,

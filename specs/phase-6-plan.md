@@ -201,14 +201,15 @@
 
 ---
 
-## Fase 6.7 — Motor e auto-tune (G-14, G-15) — **bloqueada por aprovação do dono**
+## Fase 6.7 — Motor e auto-tune (G-14, G-15) — **APROVADA (D1–D8, 2026-09-30) e implementada**
 
-- [ ] **T6.7.0 — Escrever `specs/phase-6-7-entry-confirmation.md`** (S, entrega de design)
-  - *Bloqueio:* nenhuma regra implementada sem aprovação explícita do dono.
-- [ ] **T6.7.1 — `confirmEntry(direction, klines1m, klines5m)` pura** (M) — CA-7.1. *Teste:* `tests/confirmEntry.test.ts`.
-- [ ] **T6.7.2 — Ciclo `PENDING_ENTRY`** (M) — CA-7.2 (sem toque ⇒ `ENTRY_NOT_FILLED`, sem R e sem evento ENTRY). *Teste:* `tests/pendingEntryLifecycle.test.ts`.
-- [ ] **T6.7.3 — Teto do stop `MAX_STOP_PCT`** (S) — CA-7.3. *Teste:* `tests/stopCap.test.ts` (já existe — revisar/expandir).
-- [ ] **T6.7.4 — Auto-tune treino/validação/holdout** (M) — CA-7.4/7.5. *Teste:* `tests/autoTuneThreeWaySplit.test.ts` (revisar `autoTuneHoldout.test.ts`).
+- [x] **T6.7.0 — Escrever `specs/phase-6-7-entry-confirmation.md`** (S, entrega de design)
+  - *Bloqueio:* nenhuma regra implementada sem aprovação explícita do dono. **Aprovado em 2026-09-30 (todas as recomendações D1–D8).**
+- [x] **T6.7.1 — `confirmEntry(direction, klines1m, klines5m)` pura** (M) — CA-7.1. *Teste:* `tests/confirmEntry.test.ts` (16 testes).
+- [x] **T6.7.2 — Ciclo `PENDING_ENTRY`** (M) — CA-7.2 (sem toque ⇒ `ENTRY_NOT_FILLED`, sem R e sem evento ENTRY). *Teste:* `tests/pendingEntryLifecycle.test.ts` (10) + `tests/pendingEntryLedger.test.ts` (4, integração db/ledger).
+- [x] **T6.7.3 — Teto do stop `MAX_STOP_PCT`** (S) — CA-7.3. *Teste:* `tests/stopCap.test.ts` (7). Caps calibrados por dados reais (p75, n≈15k sinais no DB — ver notas).
+- [x] **T6.7.4 — Auto-tune treino/validação/holdout** (M) — CA-7.4/7.5. *Teste:* `tests/autoTuneThreeWaySplit.test.ts` (7, incl. espião) + `tests/autoTuneHoldout.test.ts` (legado, verde).
+  - *Nota:* a numeração interna difere do spec (6.7.2 confirmEntry / 6.7.3 lifecycle / 6.7.4 stopCap / 6.7.5 auto-tune) — mapeada nos comentários do código.
 
 ---
 
@@ -238,6 +239,7 @@
 | E | após 6.4 | sem métrica do nome, sem spot, gate único |
 | F | após 6.5 | decimal, executabilidade |
 | G | após 6.6 | todos os alertas |
+| H | após 6.7 | entry confirmation (D1–D8) implementada atrás de flag |
 | Final | após 6.0–6.7 | definição de pronto da seção 9 do spec |
 
 ## Riscos e mitigação
@@ -271,7 +273,22 @@
 - **CA-0.1 — FECHADO (2026-09-30):** `npm ci` em clone git limpo (HEAD + `package.json`/`package-lock.json` reconciliados sobrepostos; equivalente ao estado pós-commit) terminou com **exit 0**: 0 vulnerabilidades, 248 pacotes, e `npm run build` exit 0 no clone. Observação: o primeiro `npm ci` detectou **39 entradas opcionais de plataforma ausentes no lock** (binários `@rollup/rollup-*` 4.62.3, `@tailwindcss/oxide-*` 4.3.3, `lightningcss-*` 1.32.0 e `fsevents` 2.3.3 — inclusões de outras plataformas que a instalação win32 local não tinha) e falhou com `EUSAGE`; as entradas foram completadas com metadados oficiais do registry npm (sem flag `dev`, pois sobem via `vite`, dependência de produção), e o `npm ci` re-executado passou. Validação adicional sem rede: `npm install --package-lock-only --dry-run --offline` exit 0 (lock em sincronia com o `package.json`). O job de CI (Node 20/22) permanece como verificação contínua (CA-0.3).
 - **6.7.1:** documento de design criado em `specs/phase-6-7-entry-confirmation.md` — **bloqueia** o 6.7.2+ até a aprovação do dono.
 
-### Artefatos novos/modificados
+## Notas de implementação (6.7, 2026-09-30)
+
+- **Aprovação D1–D8:** todas as recomendações aprovadas pelo dono (2026-09-30) e marcadas na §8 do design. Destaques: D2 usa vela 5m REAL (não 5×1m); D3 fill = `clamp(close_1m, entryMin, entryMax)`; D4 pendente sem fill é NÃO-EVENTO para o R; D8 flag `ENTRY_CONFIRMATION_ENABLED` (default OFF) até backtest comparativo.
+- **Calibração D7 real:** p75 da distância de stop por categoria sobre n≈15k sinais históricos (`data/superbot.sqlite`): SCALP 1.73→cap 1.75, DAY_TRADE 1.83→1.85, INTRADAY 1.91→2.0, COUNTER_TRADE 2.27→2.30, SWING 3.19→3.2, POSITION 5.26→5.3, CUSTOM→2.0 (fail-conservative). Sobreponível por env `MAX_STOP_PCT_<CATEGORIA>`.
+- **Achado de integração (live × backtest):** o tick ao vivo buscava só klines 15m — o "motor 1m" era real apenas no backtest. A checagem de pendentes (6.7.3) traz velas 1m e 5m REAIS por tick via `fetchKlines` (limiter+cache, 10s TTL); o caminho de emissão 15m permanece (mudança de pipeline fica para o 6.8/6.9 após backtest comparativo).
+- **Ledger append-only × fill (D3):** o `signal_ledger`/`signal_events` têm triggers `no_update`/`no_delete` (CA-3.1). O preço de fill real vai no PREÇO do evento ENTRY com `metadata.fillSource='PENDING_ENTRY_ACTIVATED'`; `getClosedSignalsEvidence` prefere esse preço ao entry_price da emissão para o cálculo do R.
+- **D4 no denominador:** sinais sem evento ENTRY são pulados em `getClosedSignalsEvidence` (não-evento — nunca entraram no mercado). Sinais pré-6.7 sempre tiveram ENTRY na emissão, então o histórico não muda.
+- **TTL de pendentes:** `expireStaleSignals` cobre `PENDING_ENTRY` com o mesmo `expires_at`; o EXPIRED de pendente nasce com `metadata.reason='ENTRY_NOT_FILLED'` distinguindo "nunca preencheu" de "entrou e expirou".
+- **Auto-tune (6.7.5/G-15):** fronteiras de treino/validação/holdout derivam do MESMO split 60/20/20 (`computeAutoTuneBoundaries` sobre a série real de velas 1m; fallback temporal em janelas mínimas). Candidatos são truncados no fim do treino (`isOnlyUntil`) e o holdout (últimos 20%) fica depois da validação — diferente do corte walk-forward antigo, cujos "OOS" eram a região onde candidatos foram escolhidos. Escolha entre candidatos por fitness do treino (`calculateFitnessExpectancy`, min 10 trades).
+- **Gap de UI conhecido (registrado):** com a flag ON, sinais `PENDING_ENTRY` não entram no contador "Ativos" da UI (filtrado por `status==='ACTIVE'` em `SignalsMatrix`/`RiskExposureDashboard`). Visível apenas em "Todos". Revertido/atendido no 6.8 (T6.8.x) — flag default OFF contém o impacto.
+- **Teste legado de spike:** `tests/signalEngine.test.ts` isola o stopCap via `MAX_STOP_PCT_INTRADAY` (env, restaurado no fim) — o fixture usa klines ~90k com ticker a 180 e o cap calibrado suprimiria o sinal antes da validação de spike.
+
+### Artefatos novos/modificados (6.7)
+- `server/services/entryConfirmation.ts` (novo), `server/services/pendingEntryLifecycle.ts` (novo), `server/services/stopCap.ts` (novo), `server/services/autoTuneSplit.ts` (novo).
+- `server/signalEngine.ts` (stopCap + status PENDING_ENTRY + métrica), `server.ts` (ciclo pendente por tick, ENTRY condicional, checagem fail-open), `server/db.ts` (D4 no denominador, TTL de pendentes, entry_price por fill), `server/services/BacktestEngine.ts` (split 3-way no runAutoTune), `server/utils/metrics.ts` (4 métricas novas), `src/types.ts` (status PENDING_ENTRY).
+- `tests/confirmEntry.test.ts` (16), `tests/pendingEntryLifecycle.test.ts` (10), `tests/stopCap.test.ts` (7), `tests/autoTuneThreeWaySplit.test.ts` (7), `tests/pendingEntryLedger.test.ts` (4) — 91 arquivos / 504 testes verdes; tsc 0 erros; build ok.
 - `tests/repoHygiene.test.ts`, `tests/smokeExitCode.test.ts`, `tests/fixtureCaptureAtomic.test.ts`, `tests/fixturesIntegrity.test.ts`, `tests/tradfiScheduleMapping.test.ts`, `tests/auditUniverse.test.ts`.
 - `scripts/binance-smoke.ts`, `scripts/capture-binance-fixtures.ts`, `scripts/audit-universe.ts`.
 - `tests/fixtures/binance/*` (reais, com `_meta`), `docs/UNIVERSE.md`, `docs/evidence/binance-smoke-2026-09-30.log`, `specs/phase-6-7-entry-confirmation.md`.
