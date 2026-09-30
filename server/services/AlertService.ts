@@ -101,6 +101,11 @@ export class AlertService {
     this.sinks.push(sink);
   }
 
+  /** Sinks configurados (leitura; usado pelo teste de conectividade do 6.6.3). */
+  listSinks(): AlertSink[] {
+    return [...this.sinks];
+  }
+
   async emitAlert(
     key: string,
     severity: AlertSeverity,

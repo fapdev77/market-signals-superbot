@@ -34,6 +34,8 @@ import { getDefaultIndicatorWeights } from '../../src/constants/strategyPresets.
 import { defaultModels } from '../../src/config/defaultModels.js';
 import { validateBody, resetConfirmationSchema, tableClearConfirmationSchema } from '../middleware/validation.js';
 import { getAuditActor } from '../middleware/auth.js';
+// 6.6.3: disparo de alerta de teste com resultado por sink.
+import { dispatchTestAlert } from '../services/operationalAlerts.js';
 
 export function createSystemRouter(
   getBotState: () => BotState,
@@ -247,6 +249,22 @@ export function createSystemRouter(
       res.json({ success: true, killSwitch: state });
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'Falha ao alterar o kill-switch' });
+    }
+  });
+
+  // 6.6.3/CA-6.3: dispara um alerta de teste pelos sinks configurados e devolve o
+  // resultado POR SINK. Autenticação é herdada do middleware global em /api.
+  router.post('/alerts/test', async (req: Request, res: Response) => {
+    try {
+      const actor = getAuditActor(req);
+      const message = typeof req.body?.message === 'string' && req.body.message.trim()
+        ? req.body.message.trim().slice(0, 300)
+        : `Alerta de teste disparado pelo operador (${actor})`;
+      const results = await dispatchTestAlert(message);
+      res.json({ ok: true, results });
+    } catch (err: any) {
+      // 6.6.2: falha de alerta nunca derruba o processo — resposta honesta de erro.
+      res.status(500).json({ ok: false, error: err?.message || 'Falha ao disparar alerta de teste' });
     }
   });
 

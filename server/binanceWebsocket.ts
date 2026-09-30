@@ -4,6 +4,7 @@ import { LiquidationEvent, LiquidationSummary } from '../src/types.js';
 import { simulateLiquidationSummary } from './demo/syntheticMarket.js';
 // R-13: health por feed.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
+import { emitOperationalAlert } from './services/operationalAlerts.js';
 import { buildFuturesWsUrl, calculateWsBackoff } from './utils/wsUrl.js';
 
 export const WS_SILENCE_MS = 15000; // 15 seconds watchdog limit for active tickers
@@ -230,6 +231,10 @@ function startWatchdog() {
         `Watchdog de silêncio: ${health.reason} Reiniciando conexão preventiva...`
       );
       recordFeedFailure('ws', health.reason);
+      // 6.6: WS_SILENT do catálogo operacional (dedup central evita repetição a cada 5s).
+      void emitOperationalAlert('WS_SILENT', 'HIGH', `Watchdog WebSocket: ${health.reason}`, {
+        lastTickAt: wsStatus.lastTickAt
+      });
       cleanupSocket();
       wsStatus.connected = false;
       wsStatus.connecting = false;

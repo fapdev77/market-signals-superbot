@@ -19,6 +19,7 @@ import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/
 import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence } from './services/EvidenceService.js';
 import { calculateSignalOutcomeR } from './services/EvidenceService.js';
 import { defaultAlertService, AlertService } from './services/AlertService.js';
+import { emitOperationalAlert } from './services/operationalAlerts.js';
 import { incrementMetric, METRIC_NAMES } from './utils/metrics.js';
 
 let db: Database | null = null;
@@ -419,21 +420,21 @@ export function saveDbToDisk() {
     if (recentSaveDurations.length > 50) recentSaveDurations.shift();
     lastKnownFileSizeBytes = buffer.length;
 
-    // M4.5 Gatilhos para reabrir a decisão do banco:
-    // 1. Arquivo > 250 MB
+    // M4.5 Gatilhos para reabrir a decisão do banco (alertas via fachada 6.6):
+    // 1. Arquivo > 250 MB → DB_SIZE_THRESHOLD
     if (lastKnownFileSizeBytes > 250 * 1024 * 1024) {
-      defaultAlertService.emitAlert(
-        'db_size_trigger',
+      void emitOperationalAlert(
+        'DB_SIZE_THRESHOLD',
         'CRITICAL',
         `Tamanho do arquivo do banco (${Math.round(lastKnownFileSizeBytes / (1024 * 1024))}MB) ultrapassou o gatilho de 250MB. Reabrir decisão de migração de banco.`
       );
     }
-    // 2. p95 da duração do save > 500 ms (mínimo 10 amostras)
+    // 2. p95 da duração do save > 500 ms (mínimo 10 amostras) → DB_SAVE_SLOW
     const sorted = [...recentSaveDurations].sort((a, b) => a - b);
     const p95 = sorted[Math.floor(sorted.length * 0.95)];
     if (p95 > 500 && recentSaveDurations.length >= 10) {
-      defaultAlertService.emitAlert(
-        'db_p95_save_trigger',
+      void emitOperationalAlert(
+        'DB_SAVE_SLOW',
         'HIGH',
         `p95 da duração de gravação do banco (${p95}ms) ultrapassou o gatilho de 500ms. Reabrir decisão de banco.`
       );
@@ -1955,11 +1956,13 @@ export async function saveSignalAndLedger(
     incrementMetric(METRIC_NAMES.ledgerWriteFailures);
     markSymbolDegraded(signal.symbol);
     try {
+      // 6.6: chave canônica do catálogo (operational.ledger_write_failed). Mantém o
+      // ponto de injeção do ledger (setLedgerAlertServiceForTests) usado pela suíte 6.2.
       await alertService.emitAlert(
-        `ledger_write_failure`,
+        `operational.ledger_write_failed`,
         'CRITICAL',
         `Ledger indisponível: sinal ${signal.id} (${signal.symbol}) NÃO foi emitido.`,
-        { signalId: signal.id, symbol: signal.symbol, error: err?.message || String(err) }
+        { signalId: signal.id, symbol: signal.symbol, error: err?.message || String(err), alertType: 'LEDGER_WRITE_FAILED' }
       );
     } catch (alertErr: any) {
       console.warn('[ledger] Falha ao emitir alerta de ledger:', alertErr?.message || alertErr);
@@ -2010,10 +2013,10 @@ export async function recordEventWithRetry(
   incrementMetric(METRIC_NAMES.ledgerWriteFailures);
   try {
     await (options?.alertService || getLedgerAlertService()).emitAlert(
-      `ledger_event_write_failure`,
+      `operational.ledger_write_failed`,
       'HIGH',
       `Evento ${event.eventType} de ${event.signalId} não gravado após ${maxAttempts} tentativas.`,
-      { signalId: event.signalId, eventType: event.eventType, error: lastErr instanceof Error ? lastErr.message : String(lastErr) }
+      { signalId: event.signalId, eventType: event.eventType, error: lastErr instanceof Error ? lastErr.message : String(lastErr), alertType: 'LEDGER_WRITE_FAILED' }
     );
   } catch { /* alerta é best-effort aqui; a falha propaga */ }
   throw lastErr;

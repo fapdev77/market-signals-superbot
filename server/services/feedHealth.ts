@@ -18,6 +18,7 @@
  * R-15: cada falha de feed também incrementa `feed_errors.<feed>` nas métricas do processo.
  */
 import { incrementMetric } from '../utils/metrics.js';
+import { emitOperationalAlert } from './operationalAlerts.js';
 
 export type FeedName =
   | 'ticker'
@@ -106,7 +107,7 @@ export function recordFeedSuccess(feed: FeedName, latencyMs?: number): void {
   }
 }
 
-/** Registra falha de feed. Após o threshold, o feed fica DEGRADED. */
+/** Registra falha de feed. Após o threshold, o feed fica DEGRADED (e emite FEED_DEGRADED uma vez). */
 export function recordFeedFailure(feed: FeedName, error?: string): void {
   const state = stateOf(feed);
   state.consecutiveFailures += 1;
@@ -120,6 +121,17 @@ export function recordFeedFailure(feed: FeedName, error?: string): void {
     incrementMetric(`feed_errors.${feed}`);
   } catch {
     /* telemetria nunca pode derrubar o caminho de dados */
+  }
+
+  // 6.6: transição OK→DEGRADED (threshold de falhas seguidas) emite FEED_DEGRADED uma
+  // única vez por janela de dedup — a reemissão contínua é suprimida pela fachada.
+  if (state.consecutiveFailures === FEED_DEGRADED_THRESHOLD) {
+    void emitOperationalAlert(
+      'FEED_DEGRADED',
+      'HIGH',
+      `Feed "${feed}" degradado após ${state.consecutiveFailures} falhas seguidas: ${state.lastError}`,
+      { feed, consecutiveFailures: state.consecutiveFailures }
+    );
   }
 }
 

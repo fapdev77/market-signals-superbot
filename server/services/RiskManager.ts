@@ -1,6 +1,7 @@
 import type { TradeSignal, StrategyCategory } from '../../src/types.js';
 import type { Database } from 'sql.js';
 import { dAdd, dDiv, dMul, dSub, dRound } from '../utils/decimal.js';
+import { emitOperationalAlert } from './operationalAlerts.js';
 
 /**
  * Server-side risk primitives (Phase 3.4).
@@ -224,6 +225,15 @@ export function setKillSwitch(
   killSwitch = enabled
     ? { enabled: true, reason: reason!.trim(), activatedAt: Date.now(), activatedBy: actor }
     : { enabled: false, reason: null, activatedAt: null, activatedBy: actor };
+
+  // 6.6: KILL_SWITCH_CHANGED é evento operacional do catálogo (fire-and-forget;
+  // falha de alerta jamais interfere na decisão de trading).
+  void emitOperationalAlert(
+    'KILL_SWITCH_CHANGED',
+    'CRITICAL',
+    `Kill-switch ${enabled ? 'ATIVADO' : 'desativado'} por ${actor}${reason ? `: ${reason.trim()}` : ''}.`,
+    { enabled, actor, reason: reason?.trim() || null }
+  );
 
   return getKillSwitch();
 }

@@ -81,6 +81,17 @@ export class BinanceRateLimiter {
     console.warn(
       `⚠️ [BinanceRateLimiter] HTTP ${status} detectado! Ativando backoff exponencial por ${Math.round(cooldown / 1000)}s. Erros consecutivos: ${state.consecutiveRateErrors}.`
     );
+
+    // 6.6: RATE_LIMIT_COOLDOWN do catálogo operacional (import tardio evita ciclo
+    // utils → services; a dedup central garante 1 alerta por janela).
+    void import('../services/operationalAlerts.js')
+      .then(({ emitOperationalAlert }) => emitOperationalAlert(
+        'RATE_LIMIT_COOLDOWN',
+        'MEDIUM',
+        `Backoff ativo por HTTP ${status}: ${Math.round(cooldown / 1000)}s de cooldown (erros consecutivos: ${state.consecutiveRateErrors}).`,
+        { status, cooldownMs: cooldown, consecutiveRateErrors: state.consecutiveRateErrors }
+      ))
+      .catch(() => { /* best-effort: nunca interfere no limiter */ });
   }
 
   /**

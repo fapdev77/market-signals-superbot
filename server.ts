@@ -46,6 +46,9 @@ import { resolveRawTicker, resolveMarketInputs, evaluatePositionManagement } fro
 import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted, loadAppStateFromDb, getRiskLimits } from './server/services/RiskManager.js';
 // 6.5.3: slippage estimado pela profundidade do book (limite default 0,15%).
 import { estimateDepthSlippagePct, isSlippageAboveLimit, getMaxEstimatedSlippagePct } from './server/services/depthSlippage.js';
+// 6.6: fachada de alertas operacionais + heartbeat externo opcional.
+import { emitOperationalAlert } from './server/services/operationalAlerts.js';
+import { startHeartbeat } from './server/services/heartbeat.js';
 import { resolveServerHost, enforceHostBinding } from './server/utils/hostGuard.js';
 import { initOrLoadSessionToken } from './server/middleware/auth.js';
 import { initOrRestoreDatabase, createScheduledBackup, ensureSqlInstance } from './server/services/BackupService.js';
@@ -142,6 +145,12 @@ async function startServer() {
     initOrRestoreDatabase(dbPath, backupDir);
   } catch (err: any) {
     console.error('❌ [FATAL DATABASE INTEGRITY ERROR]:', err?.message || err);
+    // 6.6: INTEGRITY_FAILURE do catálogo (best-effort; o processo sai em seguida — o
+    // heartbeat externo é quem percebe a ausência se o processo morrer).
+    void emitOperationalAlert('INTEGRITY_FAILURE', 'CRITICAL', `Integridade do banco FATAL: ${err?.message || err}`, {
+      dbPath,
+      backupDir
+    });
     process.exit(1);
   }
 
@@ -178,12 +187,16 @@ async function startServer() {
   }, 10 * 60 * 1000);
   clockCheckTimer.unref();
 
-  // M4.3: Scheduled database backup every 6 hours
+  // M4.3: Scheduled database backup every 6 hours (6.6: BACKUP_FAILED no catálogo)
   const scheduledBackupTimer = setInterval(() => {
     try {
       createScheduledBackup(dbPath, backupDir);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Falha ao executar backup agendado:', err);
+      void emitOperationalAlert('BACKUP_FAILED', 'CRITICAL', `Backup agendado do banco falhou: ${err?.message || err}`, {
+        dbPath,
+        backupDir
+      });
     }
   }, 6 * 60 * 60 * 1000);
   scheduledBackupTimer.unref();
@@ -548,6 +561,9 @@ async function startServer() {
     refreshTradfiRegistry()
       .then(assets => console.log(`📊 Registro TradFi: ${assets.length} contrato(s) descoberto(s).`))
       .catch(err => console.warn('TradFi registry discovery warning:', err));
+
+    // 6.6.4: heartbeat externo opcional (HEARTBEAT_URL). Sem a variável, no-op.
+    startHeartbeat();
 
     // 6.5.2: filtros por símbolo (tickSize/stepSize/minQty/notional) para executabilidade.
     // Fail-open: sem filtros o sinal nasce sem veredito de executabilidade.

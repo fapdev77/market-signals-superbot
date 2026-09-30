@@ -181,12 +181,20 @@
 
 ## Fase 6.6 — Alertas completos (G-13)
 
-- [ ] **T6.6.1 — `emitOperationalAlert` + todos os eventos** (M)
+- [x] **T6.6.1 — `emitOperationalAlert` + todos os eventos** (M)
   - *CA:* CA-6.1 — cada evento emite exatamente 1 alerta na janela de dedup.
   - *Teste:* `tests/alertsAllEvents.test.ts`.
-- [ ] **T6.6.2 — Isolamento de falha de sink** (S) — CA-6.2. *Teste:* `tests/alertSinkFailureIsolated.test.ts`.
-- [ ] **T6.6.3 — `POST /api/system/alerts/test` autenticado** (S) — CA-6.3. *Arquivos:* `server/routes/systemRoutes.ts`.
-- [ ] **T6.6.4 — Heartbeat externo opcional** (S) — CA-6.4. *Teste:* `tests/heartbeat.test.ts`.
+- [x] **T6.6.2 — Isolamento de falha de sink** (S) — CA-6.2. *Teste:* `tests/alertSinkFailureIsolated.test.ts`.
+- [x] **T6.6.3 — `POST /api/system/alerts/test` autenticado** (S) — CA-6.3. *Arquivos:* `server/routes/systemRoutes.ts`.
+- [x] **T6.6.4 — Heartbeat externo opcional** (S) — CA-6.4. *Teste:* `tests/heartbeat.test.ts`.
+
+#### Notas de implementação (6.6, 2026-09-30)
+- **6.6.1/CA-6.1:** fachada `server/services/operationalAlerts.ts` com catálogo FECHADO (tipo fora do catálogo lança): FEED_DEGRADED, WS_SILENT, RATE_LIMIT_COOLDOWN, KILL_SWITCH_CHANGED, BACKUP_FAILED, LEDGER_WRITE_FAILED, DB_SIZE_THRESHOLD, DB_SAVE_SLOW, CLOCK_DRIFT, INTEGRITY_FAILURE (+ OPERATIONAL_TEST). `emitOperationalAlert` usa chaves `operational.<tipo>` sobre a dedup do `AlertService` (10 min) ⇒ cada evento = exatamente 1 alerta por janela. Wiring: `feedHealth` (transição para DEGRADED no threshold), watchdog WS (`binanceWebsocket`), `triggerBackoff` do limiter (429/418, import dinâmico para evitar ciclo utils→services), `setKillSwitch` (RiskManager), backup agendado + integridade FATAL (`server.ts`), `db_size`/`p95_save` (db.ts, migrados para a fachada). CLOCK_DRIFT/integridade já emitiam (spec: "já existem") e mantêm chave/behavior — `clockDrift.test.ts` e `alertDedup.test.ts` continuam verdes.
+- **6.6.2/CA-6.2:** `Promise.allSettled` no serviço base + captura local na fachada — sink que lança/rejeita/devolve false nunca propaga para o loop; outros sinks recebem. Teste com 4 sinks (2 quebrados) e "todos falhando".
+- **6.6.3/CA-6.3:** `POST /api/system/alerts/test` em `systemRoutes` (auth global `/api` herdada; 401 sem token) — dispara pelos sinks configurados com **bypass deliberado da dedup** (pedido explícito do operador) e devolve `results: [{sink, delivered, error?}]`; mensagem opcional (max 300 chars, auditada com `getAuditActor`); sem sinks ⇒ `ok: true, results: []`. `AlertService.listSinks()` novo (leitura pública).
+- **6.6.4/CA-6.4:** `server/services/heartbeat.ts` — sem `HEARTBEAT_URL` é no-op; com a variável, ping imediato + a cada 5 min (`HEARTBEAT_INTERVAL_MS`), relógio falso via `vi.useFakeTimers`; falha de rede isolada (tenta de novo no próximo intervalo). `startHeartbeat()` no boot.
+- Correção da auto-review: comentário do `dispatchTestAlert` dizia que marcava a chave na dedup, mas não marcava — comentário corrigido para descrever o bypass deliberado.
+- Testes novos (14): `tests/alertsAllEvents.test.ts` (5), `tests/alertSinkFailureIsolated.test.ts` (3), `tests/heartbeat.test.ts` (3), `tests/alertTestEndpoint.test.ts` (3).
 
 ### Checkpoint G (após 6.6)
 - [ ] Alertas cobrem todos os modos de falha listados · falha de alerta não derruba o tick.
