@@ -4,7 +4,7 @@ Este documento descreve as diretrizes de segurança, arquitetura de rede, polít
 
 > **Referência normativa:** os critérios formais (S1–S7, D1–D7 e seus status medidos) estão nas specs em
 > [`/specs`](../specs): `phase-1-security-and-data-integrity.md`, `phase-1-1-hotfix.md`,
-> `phase-2.md` e `phase-2-5 and phase-3.md`.
+> `phase-2.md` e `phase-2-5-and-phase-3.md`.
 
 ---
 

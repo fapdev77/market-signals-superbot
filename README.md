@@ -63,7 +63,8 @@ O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenv
 │  Vite SPA · Tailwind CSS v4 · Lucide Icons · Recharts & D3 · Responsive Grid & Tabs   │
 │  Cockpit · Signals Matrix · Charts · Risk Dashboard · Trapped Traders · Auto-Tuner    │
 └───────────────────────────────────────────▲────────────────────────────────────────────┘
-                                            │ HTTP REST / Server-Sent Sync
+                                            │ HTTP REST + SSE autenticado (/api/stream/tickers,
+                                            │  Authorization: Bearer no header — 6.8.1)
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │                                    BACKEND (Node.js)                                  │
 │  Express API Server (`server.ts`) · Multi-Strategy Evaluation Pool                    │
@@ -77,6 +78,10 @@ O **Market Signals SuperBot** é uma plataforma quantitativa *full-stack* desenv
 │ Persistência Local          │ │ (só /fapi · sem fallback │ │ Anthropic / Ollama local   │
 │ Sinais, Configs, Logs, Pesos│ │  spot) CVD, OI, Funding  │ │ JSON Schema + Risk Mgr     │
 └─────────────────────────────┘ └──────────────────────────┘ └────────────────────────────┘
+
+> **Fluxo de preços para a UI (6.8.1):** apenas o **servidor** conversa com a Binance. O navegador
+> recebe os tickers pelo stream autenticado do próprio servidor (`/api/stream/tickers`, SSE), de modo
+> que os gates de qualidade de dados, TradFi e kill-switch valem também para o que a UI mostra.
 ```
 
 ---
@@ -155,7 +160,10 @@ O arquivo `.env` suporta as seguintes configurações de operação e proteção
 | `GEMINI_API_KEY` | `string` | *vazio* | Chave de API do Google Gemini para auditoria e diagnósticos de IA. |
 | `PORT` | `number` | `3000` | Porta TCP em que o servidor Express escuta. |
 | `HOST` | `string` | `0.0.0.0` | Endereço de interface de rede para escuta (definir `127.0.0.1` para ambientes estritamente locais). |
-| `NODE_ENV` | `string` | `development` | Ambiente de execução (`development`, `test` ou `production`). |
+| `NODE_ENV` | `string` | `development` | Ambiente de execução (`development`, `test` ou `production`). Em `production`, ativa o cabeçalho `Content-Security-Policy-Report-Only` (6.8.2) e o bind restrito (ver `ALLOW_PUBLIC_BIND`). |
+| `CSP_REPORT_URI` | `string` | *vazio* | Endpoint que coleta as violações de CSP report-only (produção). Endurecer o CSP só após 1 semana sem violações inesperadas. |
+| `STREAM_TICKERS_INTERVAL_MS` | `number` | `3000` | Intervalo entre snapshots do stream de preços do servidor (`/api/stream/tickers`). |
+| `ENTRY_CONFIRMATION_ENABLED` | `boolean` | `false` | Flag D8 (6.7): sinais nascem `PENDING_ENTRY` e só ativam com toque da zona + confirmação R1–R5. Não ativar sem o backtest comparativo. |
 
 ### 🔒 Particularidades de Ambiente & Exceções
 
@@ -248,6 +256,7 @@ O backend disponibiliza uma API REST documentada:
 | :--- | :--- | :--- |
 | `GET` | `/api/signals` | Retorna a lista de sinais de trading recentes e ativos com dados de TTL. |
 | `GET` | `/api/tickers` | Retorna o snapshot quantitativo de todos os tickers monitorados. |
+| `GET` | `/api/stream/tickers` | **Stream de preços pelo servidor (SSE, 6.8.1)**: eventos `event: tickers` com o snapshot corrente. Requer `Authorization: Bearer` no **header** (o token nunca vai em URL). A UI consome via `fetch` + `ReadableStream` — o navegador não conecta direto à Binance. |
 | `GET` | `/api/state` | Retorna o estado operacional global do bot (status, monitoramento, pesos). |
 | `GET` | `/api/settings/weights` | Retorna a calibração atual de pesos e configurações de TTL. |
 | `POST` | `/api/settings/weights` | Salva novos pesos de confluência e configurações de TTL. |

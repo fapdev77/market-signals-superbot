@@ -1,5 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { TickerData } from '../types';
+import { getStoredAuthToken } from '../services/apiClient';
+
+/**
+ * 6.8.1/CA-8.1 — O navegador NÃO conecta mais direto à Binance (wss://fstream).
+ * O hook consome o stream autenticado do servidor (`/api/stream/tickers`, SSE)
+ * via fetch + ReadableStream, enviando `Authorization: Bearer` no HEADER —
+ * o token nunca vai em URL. Assim os gates do servidor (qualidade de dados,
+ * TradFi, kill-switch) valem também para o que a UI mostra.
+ */
 
 export interface WSClientStatus {
   connected: boolean;
@@ -8,20 +17,22 @@ export interface WSClientStatus {
   messagesReceived: number;
   lastTickTime: number | null;
   lastError: string | null;
-  mode: 'BROWSER_DIRECT' | 'SERVER_FALLBACK';
+  mode: 'SERVER_STREAM';
 }
 
 export interface WSLogEntry {
   timestamp: string;
   level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS';
-  source: 'BROWSER_WS' | 'SERVER_WS';
+  source: 'SERVER_STREAM';
   message: string;
 }
 
-// Phase 5 / M0: Migrated to Binance Futures routed /market endpoint
-const WS_URLS = [
-  'wss://fstream.binance.com/market/stream?streams=!ticker@arr'
-];
+/** Endpoint SSE do próprio servidor (mesma origem; auth por header). */
+export const SERVER_STREAM_URL = '/api/stream/tickers';
+
+/** Backoff de reconexão: 2s, 4s, 8s, … teto de 30s. */
+const RECONNECT_BASE_MS = 2000;
+const RECONNECT_MAX_MS = 30000;
 
 export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdate?: (updated: TickerData[]) => void) {
   const tickersRef = useRef(initialTickers);
@@ -38,163 +49,164 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
   const [status, setStatus] = useState<WSClientStatus>({
     connected: false,
     connecting: true,
-    url: WS_URLS[0],
+    url: SERVER_STREAM_URL,
     messagesReceived: 0,
     lastTickTime: null,
     lastError: null,
-    mode: 'BROWSER_DIRECT'
+    mode: 'SERVER_STREAM'
   });
 
   const [logs, setLogs] = useState<WSLogEntry[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const attemptRef = useRef(0);
+  const disposedRef = useRef(false);
 
   const addLog = useCallback((level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS', message: string) => {
     const entry: WSLogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      source: 'BROWSER_WS',
+      source: 'SERVER_STREAM',
       message
     };
     setLogs(prev => [entry, ...prev.slice(0, 49)]);
   }, []);
 
-  const connectWebSocket = useCallback(() => {
-    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+  const applyTickers = useCallback((incoming: TickerData[]) => {
+    if (!onTickersUpdateRef.current) return;
+    const bySymbol = new Map(incoming.map(t => [t.symbol, t]));
+    onTickersUpdateRef.current(
+      tickersRef.current.map(t => {
+        const item = bySymbol.get(t.symbol);
+        if (item && typeof item.price === 'number' && item.price > 0) {
+          return { ...t, ...item };
+        }
+        return t;
+      })
+    );
+  }, []);
+
+  const connectStream = useCallback(() => {
+    if (abortRef.current) return; // já conectando/conectado
+
+    const token = getStoredAuthToken();
+    if (!token) {
+      setStatus(prev => ({ ...prev, connected: false, connecting: false, lastError: 'Sem token de autenticação.' }));
+      addLog('WARN', 'Stream do servidor aguardando token de acesso (Authorization: Bearer).');
+      // Sem token ainda: tenta de novo mais tarde (o usuário pode logar a qualquer momento).
+      reconnectTimeoutRef.current = setTimeout(connectStream, RECONNECT_MAX_MS);
       return;
     }
 
-    const currentUrl = WS_URLS[0];
-    setStatus(prev => ({
-      ...prev,
-      connecting: true,
-      url: currentUrl,
-      lastError: null
-    }));
+    setStatus(prev => ({ ...prev, connecting: true, lastError: null }));
+    addLog('INFO', `Abrindo stream de preços do servidor: ${SERVER_STREAM_URL}`);
 
-    addLog('INFO', `Abrindo conexão WebSocket Binance Futures (/market): ${currentUrl}`);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    try {
-      const ws = new WebSocket(currentUrl);
-      wsRef.current = ws;
+    (async () => {
+      try {
+        const response = await fetch(SERVER_STREAM_URL, {
+          headers: { 'Authorization': `Bearer ${token}` },
+          signal: controller.signal,
+          // Same-origin: cookies/vite dev funcionam; o token segue no header.
+          credentials: 'same-origin'
+        });
 
-      ws.onopen = () => {
-        setStatus(prev => ({
-          ...prev,
-          connected: true,
-          connecting: false,
-          lastError: null
-        }));
-        addLog('SUCCESS', `Conexão WebSocket navegador estabelecida com sucesso com Binance Futures (/market)`);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const raw = JSON.parse(event.data);
-          const data = raw.data ? raw.data : raw;
-          if (Array.isArray(data)) {
-            setStatus(prev => ({
-              ...prev,
-              messagesReceived: prev.messagesReceived + 1,
-              lastTickTime: Date.now()
-            }));
-
-            // Map incoming websocket ticker array to fast symbol lookup
-            const wsMap = new Map<string, any>();
-            for (const item of data) {
-              if (item && item.s) {
-                wsMap.set(item.s, item);
-              }
-            }
-
-            if (wsMap.size > 0) {
-              // Update ticker values in real-time
-              if (onTickersUpdateRef.current) onTickersUpdateRef.current(
-                tickersRef.current.map(t => {
-                  const wsItem = wsMap.get(t.symbol);
-                  if (wsItem) {
-                    const newPrice = parseFloat(wsItem.c || wsItem.lastPrice || t.price);
-                    const newChange = parseFloat(wsItem.P || wsItem.priceChangePercent || t.priceChangePercent24h);
-                    const newHigh = parseFloat(wsItem.h || wsItem.highPrice || t.high24h);
-                    const newLow = parseFloat(wsItem.l || wsItem.lowPrice || t.low24h);
-                    const newVol = parseFloat(wsItem.v || wsItem.volume || t.volume24h);
-
-                    return {
-                      ...t,
-                      price: newPrice > 0 ? newPrice : t.price,
-                      priceChangePercent24h: !isNaN(newChange) ? newChange : t.priceChangePercent24h,
-                      high24h: newHigh > 0 ? newHigh : t.high24h,
-                      low24h: newLow > 0 ? newLow : t.low24h,
-                      volume24h: newVol > 0 ? newVol : t.volume24h
-                    };
-                  }
-                  return t;
-                })
-              );
-            }
+        if (response.status === 401) {
+          setStatus(prev => ({ ...prev, connected: false, connecting: false, lastError: 'Não autorizado (401).' }));
+          addLog('ERROR', 'Stream rejeitado: token ausente ou inválido (401).');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('superbot:unauthorized'));
           }
-        } catch (err: any) {
-          addLog('WARN', `Erro ao processar pacote JSON do WebSocket: ${err.message}`);
+          return; // sem retry automático: exige ação do usuário (inserir token)
         }
-      };
 
-      ws.onerror = (_err: any) => {
-        const errorMsg = 'Erro de rede ou bloqueio CORS/WSS no WebSocket';
-        setStatus(prev => ({
-          ...prev,
-          lastError: errorMsg
-        }));
-        addLog('ERROR', `Erro na conexão WebSocket navegador: ${errorMsg}`);
-      };
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
 
-      ws.onclose = (event) => {
-        setStatus(prev => ({
-          ...prev,
-          connected: false,
-          connecting: false
-        }));
+        setStatus(prev => ({ ...prev, connected: true, connecting: false, lastError: null }));
+        attemptRef.current = 0;
+        addLog('SUCCESS', 'Stream de preços do servidor estabelecido.');
 
-        addLog('WARN', `Conexão WebSocket encerrada (Código: ${event.code}). Reconectando em 4s...`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connectWebSocket();
-        }, 4000);
-      };
+        // Parser SSE: blocos separados por linha vazia; linhas "event:" e "data:".
+        const handleBlock = (block: string) => {
+          let eventName = '';
+          let data = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += line.slice(5).trim();
+          }
+          if (eventName !== 'tickers' || !data) return;
+          try {
+            const parsed = JSON.parse(data);
+            const list: TickerData[] = Array.isArray(parsed) ? parsed : parsed.tickers;
+            if (Array.isArray(list)) {
+              setStatus(prev => ({
+                ...prev,
+                messagesReceived: prev.messagesReceived + 1,
+                lastTickTime: Date.now()
+              }));
+              applyTickers(list);
+            }
+          } catch (err: any) {
+            addLog('WARN', `Erro ao processar pacote do stream: ${err?.message || err}`);
+          }
+        };
 
-    } catch (err: any) {
-      setStatus(prev => ({
-        ...prev,
-        connected: false,
-        connecting: false,
-        lastError: err.message
-      }));
-      addLog('ERROR', `Exceção ao instanciar WebSocket no navegador: ${err.message}`);
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sep;
+          while ((sep = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            if (block.trim()) handleBlock(block);
+          }
+        }
 
-      reconnectTimeoutRef.current = setTimeout(() => {
-        connectWebSocket();
-      }, 5000);
-    }
-  }, [addLog]);
+        // Servidor encerrou o stream — reconectar com backoff.
+        addLog('WARN', 'Stream encerrado pelo servidor. Reconectando...');
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return; // desmontagem deliberada
+        const errorMsg = err?.message || 'Falha de rede no stream do servidor';
+        setStatus(prev => ({ ...prev, connected: false, connecting: false, lastError: errorMsg }));
+        addLog('ERROR', `Erro no stream do servidor: ${errorMsg}`);
+      } finally {
+        abortRef.current = null;
+        if (!disposedRef.current) {
+          const delay = Math.min(RECONNECT_BASE_MS * 2 ** attemptRef.current, RECONNECT_MAX_MS);
+          attemptRef.current = Math.min(attemptRef.current + 1, 5);
+          reconnectTimeoutRef.current = setTimeout(connectStream, delay);
+        }
+      }
+    })();
+  }, [addLog, applyTickers]);
 
   useEffect(() => {
-    connectWebSocket();
+    disposedRef.current = false;
+    connectStream();
 
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      disposedRef.current = true;
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      abortRef.current?.abort();
+      abortRef.current = null;
     };
-  }, [connectWebSocket]);
+  }, [connectStream]);
 
   const reconnect = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-    connectWebSocket();
-  }, [connectWebSocket]);
+    abortRef.current?.abort();
+    abortRef.current = null;
+    attemptRef.current = 0;
+    connectStream();
+  }, [connectStream]);
 
   return {
     status,

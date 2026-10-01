@@ -213,14 +213,15 @@
 
 ---
 
-## Fase 6.8 — Navegador, docs e qualidade (G-16, G-17, G-18) — paralela a partir de 6.2
+## Fase 6.8 — Navegador, docs e qualidade (G-16, G-17, G-18) — paralela a partir de 6.2 ✅ (2026-10-01)
 
-- [ ] **T6.8.1 — Stream de preços pelo servidor + auth** (L)
-  - *CA:* CA-8.1 — sem `wss://fstream` em `src/`; stream responde 401 sem token. *Teste:* `tests/priceStreamAuth.test.ts`.
-- [ ] **T6.8.2 — CSP report-only** (S) — CA-8.2. *Teste:* `tests/cspReportOnly.test.ts`.
-- [ ] **T6.8.3 — Reescrever specs 1.1/2 e renomear `phase-2-5 and phase-3.md`** (M).
-- [ ] **T6.8.4 — README/OPERATIONS alinhados** (M).
-- [ ] **T6.8.5 — Baseline de qualidade + `.env.example`** (M) — CA-8.4/8.5. *Teste:* `tests/envDocumented.test.ts`.
+- [x] **T6.8.1 — Stream de preços pelo servidor + auth** (L)
+  - *CA:* CA-8.1 — sem `wss://fstream` em `src/`; stream responde 401 sem token. *Teste:* `tests/priceStreamAuth.test.ts` (5).
+  - *Nota:* `GET /api/stream/tickers` (SSE) no `marketRoutes` herda o `requireAuth` global; hook reescrito (`fetch` + `ReadableStream`, Bearer só no header, backoff 2s→30s, 401 dispara `superbot:unauthorized`); `STREAM_TICKERS_INTERVAL_MS`/`_MAX_SNAPSHOTS` (cap só p/ testes); o caminho Binance→server (R-6, `binanceWebsocket`) é outro item e segue pendente.
+- [x] **T6.8.2 — CSP report-only** (S) — CA-8.2. *Teste:* `tests/cspReportOnly.test.ts` (4). Só em produção; `CSP_REPORT_URI` opcional; endurecer após 1 semana sem violações.
+- [x] **T6.8.3 — Reescrever specs 1.1/2 e renomear `phase-2-5 and phase-3.md`** (M). Specs 1.1/2 já em SDD (2026-09-29) — headers de verificação atualizados; renomeado para `phase-2-5-and-phase-3.md` (todas as referências atualizadas); `phase-4` com nota de estado 2026-10-01.
+- [x] **T6.8.4 — README/OPERATIONS alinhados** (M). README: SSE nos endpoints + fluxo de preços pelo servidor + novas envs; OPERATIONS: bind no contêiner (HOST=0.0.0.0 interno, porta só em 127.0.0.1) + rotação de token passo a passo.
+- [x] **T6.8.5 — Baseline de qualidade + `.env.example`** (M) — CA-8.4/8.5. *Teste:* `tests/envDocumented.test.ts` (4). `scripts/quality-baseline.ts` + `quality-baseline.json` (any=261, catchVazios=13); etapa "no regression" no CI; lockfile sincronizado com `cors`/`@types/cors` (quebra pré-existente do 6f90795, pega pelo `repoHygiene.test`).
 
 ---
 
@@ -283,6 +284,7 @@
 - **TTL de pendentes:** `expireStaleSignals` cobre `PENDING_ENTRY` com o mesmo `expires_at`; o EXPIRED de pendente nasce com `metadata.reason='ENTRY_NOT_FILLED'` distinguindo "nunca preencheu" de "entrou e expirou".
 - **Auto-tune (6.7.5/G-15):** fronteiras de treino/validação/holdout derivam do MESMO split 60/20/20 (`computeAutoTuneBoundaries` sobre a série real de velas 1m; fallback temporal em janelas mínimas). Candidatos são truncados no fim do treino (`isOnlyUntil`) e o holdout (últimos 20%) fica depois da validação — diferente do corte walk-forward antigo, cujos "OOS" eram a região onde candidatos foram escolhidos. Escolha entre candidatos por fitness do treino (`calculateFitnessExpectancy`, min 10 trades).
 - **Gap de UI conhecido (registrado):** com a flag ON, sinais `PENDING_ENTRY` não entram no contador "Ativos" da UI (filtrado por `status==='ACTIVE'` em `SignalsMatrix`/`RiskExposureDashboard`). Visível apenas em "Todos". Revertido/atendido no 6.8 (T6.8.x) — flag default OFF contém o impacto.
+- **Notas 6.8:** (1) `ExecutedTrade` agora aceita `PENDING_ENTRY` como estado aberto em `calculateTradingInsights` (quebra de typecheck pré-existente ao 6f90795). (2) Lockfile: entradas `cors`/`@types/cors` adicionadas manualmente (integridade do registry) — `npm install --package-lock-only` re-resolvia 170 versões e foi descartado; os 43 "missing" restantes no `npm ci --dry-run` são optional-deps por plataforma (tailwind/rollup/lightningcss), pré-existentes no HEAD. (3) O hook legado BROWSER_DIRECT (`wss://fstream` no navegador) foi removido — a UI só fala com o próprio servidor agora; o servidor continua consumindo Binance via `binanceWebsocket`/REST como antes (R-6 intocado).
 - **Teste legado de spike:** `tests/signalEngine.test.ts` isola o stopCap via `MAX_STOP_PCT_INTRADAY` (env, restaurado no fim) — o fixture usa klines ~90k com ticker a 180 e o cap calibrado suprimiria o sinal antes da validação de spike.
 
 ### Artefatos novos/modificados (6.7)

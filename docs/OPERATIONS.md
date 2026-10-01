@@ -24,6 +24,13 @@ docker compose ps
 curl -i http://127.0.0.1:3000/api/health
 ```
 
+**Como o bind funciona no contêiner (6.8.4):** dentro do contêiner o processo escuta em
+`HOST=0.0.0.0` (obrigatório — `127.0.0.1` dentro do contêiner só aceitaria tráfego interno), com
+`ALLOW_PUBLIC_BIND=true` para atravessar o guard de produção. A exposição ao host é controlada pelo
+mapeamento de portas do `docker-compose.yml`, publicado **somente em `127.0.0.1:3000:3000`** —
+nunca `3000:3000` puro, que publicaria o serviço em todas as interfaces do host. O acesso remoto
+continua sendo por VPN/proxy reverso com TLS (seção 1.1).
+
 ### 1.3 Systemd Unit
 Exemplo de configuração para implantação nativa em Linux (`/etc/systemd/system/superbot.service`):
 ```ini
@@ -68,6 +75,7 @@ Ao receber `SIGTERM` ou `SIGINT`, o processo grava qualquer escrita pendente coa
 - O token **nunca** é exposto em logs em produção (apenas o caminho do arquivo é informado).
 - **Rotação de Token:**
   Para rotacionar o token em produção, defina a variável `API_AUTH_TOKEN` no `.env` ou delete `data/session-token` e reinicie o processo para gerar um novo token.
+  Procedimento com zero downtime parcial: (1) gere o novo token; (2) atualize o `.env`/segredo do orquestrador; (3) reinicie o serviço (`docker compose up -d` recria o contêiner; `systemctl restart superbot`); (4) invalide o token antigo distribuindo o novo aos clientes da API e da UI (a UI pede o token novamente ao receber 401 no stream `/api/stream/tickers`). Tokens anteriores deixam de valer imediatamente no restart — coordene a troca com os consumidores.
 
 ---
 

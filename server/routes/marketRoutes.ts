@@ -52,6 +52,75 @@ export function createMarketRouter(
     res.json(list);
   });
 
+  // 6.8.1/CA-8.1 — Stream de preços pelo SERVIDOR (SSE, text/event-stream).
+  // O navegador não conecta mais direto à Binance (wss://fstream): o hook da UI
+  // consome este stream com fetch + ReadableStream enviando Authorization: Bearer
+  // no HEADER (o token nunca vai em URL). Assim os gates do servidor (DataGate,
+  // TradFi, kill-switch) valem também para o que a UI mostra.
+  // A autenticação é herdada do middleware global `requireAuth` montado em /api.
+  const streamIntervalMs = (() => {
+    const raw = Number(process.env.STREAM_TICKERS_INTERVAL_MS);
+    return Number.isFinite(raw) && raw >= 500 ? raw : 3000;
+  })();
+  router.get('/stream/tickers', (req: Request, res: Response) => {
+    const tickerCache = getTickerCache();
+    const sendSnapshot = () => {
+      const list = Object.values(tickerCache).sort((a, b) => a.symbol.localeCompare(b.symbol));
+      res.write(`event: tickers\ndata: ${JSON.stringify(list)}\n\n`);
+    };
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      // Nginx/proxies: desliga buffering para os eventos chegarem em tempo real.
+      'X-Accel-Buffering': 'no'
+    });
+    res.flushHeaders?.();
+
+    // Snapshot inicial imediato (a UI renderiza antes do próximo tick do servidor).
+    sendSnapshot();
+
+    // 6.8.1: cap opcional de snapshots (STREAM_TICKERS_MAX_SNAPSHOTS) — usado pelos
+    // testes HTTP para a resposta SSE terminar de forma determinística; em produção
+    // a variável não é definida e o stream corre indefinidamente.
+    const maxSnapshotsRaw = Number(process.env.STREAM_TICKERS_MAX_SNAPSHOTS);
+    const maxSnapshots = Number.isFinite(maxSnapshotsRaw) && maxSnapshotsRaw > 0 ? maxSnapshotsRaw : Infinity;
+    let snapshotsSent = 1;
+
+    const cleanup = () => {
+      clearInterval(pushTimer);
+      clearInterval(pingTimer);
+    };
+
+    // Keepalive para proxies que cortam conexões ociosas.
+    const pingTimer = setInterval(() => {
+      if (res.writableEnded) return;
+      res.write(': ping\n\n');
+    }, 15000);
+
+    // Reenvia o snapshot corrente no intervalo configurado (payload pequeno;
+    // dedupe do lado do cliente é desnecessário e um tick perdido se corrige sozinho).
+    const pushTimer = setInterval(() => {
+      if (res.writableEnded) {
+        cleanup();
+        return;
+      }
+      if (snapshotsSent >= maxSnapshots) {
+        cleanup();
+        res.end();
+        return;
+      }
+      snapshotsSent++;
+      sendSnapshot();
+    }, streamIntervalMs);
+
+    req.on('close', () => {
+      cleanup();
+      res.end();
+    });
+  });
+
   // Specific Ticker Details & Kline Chart
   router.get('/tickers/:symbol', validateParams(symbolParamSchema), async (req: Request, res: Response) => {
     const symbol = req.params.symbol.toUpperCase();

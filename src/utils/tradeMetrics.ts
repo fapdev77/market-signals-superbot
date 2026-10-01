@@ -16,7 +16,9 @@ export interface ExecutedTrade {
   riskRewardRatio: number;
   confluenceScore: number;
   confluenceFactors: string[];
-  status: 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED' | 'ACTIVE';
+  // 6.7: PENDING_ENTRY (flag ENTRY_CONFIRMATION_ENABLED) é estado aberto — sinal ainda
+  // não preenchido, sem trade executado.
+  status: 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED' | 'ACTIVE' | 'PENDING_ENTRY';
   isWin: boolean;
   isBreakeven: boolean;
   pnlPct: number;
@@ -313,7 +315,8 @@ export function calculateCumulativePnLSeries(trades: ExecutedTrade[]): Cumulativ
 
 export function calculateTradingInsights(trades: ExecutedTrade[]): TradingInsightsSummary {
   const totalTrades = trades.length;
-  const closedTradesList = trades.filter(t => t.status !== 'ACTIVE');
+  // Estados abertos: ACTIVE (em curso) e PENDING_ENTRY (aguardando preenchimento).
+  const closedTradesList = trades.filter(t => t.status !== 'ACTIVE' && t.status !== 'PENDING_ENTRY');
   const closedTrades = closedTradesList.length;
   const activeTrades = totalTrades - closedTrades;
 

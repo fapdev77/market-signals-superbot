@@ -22,7 +22,7 @@
 
 > **Especificações por fase (SDD, com critérios de aceitação verificados):** [`/specs`](../specs) —
 > `phase-1-security-and-data-integrity.md`, `phase-1-1-hotfix.md`, `phase-2.md`,
-> `phase-2-5 and phase-3.md` e o plano de pendências `phase-4-remaining-gaps.md`.
+> `phase-2-5-and-phase-3.md` e o plano de pendências `phase-4-remaining-gaps.md`.
 
 ---
 

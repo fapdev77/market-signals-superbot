@@ -4,12 +4,12 @@
 > após a fase 1.1") sem critérios de aceitação. Cada requisito abaixo tem verificação executável e status
 > medido contra o código atual.
 >
-> **Última verificação:** 2026-09-29 · `npx tsc --noEmit` 0 erros · `npx vitest run` 154/154 ·
+> **Última verificação:** 2026-10-01 (T6.8.3) · `npx tsc --noEmit` 0 erros · `npx vitest run` verde ·
 > `npm run build` OK.
 >
 > **Estado geral:** 2.1 e 2.3 substancialmente entregues; **2.2 foi concluída em conjunto com a Fase 3.1**;
 > 2.4 funcional. Os furos de integridade que a revisão anterior apontou foram fechados pela 2.5 (ver
-> `phase-2-5 and phase-3.md`). O que continua aberto está marcado ⚠️/**PENDENTE** e rastreado em
+> `phase-2-5-and-phase-3.md`). O que continua aberto está marcado ⚠️/**PENDENTE** e rastreado em
 > `phase-4-remaining-gaps.md`.
 
 ---

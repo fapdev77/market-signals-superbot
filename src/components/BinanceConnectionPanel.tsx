@@ -677,7 +677,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
               <div className="grid grid-cols-2 gap-2 text-[10px]">
                 <div className="col-span-2">
                   <span className="text-neutral-500 block">Stream URL:</span>
-                  <span className="text-neutral-300 font-bold truncate block">{clientWsStatus?.url || 'wss://fstream.binance.com/market/stream?streams=!ticker@arr'}</span>
+                  <span className="text-neutral-300 font-bold truncate block">{clientWsStatus?.url || '/api/stream/tickers (SSE do servidor)'}</span>
                 </div>
                 <div>
                   <span className="text-neutral-500 block">Pacotes Recebidos:</span>
@@ -719,7 +719,7 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
               <div className="grid grid-cols-2 gap-2 text-[10px]">
                 <div className="col-span-2">
                   <span className="text-neutral-500 block">Stream Backend URL:</span>
-                  <span className="text-neutral-300 font-bold truncate block">{serverStatus?.url || 'wss://fstream.binance.com'}</span>
+                  <span className="text-neutral-300 font-bold truncate block">{serverStatus?.url || 'Servidor (proxy dos feeds Binance)'}</span>
                 </div>
                 <div>
                   <span className="text-neutral-500 block">Mensagens Servidor:</span>

@@ -25,8 +25,7 @@ remoção do seed falso, proveniência de dados por feed, bloqueio de sinais/ges
 velho, TradFi simulado, lockfile/build e vulnerabilidades do `npm audit`.
 
 **Fora (Fases 2+):** reescrita do backtest, correção da lógica de score/OI/funding, guard de exceções,
-unificação sql.js/libsql, CI/Docker, camada de execução e risco. Ver `phase-2.md`, `phase-2-5 and
-phase-3.md` e `phase-4-remaining-gaps.md`.
+unificação sql.js/libsql, CI/Docker, camada de execução e risco. Ver `phase-2.md`, `phase-2-5-and-phase-3.md` e `phase-4-remaining-gaps.md`.
 
 ---
 

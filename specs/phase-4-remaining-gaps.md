@@ -16,7 +16,7 @@
 | 1 — Segurança e Integridade | ✅ implementada (com 4 ressalvas rastreadas) | ver `phase-1-security-and-data-integrity.md` |
 | 1.1 — Hotfix | ✅ implementada | ver `phase-1-1-hotfix.md` |
 | 2 — Ingestão/Motor/Backtest/TradFi | ✅ substancialmente implementada | 2.1.4, 2.2.9, 2.3.7 e 2.4.6 pendentes (2.1.3, 2.2.8 e 2.3.6 fechados por R-5/R-7/R-9) |
-| 2.5 — Hotfix de integridade | ✅ completa | ver `phase-2-5 and phase-3.md` |
+| 2.5 — Hotfix de integridade | ✅ completa | ver `phase-2-5-and-phase-3.md` |
 | 3 — Institucional | ⚠️ parcial | 3.1 e 3.4 feitas; 3.2, 3.3 e 3.5 pendentes (abaixo) |
 
 **Pendências confirmadas por inspeção direta do código** (não por inferência):
@@ -80,6 +80,13 @@
 | R-17 | `KillSwitchPanel` (halt + postura de risco) no dashboard e na aba de risco | `tsc` + build (UI; endpoints já cobertos) |
 
 Ainda pendentes: R-6, R-8, R-12, R-18.
+
+> **Estado em 2026-10-01 (Fase 6.8).** Desde a última revisão: as Fases 5 e 6.0–6.7 foram entregues
+> (ledger append-only, funding real, caps, confirmação de entrada atrás da flag D8 — ver
+> `phase-6-plan.md`). O pipeline 15m→REST continua a fonte do tick (R-6 segue pendente). Novos itens
+> da 6.8: CSP report-only (CA-8.2) fechou a antiga ressalva de CSP; stream de preços agora passa pelo
+> servidor autenticado (CA-8.1); baseline de qualidade `any`/`catch` vazios com gate de CI (CA-8.4)
+> e `.env.example` auditado por teste (CA-8.5) — `scripts/quality-baseline.json`, `tests/envDocumented.test.ts`.
 
 > **Nota de verificação.** A investigação das falhas da suíte expôs duas fragilidades reais além dos
 > itens acima: (1) o banco unificado era **compartilhado** entre workers de teste e o app — como o

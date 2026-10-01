@@ -41,6 +41,11 @@ jobs:
         env:
           NODE_ENV: test
 
+      # 6.8.5/CA-8.4: a contagem de `any` e de `catch` vazios não pode aumentar
+      # em relação à baseline commitada (scripts/quality-baseline.json).
+      - name: Quality baseline (no regression)
+        run: npx tsx scripts/quality-baseline.ts
+
       - name: Build
         run: npm run build
 

@@ -60,6 +60,35 @@ export function createApp(ctx: AppContext): express.Express {
     crossOriginResourcePolicy: { policy: 'cross-origin' }
   }));
 
+  // 6.8.2/CA-8.2 — CSP em modo REPORT-ONLY no build de produção.
+  // Report-only NÃO bloqueia nada: apenas reporta violações, permitindo endurecer
+  // depois de 1 semana sem violações inesperadas. Fora de produção não emite o
+  // cabeçalho (o dev server do Vite injeta o próprio CSP para HMR).
+  if (process.env.NODE_ENV === 'production') {
+    const cspDirectives = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'", // Vite injeta o script anti-FOUC inline no index.html
+      "style-src 'self' 'unsafe-inline'",  // Tailwind inline + temas
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",                // REST + SSE (/api/stream/tickers) são same-origin
+      "frame-ancestors 'self'",            // preserva o embedding de preview (helmet: frameguard off não cobre CSP)
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'"
+    ];
+    // Coletor de violações opcional (report-uri legado: amplamente suportado e
+    // suficiente para a janela de observação de 1 semana do 6.8.2).
+    const reportUri = process.env.CSP_REPORT_URI;
+    if (reportUri && reportUri.trim()) {
+      cspDirectives.push(`report-uri ${reportUri.trim()}`);
+    }
+    app.use((req, res, next) => {
+      res.setHeader('Content-Security-Policy-Report-Only', cspDirectives.join('; '));
+      next();
+    });
+  }
+
   // S2: Body payload limit (100 kb max)
   app.use(express.json({ limit: '100kb' }));
 

@@ -4,7 +4,7 @@
 > critérios de aceitação próprios — o que tornava "pronto" subjetivo. Cada requisito abaixo tem uma
 > verificação executável e um status medido contra o código em `main`.
 >
-> **Última verificação:** 2026-09-29 · `npm ci` OK · `tsc --noEmit` 0 erros · `vitest run` 154/154 ·
+> **Última verificação:** 2026-10-01 (T6.8.3) · `npm ci` OK · `tsc --noEmit` 0 erros · `vitest run` verde ·
 > `vite build` + `esbuild` OK · `npm audit --omit=dev` 0 vulnerabilidades.
 
 ## 1. Objetivo
