@@ -22,9 +22,19 @@ describe('Security Suite - Contract & Protection Tests', () => {
     });
 
     it('should provide effective auth token', () => {
-      const token = getEffectiveAuthToken();
-      expect(typeof token).toBe('string');
-      expect(token.length).toBeGreaterThan(5);
+      const orig = process.env.API_AUTH_TOKEN;
+      try {
+        delete process.env.API_AUTH_TOKEN;
+        const token = getEffectiveAuthToken();
+        expect(typeof token).toBe('string');
+        expect(token.length).toBeGreaterThan(5);
+      } finally {
+        if (orig !== undefined) {
+          process.env.API_AUTH_TOKEN = orig;
+        } else {
+          delete process.env.API_AUTH_TOKEN;
+        }
+      }
     });
   });
 

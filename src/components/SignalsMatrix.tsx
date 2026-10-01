@@ -48,7 +48,7 @@ export type SortOption =
 
 export type AssetClassFilter = 'ALL' | 'crypto_futures' | 'crypto_spot' | 'tradfi';
 export type CategoryFilter = 'ALL' | 'SCALP' | 'DAY_TRADE' | 'INTRADAY' | 'SWING' | 'POSITION';
-export type LifecycleFilter = 'ALL' | 'ACTIVE' | 'NEAR_EXPIRY' | 'BREAKEVEN' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
+export type LifecycleFilter = 'ALL' | 'ACTIVE' | 'PENDING_ENTRY' | 'NEAR_EXPIRY' | 'BREAKEVEN' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED';
 
 export type TriggerFilter = 
   | 'ALL'
@@ -199,6 +199,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     const counts = {
       ALL: (signals || []).length,
       ACTIVE: 0,
+      PENDING_ENTRY: 0,
       NEAR_EXPIRY: 0,
       BREAKEVEN: 0,
       TARGET_REACHED: 0,
@@ -207,6 +208,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     };
     (signals || []).forEach(s => {
       if (s.status === 'ACTIVE') counts.ACTIVE++;
+      if (s.status === 'PENDING_ENTRY') counts.PENDING_ENTRY++;
       if (s.status === 'TARGET_REACHED') counts.TARGET_REACHED++;
       if (s.status === 'STOPPED_OUT') counts.STOPPED_OUT++;
       if (s.status === 'EXPIRED') counts.EXPIRED++;
@@ -231,6 +233,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
     return {
       total: signals.length,
       active: active.length,
+      pendingEntryCount: lifecycleCounts.PENDING_ENTRY,
       avgConfluence: avgConf,
       avgWinRate,
       breakevenCount: lifecycleCounts.BREAKEVEN,
@@ -277,6 +280,7 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
       // Lifecycle / Status Filter
       if (lifecycleFilter !== 'ALL') {
         if (lifecycleFilter === 'ACTIVE' && s.status !== 'ACTIVE') return false;
+        if (lifecycleFilter === 'PENDING_ENTRY' && s.status !== 'PENDING_ENTRY') return false;
         if (lifecycleFilter === 'TARGET_REACHED' && s.status !== 'TARGET_REACHED') return false;
         if (lifecycleFilter === 'STOPPED_OUT' && s.status !== 'STOPPED_OUT') return false;
         if (lifecycleFilter === 'EXPIRED' && s.status !== 'EXPIRED') return false;
@@ -638,6 +642,16 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
             🟢 Ativos ({lifecycleCounts.ACTIVE})
           </button>
           <button
+            onClick={() => setLifecycleFilter('PENDING_ENTRY')}
+            className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
+              lifecycleFilter === 'PENDING_ENTRY'
+                ? 'bg-amber-400 text-black font-extrabold shadow'
+                : 'bg-[#050505] text-amber-300 hover:text-amber-200 border border-amber-400/20'
+            }`}
+          >
+            🟡 Entrada Pendente ({lifecycleCounts.PENDING_ENTRY})
+          </button>
+          <button
             onClick={() => setLifecycleFilter('NEAR_EXPIRY')}
             className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer flex items-center gap-1 ${
               lifecycleFilter === 'NEAR_EXPIRY'
@@ -699,6 +713,9 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
           </span>
           <div className="flex items-baseline gap-1 mt-0.5">
             <span className="text-sm font-black text-white">{hudMetrics.active}</span>
+            {hudMetrics.pendingEntryCount > 0 && (
+              <span className="text-[10px] text-amber-400 font-bold">({hudMetrics.pendingEntryCount} pend)</span>
+            )}
             <span className="text-[10px] text-neutral-400">/ {hudMetrics.total} tot</span>
           </div>
         </div>
@@ -1037,6 +1054,8 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                     ? 'border-rose-500/40 bg-[#140808]'
                     : s.status === 'EXPIRED'
                     ? 'border-neutral-800 bg-[#080808] opacity-85'
+                    : s.status === 'PENDING_ENTRY'
+                    ? 'border-amber-400/50 bg-[#140f06] shadow-amber-950/20'
                     : s.isBreakevenActive
                     ? 'border-cyan-500/40 bg-[#060d14] shadow-cyan-950/20'
                     : s.validationStatus === 'CONFIRMED'
@@ -1047,6 +1066,18 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                 }`}
               >
                 {/* Institutional Lifecycle Status Banner */}
+                {s.status === 'PENDING_ENTRY' && (
+                  <div className="mb-2 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 flex items-center justify-between text-[10px] font-extrabold shadow-sm">
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                      ENTRADA CONDICIONAL PENDENTE (AGUARDANDO TOQUE NA ZONA + CONFIRMAÇÃO 1M/5M)
+                    </span>
+                    <span className="text-[9px] text-amber-300 font-mono bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+                      FAIXA: {formatPriceRange(entry0, entry1)}
+                    </span>
+                  </div>
+                )}
+
                 {s.status === 'TARGET_REACHED' && (
                   <div className="mb-2 px-2.5 py-1 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-between text-[10px] font-extrabold shadow-sm">
                     <span className="flex items-center gap-1.5">
@@ -1178,7 +1209,21 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                     </div>
 
                     {/* Validation Status Badge */}
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {s.status === 'PENDING_ENTRY' && (
+                        <Tooltip
+                          position="top"
+                          title="Entrada Condicional (Fase 6.7)"
+                          badge="PENDING_ENTRY"
+                          content="Aguardando toque na zona de entrada com confirmação simultânea de fluxo e corpo de vela (1m e 5m). Sem risco de mercado até o preenchimento."
+                        >
+                          <span className="px-2 py-0.5 bg-amber-500/25 text-amber-300 border border-amber-400/50 rounded text-[9px] font-black flex items-center gap-1 cursor-help shadow-sm">
+                            <Clock className="h-3 w-3 animate-spin text-amber-300" />
+                            ENTRADA PENDENTE (Midpoint Fill)
+                          </span>
+                        </Tooltip>
+                      )}
+
                       {s.validationStatus === 'CONFIRMED' && (
                         <Tooltip
                           position="top"

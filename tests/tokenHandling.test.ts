@@ -10,8 +10,11 @@ import {
 describe('M4.8 & CA-4.6: Session Token Security & File Handling', () => {
   const testDir = path.join(process.cwd(), 'data', 'test-token');
   const tokenFilePath = path.join(testDir, 'session-token');
+  let originalToken: string | undefined;
 
   beforeEach(() => {
+    originalToken = process.env.API_AUTH_TOKEN;
+    delete process.env.API_AUTH_TOKEN;
     resetTokenForTests();
     if (fs.existsSync(testDir)) {
       fs.rmSync(testDir, { recursive: true, force: true });
@@ -20,6 +23,11 @@ describe('M4.8 & CA-4.6: Session Token Security & File Handling', () => {
   });
 
   afterEach(() => {
+    if (originalToken !== undefined) {
+      process.env.API_AUTH_TOKEN = originalToken;
+    } else {
+      delete process.env.API_AUTH_TOKEN;
+    }
     resetTokenForTests();
     if (fs.existsSync(testDir)) {
       fs.rmSync(testDir, { recursive: true, force: true });

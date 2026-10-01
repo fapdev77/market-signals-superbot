@@ -150,8 +150,10 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
   }, [positions, tickers]);
 
   // Synthetic positions derived from active signals
+  const activeSignals = useMemo(() => signals.filter(s => s.status === 'ACTIVE'), [signals]);
+  const pendingSignalsCount = useMemo(() => signals.filter(s => s.status === 'PENDING_ENTRY').length, [signals]);
+
   const signalDerivedPositions = useMemo(() => {
-    const activeSignals = signals.filter(s => s.status === 'ACTIVE');
     const tickerPriceMap = new Map<string, number>();
     tickers.forEach(t => tickerPriceMap.set(t.symbol, t.price));
 
@@ -159,7 +161,7 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
       const liveTicker = tickers.find(t => t.symbol === sig.symbol);
       return convertSignalToPosition(sig, liveTicker, 250, 10);
     });
-  }, [signals, tickers]);
+  }, [activeSignals, tickers]);
 
   // Combined positions based on aggregation mode
   const activeEffectivePositions = useMemo(() => {
@@ -389,6 +391,12 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-mono uppercase">
                   Institutional Greeks
                 </span>
+                {pendingSignalsCount > 0 && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                    {pendingSignalsCount} Entrada(s) Pendente(s)
+                  </span>
+                )}
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase ${
                   riskSummary.directionalBias.includes('LONG') 
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
