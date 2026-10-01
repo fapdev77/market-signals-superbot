@@ -2,7 +2,7 @@ import { ScreenerAsset, ScreenerSettings, ScreenerScanSummary, MarketSector } fr
 import { requestJsonLimited } from '../utils/httpClient.js';
 import { addBinanceLog } from '../binanceWebsocket.js';
 import { getFavoriteSymbols, getScreenerSettings, saveScreenerSettings, getActiveSignals, setWatchedSymbol, DEFAULT_EXCLUDED_SYMBOLS } from '../db.js';
-import { DEFAULT_SYMBOLS } from '../binanceService.js';
+import { DEFAULT_SYMBOLS, getTradfiAsset, TRADFI_ASSETS } from '../binanceService.js';
 // 6.4: núcleo puro do screener — universo via exchangeInfo, score sem
 // métricas do nome, renormalização de fatores, RVOL real, sem fallback spot.
 import {
@@ -48,6 +48,18 @@ const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
   OPUSDT: { sector: 'L1_L2', tag: 'Optimism L2 Superchain' },
   BCHUSDT: { sector: 'L1_L2', tag: 'P2P Electronic Cash' },
   LTCUSDT: { sector: 'L1_L2', tag: 'Scrypt PoW Payments' },
+  // TradFi Equities / US Stocks & Commodities
+  XAUUSDT: { sector: 'TRADFI', tag: 'Physical Gold / Ouro' },
+  PAXGUSDT: { sector: 'TRADFI', tag: 'Tokenized Gold' },
+  AAPLUSDT: { sector: 'TRADFI', tag: 'Apple Inc. / US Stock' },
+  TSLAUSDT: { sector: 'TRADFI', tag: 'Tesla Inc. / US Stock' },
+  NVDAUSDT: { sector: 'TRADFI', tag: 'NVIDIA Corp / US Stock' },
+  MSFTUSDT: { sector: 'TRADFI', tag: 'Microsoft / US Stock' },
+  AMZNUSDT: { sector: 'TRADFI', tag: 'Amazon.com / US Stock' },
+  GOOGUSDT: { sector: 'TRADFI', tag: 'Alphabet / US Stock' },
+  METAUSDT: { sector: 'TRADFI', tag: 'Meta Platforms / US Stock' },
+  SPYUSDT: { sector: 'TRADFI', tag: 'S&P 500 ETF Index' },
+  QQQUSDT: { sector: 'TRADFI', tag: 'Nasdaq 100 ETF Index' },
   // Stablecoins / Pegged assets mappings
   USDCUSDT: { sector: 'STABLECOIN', tag: 'USD Coin Stablecoin' },
   USDTUSDC: { sector: 'STABLECOIN', tag: 'Tether / USDC' },
@@ -86,6 +98,10 @@ export class MarketScreenerService {
   }
 
   public getMonitoredSymbols(): string[] {
+    const tradfiSymbols = TRADFI_ASSETS.map(a => a.symbol);
+    if (tradfiSymbols.length > 0) {
+      return Array.from(new Set([...this.activeMonitoredSymbols, ...tradfiSymbols]));
+    }
     return this.activeMonitoredSymbols;
   }
 
@@ -103,6 +119,20 @@ export class MarketScreenerService {
   public getSectorInfo(symbol: string): { sector: MarketSector; tag: string } {
     if (SECTOR_MAP[symbol]) return SECTOR_MAP[symbol];
     const s = symbol.toUpperCase();
+
+    // Check dynamic TradFi registry
+    const tradfi = getTradfiAsset(s);
+    if (tradfi) {
+      const tag = tradfi.tradfiCategory === 'EQUITY'
+        ? 'US Stocks / Equity'
+        : tradfi.tradfiCategory === 'INDEX'
+        ? 'TradFi Index'
+        : tradfi.tradfiCategory === 'COMMODITY'
+        ? 'Commodity TradFi'
+        : 'Forex TradFi';
+      return { sector: 'TRADFI', tag };
+    }
+
     if (
       s.includes('USDC') || s.includes('USDG') || s.includes('PYUSD') || 
       s.includes('FDUSD') || s.includes('TUSD') || s.includes('BUSD') || 

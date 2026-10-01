@@ -422,12 +422,19 @@ export function processTickerState(
   const baseAsset = symbol.replace(/USDT|USD|BUSD/, '');
   const quoteAsset = symbol.includes('USDT') ? 'USDT' : 'USD';
 
+  const isTradfi = Boolean(tradfiAsset);
+  const tradfiCategoryTag = tradfiAsset?.tradfiCategory === 'EQUITY'
+    ? 'US Stock'
+    : tradfiAsset?.tradfiCategory === 'INDEX'
+    ? 'Index'
+    : tradfiAsset?.tradfiCategory || 'TradFi';
+
   return {
     symbol,
     baseAsset,
     quoteAsset,
-    name: `${baseAsset} Perpetual`,
-    marketType: 'crypto_futures',
+    name: isTradfi ? `${baseAsset} (${tradfiCategoryTag})` : `${baseAsset} Perpetual`,
+    marketType: isTradfi ? 'tradfi' : 'crypto_futures',
     price,
     priceChangePercent24h,
     high24h,

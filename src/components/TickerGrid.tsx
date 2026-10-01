@@ -214,6 +214,14 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
   const [selectedPatternModal, setSelectedPatternModal] = useState<{ ticker: TickerData; pattern: DetectedChartPattern } | null>(null);
   const [selectedVolumeAlertModal, setSelectedVolumeAlertModal] = useState<{ ticker: TickerData; alert: VolumeSpikeAlert } | null>(null);
 
+  const isTradfiAsset = (t: TickerData) => {
+    return t.marketType === 'tradfi' || 
+      /^(AAPL|TSLA|NVDA|MSFT|AMZN|GOOG|META|SPY|QQQ|XAU|PAXG|XAG|XPT|XPD|EUR|GBP|JPY)/i.test(t.symbol || '');
+  };
+
+  const cryptoCount = useMemo(() => (tickers || []).filter(t => !isTradfiAsset(t)).length, [tickers]);
+  const tradfiCount = useMemo(() => (tickers || []).filter(t => isTradfiAsset(t)).length, [tickers]);
+
   // Run AI Pattern Scanner on all tickers
   const tickerPatternsMap = useMemo(() => {
     return scanAllTickersForPatterns(tickers);
@@ -275,7 +283,8 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
   const processedTickers = useMemo(() => {
     const filtered = (tickers || []).filter(t => {
       if (!t) return false;
-      if (filterMarket !== 'all' && t.marketType !== filterMarket) return false;
+      if (filterMarket === 'crypto_futures' && isTradfiAsset(t)) return false;
+      if (filterMarket === 'tradfi' && !isTradfiAsset(t)) return false;
       if (filterSignal === 'signals_only' && (t.signalType === 'NEUTRAL' || !t.signalType)) return false;
       if (filterSignal === 'golden_pocket' && !t.fibonacci?.inGoldenPocket) return false;
       if (filterSignal === 'favorites' && !favoriteSymbols.has(t.symbol)) return false;
@@ -357,7 +366,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
           <Tooltip
             position="bottom"
             title="Contratos Perpétuos Cripto"
-            badge="FUTURES"
+            badge={`${cryptoCount} PARES`}
             content="Filtra apenas contratos de derivativos perpétuos da Binance Futures (USDT-M) com leitura de Order Flow em tempo real."
           >
             <button
@@ -368,14 +377,14 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                   : 'bg-neutral-900 text-neutral-400 hover:text-white border border-white/5'
               }`}
             >
-              CRIPTO PERPETUOS
+              CRIPTO PERPETUOS ({cryptoCount})
             </button>
           </Tooltip>
 
           <Tooltip
             position="bottom"
             title="Mercados Tradicionais & Ações"
-            badge="TRADFI"
+            badge={`${tradfiCount} ATIVOS`}
             content="Filtra ativos tradicionais, índices acionários (S&P 500, Nasdaq) e commodities para correlação macroeconômica."
           >
             <button
@@ -386,7 +395,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                   : 'bg-neutral-900 text-neutral-400 hover:text-white border border-white/5'
               }`}
             >
-              TRADFI & AÇÕES
+              TRADFI & AÇÕES ({tradfiCount})
             </button>
           </Tooltip>
         </div>

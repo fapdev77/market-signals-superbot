@@ -51,9 +51,18 @@ export const ASSET_SECTOR_MAP: Record<string, { sector: MarketSector; name: stri
   BONKUSDT: { sector: 'MEME', name: 'Bonk', tag: 'Solana Ecosystem Meme', beta: 2.1 },
   FLOKIUSDT: { sector: 'MEME', name: 'Floki', tag: 'Community Meme', beta: 2.0 },
 
-  // TRADFI
+  // TRADFI / EQUITIES / COMMODITIES
   XAUUSDT: { sector: 'TRADFI', name: 'Gold / Ouro', tag: 'Physical Commodity', beta: 0.15 },
-  PAXGUSDT: { sector: 'TRADFI', name: 'Pax Gold', tag: 'Tokenized Gold', beta: 0.15 }
+  PAXGUSDT: { sector: 'TRADFI', name: 'Pax Gold', tag: 'Tokenized Gold', beta: 0.15 },
+  AAPLUSDT: { sector: 'TRADFI', name: 'Apple Inc.', tag: 'US Equity / Tech Stock', beta: 0.85 },
+  TSLAUSDT: { sector: 'TRADFI', name: 'Tesla Inc.', tag: 'US Equity / EV Stock', beta: 1.10 },
+  NVDAUSDT: { sector: 'TRADFI', name: 'NVIDIA Corp', tag: 'US Equity / Semi Stock', beta: 1.15 },
+  MSFTUSDT: { sector: 'TRADFI', name: 'Microsoft Corp', tag: 'US Equity / Tech Stock', beta: 0.80 },
+  AMZNUSDT: { sector: 'TRADFI', name: 'Amazon.com Inc.', tag: 'US Equity / Retail Stock', beta: 0.90 },
+  GOOGUSDT: { sector: 'TRADFI', name: 'Alphabet Inc.', tag: 'US Equity / Tech Stock', beta: 0.85 },
+  METAUSDT: { sector: 'TRADFI', name: 'Meta Platforms', tag: 'US Equity / Tech Stock', beta: 0.95 },
+  SPYUSDT: { sector: 'TRADFI', name: 'SPDR S&P 500 ETF', tag: 'US Equity Index', beta: 0.75 },
+  QQQUSDT: { sector: 'TRADFI', name: 'Invesco QQQ ETF', tag: 'US Equity Index', beta: 0.85 }
 };
 
 export function getAssetSectorAndBeta(symbol: string): { sector: MarketSector; sectorName: string; categoryTag: string; beta: number } {
@@ -78,8 +87,11 @@ export function getAssetSectorAndBeta(symbol: string): { sector: MarketSector; s
   if (upper.includes('AAVE') || upper.includes('UNI') || upper.includes('LINK') || upper.includes('SWAP') || upper.includes('FINANCE')) {
     return { sector: 'DEFI', sectorName: 'DeFi & Lending', categoryTag: 'DeFi Protocol', beta: 1.25 };
   }
-  if (upper.includes('XAU') || upper.includes('GOLD') || upper.includes('SPX') || upper.includes('DJI') || upper.includes('NDX')) {
-    return { sector: 'TRADFI', sectorName: 'TradFi & Macro', categoryTag: 'Macro Asset', beta: 0.2 };
+  if (
+    upper.includes('XAU') || upper.includes('GOLD') || upper.includes('SPX') || upper.includes('DJI') || upper.includes('NDX') ||
+    upper.includes('AAPL') || upper.includes('TSLA') || upper.includes('NVDA') || upper.includes('MSFT') || upper.includes('AMZN') || upper.includes('GOOG') || upper.includes('META') || upper.includes('SPY') || upper.includes('QQQ')
+  ) {
+    return { sector: 'TRADFI', sectorName: 'TradFi & Macro', categoryTag: 'US Equity / Macro Stock', beta: 0.85 };
   }
 
   return { sector: 'L1_L2', sectorName: 'Layer 1 & Layer 2', categoryTag: 'Layer 1 / Layer 2', beta: 1.2 };

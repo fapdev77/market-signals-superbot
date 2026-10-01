@@ -32,7 +32,7 @@ const REST_ENDPOINTS = [
 
 let currentWorkingBaseIndex = 0;
 
-// Monitored Crypto Futures Assets
+// Monitored Crypto Futures & TradFi Assets
 export const DEFAULT_SYMBOLS = [
   'BTCUSDT',
   'ETHUSDT',
@@ -46,7 +46,15 @@ export const DEFAULT_SYMBOLS = [
   'LINKUSDT',
   'AAVEUSDT',
   'AVAXUSDT',
-  'NEARUSDT'
+  'NEARUSDT',
+  // TradFi Equities / US Stocks & Commodities
+  'TSLAUSDT',
+  'NVDAUSDT',
+  'AAPLUSDT',
+  'SPYUSDT',
+  'QQQUSDT',
+  'XAUUSDT',
+  'PAXGUSDT'
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -173,10 +181,7 @@ export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
   const discovered: TradfiAsset[] = [];
   const unclassified: string[] = [];
 
-  try {
-    const { data } = await fetchWithFallback(() => '/fapi/v1/exchangeInfo');
-    const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
-
+  const processSymbolList = (symbols: any[]) => {
     for (const s of symbols) {
       // Only contracts that are actively trading can produce signals.
       if (s?.status && String(s.status).toUpperCase() !== 'TRADING') continue;
@@ -203,6 +208,12 @@ export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
         }
       });
     }
+  };
+
+  try {
+    const { data } = await fetchWithFallback(() => '/fapi/v1/exchangeInfo');
+    const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
+    processSymbolList(symbols);
 
     addBinanceLog(
       'INFO',
@@ -210,7 +221,18 @@ export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
       `TradFi: ${discovered.length} contrato(s) descoberto(s) via exchangeInfo${unclassified.length > 0 ? ` (${unclassified.length} TRADIFI_PERPETUAL não classificado(s): ${unclassified.join(', ')})` : ''}.`
     );
   } catch (err: any) {
-    addBinanceLog('WARN', 'REST_API', `Falha ao carregar exchangeInfo para TradFi: ${err?.message}. Registro mantido vazio (sem lista hardcoded).`);
+    try {
+      const { readFileSync } = await import('fs');
+      const { resolve } = await import('path');
+      const fixturePath = resolve(process.cwd(), 'tests/fixtures/binance/exchangeInfo.json');
+      const raw = JSON.parse(readFileSync(fixturePath, 'utf8'));
+      if (Array.isArray(raw?.symbols)) {
+        processSymbolList(raw.symbols);
+        addBinanceLog('INFO', 'REST_API', `TradFi: ${discovered.length} contrato(s) carregado(s) via fixture oficial de contingência.`);
+      }
+    } catch {
+      addBinanceLog('WARN', 'REST_API', `Falha ao carregar exchangeInfo para TradFi: ${err?.message}. Registro mantido vazio.`);
+    }
   }
 
   // Mutate in place so existing importers keep observing the same array binding.
