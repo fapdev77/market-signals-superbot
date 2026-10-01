@@ -31,7 +31,8 @@ import {
   Flame,
   Settings,
   ShieldCheck,
-  CheckCheck
+  CheckCheck,
+  History
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
@@ -67,6 +68,7 @@ interface SignalsMatrixProps {
   onRequestAIReview?: (ticker: TickerData, signal?: TradeSignal) => void;
   onSelectSignal?: (signal: TradeSignal, autoRunAI?: boolean) => void;
   onNavigateToSettings?: () => void;
+  onNavigateToTab?: (tab: string) => void;
 }
 
 export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
@@ -75,7 +77,8 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
   weights,
   onRequestAIReview,
   onSelectSignal,
-  onNavigateToSettings
+  onNavigateToSettings,
+  onNavigateToTab
 }) => {
   // Existing validation & direction filters
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
@@ -394,12 +397,22 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
       {/* Header & Main Anti-Spike Description */}
       <div className="bg-[#0A0A0A] p-3.5 rounded-lg border border-white/10 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 shadow-xl">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Zap className="h-4 w-4 text-orange-400" />
             <h2 className="text-sm font-extrabold text-white">Matriz de Sinais & Filtro Anti-Spike (1m & 5m)</h2>
             <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/30">
               {processedSignals.length} de {signals.length} SINAIS
             </span>
+            {onNavigateToTab && (
+              <button
+                onClick={() => onNavigateToTab('trade_history')}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold transition cursor-pointer ml-1"
+                title="Abrir aba de Histórico de Trades e Curva de PnL"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Histórico de Trades & PnL</span>
+              </button>
+            )}
           </div>
           <p className="text-[10px] text-neutral-400 mt-0.5">
             Validação de sustentação de 1 min + confirmação de tendência de 5 min para eliminar falsos rompimentos.

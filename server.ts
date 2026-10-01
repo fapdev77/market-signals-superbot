@@ -135,9 +135,16 @@ async function startServer() {
   initOrLoadSessionToken();
 
   // Environment constraint: Dev server must run on port 3000 in AI Studio
-  const PORT = process.env.NODE_ENV === 'production' ? (Number(process.env.PORT) || 3000) : 3000;
+  // Support CLI arguments (--port 3000 --host 0.0.0.0) or environment variables
+  const args = process.argv;
+  const hostIdx = args.indexOf('--host');
+  const cliHost = hostIdx !== -1 && args[hostIdx + 1] ? args[hostIdx + 1] : undefined;
+  const portIdx = args.indexOf('--port');
+  const cliPort = portIdx !== -1 && args[portIdx + 1] ? Number(args[portIdx + 1]) : undefined;
+
+  const PORT = cliPort || (process.env.NODE_ENV === 'production' ? (Number(process.env.PORT) || 3000) : 3000);
   // M4.1: Host binding security guard (defaults to 127.0.0.1; forbids 0.0.0.0 in prod without flag)
-  const HOST = resolveServerHost(process.env.HOST);
+  const HOST = resolveServerHost(cliHost || process.env.HOST);
   enforceHostBinding(HOST, process.env.NODE_ENV, process.env.ALLOW_PUBLIC_BIND === 'true');
 
   // M4.3: Check database integrity and restore from backup if corrupted

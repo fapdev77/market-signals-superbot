@@ -4,7 +4,7 @@ import {
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
   ChevronDown, Volume2, VolumeX, Bell, BellOff, Radar, Flame, Command, 
   Sparkles, Search, Sun, Moon, Monitor, Check, Layers, BarChart3, Radio, Target,
-  MoreVertical, SlidersHorizontal, PieChart
+  MoreVertical, SlidersHorizontal, PieChart, History
 } from 'lucide-react';
 
 import { useTheme } from '../context/ThemeContext';
@@ -231,6 +231,14 @@ export const Header: React.FC<HeaderProps> = ({
           badge: botState.signalsGenerated24h > 0 ? `${botState.signalsGenerated24h} sinais` : null,
           highlight: true,
           desc: 'Matriz com sinais validados de entrada, stop loss, take profit e confluências de Order Flow.'
+        },
+        {
+          id: 'trade_history',
+          label: 'Histórico de Trades',
+          icon: History,
+          badge: 'HISTÓRICO',
+          highlight: true,
+          desc: 'Registro detalhado de sinais executados, preços de entrada/saída, PnL final e curva de rendimento cumulativa.'
         },
         {
           id: 'chart',

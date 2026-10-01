@@ -34,6 +34,7 @@ import { KillSwitchPanel } from './components/KillSwitchPanel';
 import { TrappedTradersRadar } from './components/TrappedTradersRadar';
 import { RSIDivergenceMonitor } from './components/RSIDivergenceMonitor';
 import { SystemDatabaseSettings } from './components/SystemDatabaseSettings';
+import { TradeHistory } from './components/TradeHistory';
 import { AuthModal } from './components/AuthModal';
 import { apiFetch, getStoredAuthToken } from './services/apiClient';
 
@@ -644,6 +645,16 @@ export default function App() {
             onRequestAIReview={handleRequestAIReviewFromGrid}
             onSelectSignal={handleSelectSignal}
             onNavigateToSettings={() => setActiveTab('settings')}
+            onNavigateToTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+
+        {activeTab === 'trade_history' && (
+          <TradeHistory
+            signals={signals}
+            tickers={tickers}
+            onSelectTickerBySymbol={handleSelectTickerBySymbol}
+            onSelectSignal={handleSelectSignal}
           />
         )}
 

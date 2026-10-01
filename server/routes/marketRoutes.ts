@@ -79,7 +79,8 @@ export function createMarketRouter(
   // Recent Generated Signals from SQLite (R-2: default LIVE; ?origin=DEMO|ALL para inspecionar demo)
   router.get('/signals', async (req: Request, res: Response) => {
     try {
-      const signals = await getRecentSignals(50, parseOriginFilter(req.query.origin));
+      const limit = req.query.limit ? Math.min(500, Math.max(1, parseInt(req.query.limit as string, 10))) : 150;
+      const signals = await getRecentSignals(limit, parseOriginFilter(req.query.origin));
       res.json(signals);
     } catch {
       res.status(500).json({ error: 'Failed to fetch signals' });

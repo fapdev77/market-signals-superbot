@@ -72,6 +72,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     { id: 'sector_screener', label: 'Screener de Setores & Rotação de Capital', icon: PieChart, tab: 'sector_screener' },
     { id: 'screener', label: 'Radar Screener & Momentum', icon: Radar, tab: 'screener', shortcut: '4' },
     { id: 'signals', label: 'Matriz de Sinais & Order Flow', icon: Zap, tab: 'signals', shortcut: '5' },
+    { id: 'trade_history', label: 'Histórico de Trades (Execuções, PnL & Curva Cumulativa)', icon: LineChart, tab: 'trade_history' },
     { id: 'risk', label: 'Exposição de Risco, Gregas & VaR', icon: ShieldAlert, tab: 'risk', shortcut: '6' },
     { id: 'ai_motor', label: 'Motor de IA & Auditoria', icon: BrainCircuit, tab: 'ai_motor', shortcut: '7' },
     { id: 'chart', label: 'Análise Técnica & Volume Profile', icon: LineChart, tab: 'chart', shortcut: '8' },
