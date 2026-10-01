@@ -282,6 +282,142 @@ export const backtestResultsDao = {
       config: String(row[10] ?? '{}'),
       createdAt: num(row[11])
     };
+  },
+
+  async listRecent(limit: number = 30, symbol?: string): Promise<BacktestResultRow[]> {
+    const db = await getDb();
+    const sql = symbol
+      ? `SELECT id, symbol, strategy_id, start_time, end_time, total_trades,
+                win_rate, profit_factor, max_drawdown, net_profit, config, created_at
+         FROM backtest_results
+         WHERE symbol = ?
+         ORDER BY created_at DESC LIMIT ?`
+      : `SELECT id, symbol, strategy_id, start_time, end_time, total_trades,
+                win_rate, profit_factor, max_drawdown, net_profit, config, created_at
+         FROM backtest_results
+         ORDER BY created_at DESC LIMIT ?`;
+    const params = symbol ? [symbol, limit] : [limit];
+    const res = db.exec(sql, params as SqlJsStatementValues);
+    if (!res.length || !res[0].values.length) return [];
+    return res[0].values.map(row => ({
+      id: String(row[0]),
+      symbol: String(row[1]),
+      strategyId: String(row[2]),
+      startTime: num(row[3]),
+      endTime: num(row[4]),
+      totalTrades: num(row[5]),
+      winRate: num(row[6]),
+      profitFactor: num(row[7]),
+      maxDrawdown: num(row[8]),
+      netProfit: num(row[9]),
+      config: String(row[10] ?? '{}'),
+      createdAt: num(row[11])
+    }));
   }
 };
+
+export interface BacktestScheduleRow {
+  id: string;
+  enabled: boolean;
+  timeOfDay: string;
+  timezone: string;
+  symbol: string;
+  days: number;
+  profile: string;
+  lastRunAt: number | null;
+  lastRunStatus: string | null;
+  lastResultId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const backtestScheduleDao = {
+  async getSchedule(id: string = 'daily-default'): Promise<BacktestScheduleRow | null> {
+    const db = await getDb();
+    const res = db.exec(
+      `SELECT id, enabled, time_of_day, timezone, symbol, days, profile,
+              last_run_at, last_run_status, last_result_id, created_at, updated_at
+       FROM backtest_schedules
+       WHERE id = ? LIMIT 1`,
+      [id] as SqlJsStatementValues
+    );
+    if (!res.length || !res[0].values.length) return null;
+    const row = res[0].values[0];
+    return {
+      id: String(row[0]),
+      enabled: Boolean(row[1]),
+      timeOfDay: String(row[2]),
+      timezone: String(row[3]),
+      symbol: String(row[4]),
+      days: num(row[5]),
+      profile: String(row[6]),
+      lastRunAt: row[7] !== null ? num(row[7]) : null,
+      lastRunStatus: row[8] !== null ? String(row[8]) : null,
+      lastResultId: row[9] !== null ? String(row[9]) : null,
+      createdAt: num(row[10]),
+      updatedAt: num(row[11])
+    };
+  },
+
+  async saveSchedule(schedule: Partial<BacktestScheduleRow> & { id?: string }): Promise<BacktestScheduleRow> {
+    const db = await getDb();
+    const id = schedule.id || 'daily-default';
+    const existing = await this.getSchedule(id);
+    const now = Date.now();
+    const merged: BacktestScheduleRow = {
+      id,
+      enabled: schedule.enabled !== undefined ? schedule.enabled : (existing?.enabled ?? true),
+      timeOfDay: schedule.timeOfDay || existing?.timeOfDay || '00:00',
+      timezone: schedule.timezone || existing?.timezone || 'UTC',
+      symbol: schedule.symbol || existing?.symbol || 'BTCUSDT',
+      days: schedule.days !== undefined ? schedule.days : (existing?.days ?? 30),
+      profile: schedule.profile || existing?.profile || 'daytrade',
+      lastRunAt: schedule.lastRunAt !== undefined ? schedule.lastRunAt : (existing?.lastRunAt ?? null),
+      lastRunStatus: schedule.lastRunStatus !== undefined ? schedule.lastRunStatus : (existing?.lastRunStatus ?? null),
+      lastResultId: schedule.lastResultId !== undefined ? schedule.lastResultId : (existing?.lastResultId ?? null),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+
+    await runWithRetry(() => {
+      db.run(
+        `INSERT OR REPLACE INTO backtest_schedules (
+          id, enabled, time_of_day, timezone, symbol, days, profile,
+          last_run_at, last_run_status, last_result_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          merged.id,
+          merged.enabled ? 1 : 0,
+          merged.timeOfDay,
+          merged.timezone,
+          merged.symbol,
+          merged.days,
+          merged.profile,
+          merged.lastRunAt,
+          merged.lastRunStatus,
+          merged.lastResultId,
+          merged.createdAt,
+          merged.updatedAt
+        ] as SqlJsStatementValues
+      );
+    });
+    scheduleDbSave();
+    return merged;
+  },
+
+  async updateLastRun(id: string, status: string, resultId?: string): Promise<void> {
+    const db = await getDb();
+    const now = Date.now();
+    await runWithRetry(() => {
+      db.run(
+        `UPDATE backtest_schedules
+         SET last_run_at = ?, last_run_status = ?, last_result_id = ?, updated_at = ?
+         WHERE id = ?`,
+        [now, status, resultId || null, now, id] as SqlJsStatementValues
+      );
+    });
+    scheduleDbSave();
+  }
+};
+
 

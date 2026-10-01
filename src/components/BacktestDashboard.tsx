@@ -21,7 +21,9 @@ import {
   Sparkles,
   Trash2,
   Download,
-  Activity
+  Activity,
+  Calendar,
+  History
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, ReferenceLine } from 'recharts';
@@ -130,6 +132,170 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
     const res = await apiFetch(`/api/backtest/sync/${selectedSymbol}`);
     setSyncState(await res.json());
   };
+
+  // Agendamento diário automático de backtest
+  const [scheduleEnabled, setScheduleEnabled] = useState(true);
+  const [scheduleTime, setScheduleTime] = useState('00:00');
+  const [scheduleSymbol, setScheduleSymbol] = useState(tickers[0]?.symbol || 'BTCUSDT');
+  const [scheduleDays, setScheduleDays] = useState(30);
+  const [scheduleProfile, setScheduleProfile] = useState<TradingProfile>('daytrade');
+  const [scheduleLastRun, setScheduleLastRun] = useState<{ at: number | null; status: string | null; resultId?: string | null } | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleRunningNow, setScheduleRunningNow] = useState(false);
+  const [scheduleSuccessMsg, setScheduleSuccessMsg] = useState<string | null>(null);
+
+  // Calcula o horário da próxima execução diária do agendamento
+  const computeClientNextExecution = (
+    enabled: boolean,
+    timeOfDay: string,
+    lastRunAt?: number | null
+  ) => {
+    if (!enabled) return null;
+    const [hStr, mStr] = (timeOfDay || '00:00').split(':');
+    const targetH = parseInt(hStr, 10) || 0;
+    const targetM = parseInt(mStr, 10) || 0;
+
+    const now = new Date();
+    const next = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      targetH,
+      targetM,
+      0,
+      0
+    ));
+
+    const nowMs = now.getTime();
+    if (next.getTime() <= nowMs || (lastRunAt && (nowMs - lastRunAt) < 23 * 3600 * 1000 && next.getTime() <= (lastRunAt + 23 * 3600 * 1000))) {
+      next.setUTCDate(next.getUTCDate() + 1);
+    }
+
+    const isToday = next.getUTCDate() === now.getUTCDate() && next.getUTCMonth() === now.getUTCMonth();
+    const hours = String(next.getUTCHours()).padStart(2, '0');
+    const minutes = String(next.getUTCMinutes()).padStart(2, '0');
+    const day = String(next.getUTCDate()).padStart(2, '0');
+    const month = String(next.getUTCMonth() + 1).padStart(2, '0');
+
+    const diffMs = Math.max(0, next.getTime() - nowMs);
+    const diffHours = Math.floor(diffMs / (3600 * 1000));
+    const diffMins = Math.floor((diffMs % (3600 * 1000)) / (60 * 1000));
+
+    return {
+      formattedUTC: `${isToday ? 'Hoje' : 'Amanhã'} (${day}/${month}) às ${hours}:${minutes} UTC`,
+      timeRemainingFormatted: diffHours > 0 ? `em ${diffHours}h ${diffMins}m` : `em ${diffMins}m`,
+      isToday
+    };
+  };
+
+  const nextRunInfo = computeClientNextExecution(scheduleEnabled, scheduleTime, scheduleLastRun?.at);
+
+  // Histórico de backtests salvos para comparação
+  const [historyResults, setHistoryResults] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchSchedule = async () => {
+    try {
+      const res = await apiFetch('/api/backtest/schedule');
+      const data = await res.json();
+      if (data.success && data.schedule) {
+        setScheduleEnabled(data.schedule.enabled);
+        setScheduleTime(data.schedule.timeOfDay || '00:00');
+        setScheduleSymbol(data.schedule.symbol || 'BTCUSDT');
+        setScheduleDays(data.schedule.days || 30);
+        setScheduleProfile(data.schedule.profile || 'daytrade');
+        setScheduleLastRun({
+          at: data.schedule.lastRunAt,
+          status: data.schedule.lastRunStatus,
+          resultId: data.schedule.lastResultId
+        });
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar agendamento:', err);
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    setScheduleSaving(true);
+    try {
+      const res = await apiFetch('/api/backtest/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: scheduleEnabled,
+          timeOfDay: scheduleTime,
+          symbol: scheduleSymbol,
+          days: scheduleDays,
+          profile: scheduleProfile
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScheduleSuccessMsg('Agendamento diário automático salvo com sucesso!');
+        setTimeout(() => setScheduleSuccessMsg(null), 4000);
+      }
+    } catch (err: any) {
+      setError('Erro ao salvar agendamento: ' + err.message);
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const handleRunScheduleNow = async () => {
+    setScheduleRunningNow(true);
+    try {
+      const res = await apiFetch('/api/backtest/schedule/run-now', {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setScheduleSuccessMsg('Backtest agendado executado imediatamente com sucesso!');
+        fetchSchedule();
+        fetchHistory();
+        setTimeout(() => setScheduleSuccessMsg(null), 4000);
+      } else {
+        setError(data.error || 'Falha ao executar backtest agendado');
+      }
+    } catch (err: any) {
+      setError('Erro ao disparar execução imediata: ' + err.message);
+    } finally {
+      setScheduleRunningNow(false);
+    }
+  };
+
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await apiFetch('/api/backtest/history?limit=30');
+      const data = await res.json();
+      if (data.success) {
+        setHistoryResults(data.results || []);
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar histórico:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleLoadSavedResult = (row: any) => {
+    try {
+      const parsedConfig = JSON.parse(row.config || '{}');
+      if (parsedConfig && parsedConfig.equityCurve) {
+        setBacktestResult(parsedConfig);
+        setSelectedSymbol(row.symbol);
+        setProfile((row.strategyId as TradingProfile) || 'daytrade');
+        window.scrollTo({ top: 300, behavior: 'smooth' });
+      }
+    } catch (err) {
+      console.warn('Falha ao desempacotar resultado histórico:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSchedule();
+    fetchHistory();
+  }, []);
 
   const handleSelectTrade = async (trade: BacktestTrade) => {
     setSelectedTrade(trade);
@@ -516,6 +682,265 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
           </button>
         </div>
       )}
+
+      {/* 2.1. Agendamento Diário Automático de Backtest */}
+      <div className="bg-[#0A0A0A] p-4 rounded-xl border border-white/10 shadow-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-orange-500/10 text-orange-400 border border-orange-500/20">
+              <Calendar className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xs font-black text-white uppercase tracking-wider">
+                  Agendamento Diário Automático de Backtest
+                </h3>
+                <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold font-mono uppercase ${
+                  scheduleEnabled 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-neutral-800 text-neutral-400 border border-white/10'
+                }`}>
+                  {scheduleEnabled ? 'ATIVO' : 'PAUSADO'}
+                </span>
+                {scheduleEnabled && nextRunInfo && (
+                  <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-cyan-950/40 text-cyan-300 border border-cyan-500/30 text-[9px] font-mono font-bold">
+                    <Clock className="h-3 w-3 text-cyan-400" />
+                    <span>Próxima Execução: <strong className="text-white font-black">{nextRunInfo.formattedUTC}</strong></span>
+                    <span className="text-cyan-400 font-normal">({nextRunInfo.timeRemainingFormatted})</span>
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-neutral-400 mt-0.5">
+                Executa simulação quantitativa periódica baseada no estado do bot e salva os resultados no SQLite para comparação histórica contínua.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setScheduleEnabled(!scheduleEnabled)}
+              className={`px-3 py-1.5 rounded text-[11px] font-bold transition flex items-center gap-1.5 border cursor-pointer ${
+                scheduleEnabled 
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20' 
+                  : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+              }`}
+            >
+              <Clock className="h-3 w-3" />
+              {scheduleEnabled ? 'Desativar Agendamento' : 'Ativar Agendamento'}
+            </button>
+          </div>
+        </div>
+
+        {/* Schedule Controls Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Horário de Execução Diária (UTC)</label>
+            <input
+              type="time"
+              value={scheduleTime}
+              onChange={e => setScheduleTime(e.target.value)}
+              className="w-full bg-[#050505] text-white border border-white/10 rounded p-2 text-xs font-bold font-mono"
+            />
+            <span className="text-[9px] text-neutral-500 mt-0.5 block">Hora agendada para disparo autônomo (ex: 00:00 UTC)</span>
+          </div>
+
+          <div>
+            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Ativo / Par Alvo</label>
+            <select
+              value={scheduleSymbol}
+              onChange={e => setScheduleSymbol(e.target.value)}
+              className="w-full bg-[#050505] text-white border border-white/10 rounded p-2 text-xs font-bold"
+            >
+              {tickers.map(t => (
+                <option key={t.symbol} value={t.symbol}>{t.symbol} ({t.marketType})</option>
+              ))}
+            </select>
+            <span className="text-[9px] text-neutral-500 mt-0.5 block">Instrumento prioritário da simulação</span>
+          </div>
+
+          <div>
+            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Janela de Histórico</label>
+            <select
+              value={scheduleDays}
+              onChange={e => setScheduleDays(Number(e.target.value))}
+              className="w-full bg-[#050505] text-white border border-white/10 rounded p-2 text-xs font-bold"
+            >
+              <option value={7}>7 Dias (~10k velas)</option>
+              <option value={14}>14 Dias (~20k velas)</option>
+              <option value={30}>30 Dias (~43k velas)</option>
+              <option value={60}>60 Dias (~86k velas)</option>
+            </select>
+            <span className="text-[9px] text-neutral-500 mt-0.5 block">Extensão temporal de validação</span>
+          </div>
+
+          <div>
+            <label className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Perfil Operacional</label>
+            <select
+              value={scheduleProfile}
+              onChange={e => setScheduleProfile(e.target.value as TradingProfile)}
+              className="w-full bg-[#050505] text-white border border-white/10 rounded p-2 text-xs font-bold"
+            >
+              <option value="scalp">Scalp Rápido (15m)</option>
+              <option value="daytrade">Day Trade Estruturado (15m)</option>
+              <option value="swing">Swing Trade Tendencial (1h)</option>
+              <option value="position">Posicional Macro (4h)</option>
+            </select>
+            <span className="text-[9px] text-neutral-500 mt-0.5 block">Timeframe e regras de risco</span>
+          </div>
+        </div>
+
+        {/* Schedule Status & Action Bar */}
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pt-3 border-t border-white/5 text-[10px]">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-neutral-400 font-mono">
+            <div className="flex items-center gap-1.5">
+              <span className="text-neutral-500">Última Execução:</span>
+              {scheduleLastRun?.at ? (
+                <span className="text-neutral-200">
+                  {new Date(scheduleLastRun.at).toLocaleString()} · Status: {' '}
+                  <strong className={scheduleLastRun.status?.includes('SUCCESS') ? 'text-emerald-400' : 'text-rose-400'}>
+                    {scheduleLastRun.status}
+                  </strong>
+                </span>
+              ) : (
+                <span className="text-neutral-500">Nenhuma execução registrada ainda hoje</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-neutral-500">Próxima Execução:</span>
+              {scheduleEnabled && nextRunInfo ? (
+                <span className="text-cyan-300 font-bold flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                  {nextRunInfo.formattedUTC} ({nextRunInfo.timeRemainingFormatted})
+                </span>
+              ) : (
+                <span className="text-neutral-500 italic">Desativada (Agendamento Pausado)</span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <button
+              onClick={handleSaveSchedule}
+              disabled={scheduleSaving}
+              className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded font-bold transition flex items-center justify-center gap-1.5 border border-white/10 cursor-pointer disabled:opacity-50"
+            >
+              {scheduleSaving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
+              {scheduleSaving ? 'Salvando...' : 'Salvar Agendamento'}
+            </button>
+
+            <button
+              onClick={handleRunScheduleNow}
+              disabled={scheduleRunningNow}
+              className="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 rounded font-bold transition flex items-center justify-center gap-1.5 border border-orange-500/30 cursor-pointer disabled:opacity-50"
+            >
+              {scheduleRunningNow ? <RefreshCw className="h-3.5 w-3.5 animate-spin text-orange-400" /> : <Play className="h-3.5 w-3.5 fill-current text-orange-400" />}
+              {scheduleRunningNow ? 'Executando Agora...' : 'Executar Agendado Agora'}
+            </button>
+          </div>
+        </div>
+
+        {scheduleSuccessMsg && (
+          <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded text-[11px] font-bold flex items-center gap-2">
+            <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+            <span>{scheduleSuccessMsg}</span>
+          </div>
+        )}
+      </div>
+
+      {/* 2.2. Histórico & Comparação de Backtests Salvos no Banco */}
+      <div className="bg-[#0A0A0A] p-4 rounded-xl border border-white/10 shadow-2xl space-y-3">
+        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-cyan-400" />
+            <h3 className="text-xs font-black text-white uppercase tracking-wider">
+              Histórico & Comparação de Backtests Salvos (SQLite)
+            </h3>
+            <span className="text-[10px] text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded border border-white/10">
+              {historyResults.length} simulações registradas
+            </span>
+          </div>
+
+          <button
+            onClick={fetchHistory}
+            disabled={historyLoading}
+            className="p-1.5 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-white/10 transition cursor-pointer"
+            title="Atualizar histórico do banco"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${historyLoading ? 'animate-spin text-cyan-400' : ''}`} />
+          </button>
+        </div>
+
+        {historyLoading && historyResults.length === 0 ? (
+          <div className="py-6 text-center text-neutral-500 text-xs animate-pulse">
+            Carregando histórico de simulações salvas...
+          </div>
+        ) : historyResults.length === 0 ? (
+          <div className="py-6 text-center text-neutral-500 text-xs">
+            Nenhuma simulação histórica salva no banco ainda. Execute o backtest atual ou o agendamento para gerar registros.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[11px] border-collapse">
+              <thead>
+                <tr className="border-b border-white/10 text-[9px] uppercase tracking-wider text-neutral-400 bg-[#050505]">
+                  <th className="py-2 px-2.5">Data / Hora</th>
+                  <th className="py-2 px-2.5">Ativo</th>
+                  <th className="py-2 px-2.5">Perfil</th>
+                  <th className="py-2 px-2.5 text-right">Trades</th>
+                  <th className="py-2 px-2.5 text-right">Taxa Acerto</th>
+                  <th className="py-2 px-2.5 text-right">Profit Factor</th>
+                  <th className="py-2 px-2.5 text-right">Max Drawdown</th>
+                  <th className="py-2 px-2.5 text-right">Lucro Líquido</th>
+                  <th className="py-2 px-2.5 text-center">Ação</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 font-mono">
+                {historyResults.slice(0, 10).map((row, idx) => {
+                  const isWinning = row.netProfit > 0;
+                  return (
+                    <tr key={row.id || idx} className="hover:bg-white/[0.02] transition">
+                      <td className="py-2 px-2.5 text-neutral-300">
+                        {new Date(row.createdAt).toLocaleString()}
+                      </td>
+                      <td className="py-2 px-2.5 font-bold text-white">
+                        {row.symbol}
+                      </td>
+                      <td className="py-2 px-2.5 text-neutral-400 capitalize">
+                        {row.strategyId}
+                      </td>
+                      <td className="py-2 px-2.5 text-right text-neutral-300">
+                        {row.totalTrades}
+                      </td>
+                      <td className={`py-2 px-2.5 text-right font-bold ${row.winRate >= 50 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {row.winRate.toFixed(1)}%
+                      </td>
+                      <td className={`py-2 px-2.5 text-right font-bold ${row.profitFactor >= 1.5 ? 'text-emerald-400' : row.profitFactor >= 1.0 ? 'text-amber-400' : 'text-rose-400'}`}>
+                        {row.profitFactor.toFixed(2)}
+                      </td>
+                      <td className="py-2 px-2.5 text-right text-rose-400">
+                        {row.maxDrawdown.toFixed(2)}%
+                      </td>
+                      <td className={`py-2 px-2.5 text-right font-bold ${isWinning ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {isWinning ? '+' : ''}${row.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-2 px-2.5 text-center">
+                        <button
+                          onClick={() => handleLoadSavedResult(row)}
+                          className="px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold transition cursor-pointer"
+                          title="Carregar esta simulação no gráfico e painel de análise"
+                        >
+                          Visualizar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* 3. "O que está sendo testado" - Active Weights Breakdown Panel */}
       <div className="bg-[#050505] p-4 rounded-xl border border-white/10 space-y-3">

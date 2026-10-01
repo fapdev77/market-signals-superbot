@@ -115,5 +115,107 @@ export function createEvidenceRouter(): Router {
     }
   });
 
+  /**
+   * GET /api/evidence/burnin-report
+   * Consolidates 60-day burn-in metrics, signal executability, Go/No-Go verdict,
+   * drawdown, and win rate. Supports ?format=json (default) and ?format=csv.
+   */
+  router.get('/burnin-report', async (req: Request, res: Response) => {
+    try {
+      const origin = parseOriginFilter(req.query.origin, 'LIVE');
+      const format = (req.query.format as string)?.toLowerCase() === 'csv' ? 'csv' : 'json';
+      const closedSignals = await signalLedgerDao.getClosedSignalsEvidence(origin);
+      const summary = generateEvidenceSummary(closedSignals, { origin });
+
+      let calendarDays = 0;
+      if (closedSignals.length > 0) {
+        const timestamps = closedSignals.map(s => s.closedAt);
+        const minT = Math.min(...timestamps);
+        const maxT = Math.max(...timestamps);
+        calendarDays = Math.max(1, Math.round((maxT - minT) / (1000 * 60 * 60 * 24)));
+      }
+
+      const rValues = closedSignals.map(s => s.netR);
+      const ci = calculateBootstrapConfidenceInterval(rValues, 1000, 42);
+
+      const totalNetR = closedSignals.reduce((acc, s) => acc + (s.netR || 0), 0);
+
+      const decision = evaluateGoNoGo({
+        closedSignalsCount: summary.totalSignals,
+        calendarDays,
+        netExpectancyR: summary.rExpectancy,
+        bootstrapLower95R: ci.lowerBound,
+        maxDrawdownR: summary.maxDrawdownR,
+        scoreTiers: Object.entries(summary.byScoreTier).map(([tier, m]) => ({
+          tier,
+          n: m.n,
+          netExpectancyR: m.rExpectancy,
+          enabled: true
+        }))
+      });
+
+      const wilsonMin = summary.wilsonInterval ? (summary.wilsonInterval[0] * 100).toFixed(2) : '0.00';
+      const wilsonMax = summary.wilsonInterval ? (summary.wilsonInterval[1] * 100).toFixed(2) : '0.00';
+
+      const reportData = {
+        generatedAt: new Date().toISOString(),
+        origin,
+        calendarDays,
+        totalClosedSignals: summary.totalSignals,
+        winRatePct: (summary.winRate || 0).toFixed(2),
+        wilsonScoreInterval: [wilsonMin, wilsonMax],
+        netExpectancyR: (summary.rExpectancy || 0).toFixed(3),
+        bootstrapLower95R: ci.lowerBound.toFixed(3),
+        maxDrawdownR: (summary.maxDrawdownR || 0).toFixed(2),
+        totalNetR: totalNetR.toFixed(3),
+        goNoGoStatus: decision.status,
+        canClaimPerformance: decision.canClaimPerformance,
+        goNoGoReasons: decision.reasons,
+        byScoreTier: summary.byScoreTier,
+        byCategory: summary.byCategory,
+        byTradFiSession: summary.byTradFiSession
+      };
+
+      if (format === 'csv') {
+        const lines: string[] = [
+          '# Market Signals SuperBot - Relatorio de Auditoria & Burn-In',
+          `Data de Geracao,${reportData.generatedAt}`,
+          `Origem,${reportData.origin}`,
+          `Dias Calendario,${reportData.calendarDays}`,
+          `Total Sinais Concluidos,${reportData.totalClosedSignals}`,
+          `Taxa de Acerto (%),${reportData.winRatePct}`,
+          `Intervalo Wilson 95% Min (%),${reportData.wilsonScoreInterval[0]}`,
+          `Intervalo Wilson 95% Max (%),${reportData.wilsonScoreInterval[1]}`,
+          `Expectativa Liquida (R),${reportData.netExpectancyR}`,
+          `Bootstrap 95% Limite Inferior (R),${reportData.bootstrapLower95R}`,
+          `Max Drawdown (R),${reportData.maxDrawdownR}`,
+          `Total R Liquido,${reportData.totalNetR}`,
+          `Veredito Go/No-Go,${reportData.goNoGoStatus}`,
+          `Pode Reivindicar Performance,${reportData.canClaimPerformance ? 'SIM' : 'NAO'}`,
+          '',
+          '# Criterios Institucionais Go/No-Go',
+          ...(decision.reasons.length > 0
+            ? decision.reasons.map((r, i) => `Condicao Pendente ${i + 1},"${r}"`)
+            : ['Status,"Todos os criterios atendidos com sucesso"']),
+          '',
+          '# Performance por Faixa de Confluencia',
+          'Faixa,Trades,Taxa Acerto (%),Expectativa (R),Max DD (R)',
+          ...Object.entries(summary.byScoreTier).map(([t, m]) => `"${t}",${m.n},${(m.winRate || 0).toFixed(1)},${(m.rExpectancy || 0).toFixed(3)},${(m.maxDrawdownR || 0).toFixed(2)}`)
+        ];
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="burnin-report-${Date.now()}.csv"`);
+        return res.send(lines.join('\n'));
+      }
+
+      res.json({
+        success: true,
+        report: reportData
+      });
+    } catch (err: any) {
+      console.error('Failed to generate burnin report:', err);
+      res.status(500).json({ error: 'Falha ao gerar relatório consolidado de burn-in', details: err?.message });
+    }
+  });
+
   return router;
 }

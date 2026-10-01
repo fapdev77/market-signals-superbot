@@ -93,5 +93,83 @@ export function createBacktestRouter(getBotState: () => BotState): Router {
     }
   });
 
+  // Agendamento diário automático de backtest
+  router.get('/schedule', async (_req: Request, res: Response) => {
+    try {
+      const { backtestScheduleDao } = await import('../backtest_db/index.js');
+      const { computeNextExecutionTime } = await import('../services/BacktestScheduler.js');
+      let schedule = await backtestScheduleDao.getSchedule();
+      if (!schedule) {
+        schedule = await backtestScheduleDao.saveSchedule({
+          id: 'daily-default',
+          enabled: true,
+          timeOfDay: '00:00',
+          timezone: 'UTC',
+          symbol: 'BTCUSDT',
+          days: 30,
+          profile: 'daytrade'
+        });
+      }
+      const nextRun = computeNextExecutionTime(schedule);
+      res.json({ success: true, schedule, nextRun });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  router.post('/schedule', async (req: Request, res: Response) => {
+    try {
+      const { backtestScheduleDao } = await import('../backtest_db/index.js');
+      const { computeNextExecutionTime } = await import('../services/BacktestScheduler.js');
+      const { enabled, timeOfDay, timezone, symbol, days, profile } = req.body;
+      const updated = await backtestScheduleDao.saveSchedule({
+        id: 'daily-default',
+        enabled: typeof enabled === 'boolean' ? enabled : undefined,
+        timeOfDay: typeof timeOfDay === 'string' ? timeOfDay : undefined,
+        timezone: typeof timezone === 'string' ? timezone : undefined,
+        symbol: typeof symbol === 'string' ? symbol.toUpperCase() : undefined,
+        days: typeof days === 'number' ? days : undefined,
+        profile: typeof profile === 'string' ? profile : undefined
+      });
+      const nextRun = computeNextExecutionTime(updated);
+      res.json({ success: true, schedule: updated, nextRun });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  router.post('/schedule/run-now', async (_req: Request, res: Response) => {
+    try {
+      const { backtestScheduleDao } = await import('../backtest_db/index.js');
+      const { executeScheduledBacktest } = await import('../services/BacktestScheduler.js');
+      const schedule = await backtestScheduleDao.getSchedule();
+      if (!schedule) {
+        return res.status(404).json({ success: false, error: 'Agendamento não encontrado' });
+      }
+      const botState = getBotState();
+      const outcome = await executeScheduledBacktest(schedule, botState);
+      res.json({ success: outcome.success, outcome });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
+  // Histórico de backtests salvos para comparação histórica
+  router.get('/history', async (req: Request, res: Response) => {
+    try {
+      const { backtestResultsDao } = await import('../backtest_db/index.js');
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 30;
+      const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : undefined;
+      const results = await backtestResultsDao.listRecent(limit, symbol);
+      res.json({ success: true, count: results.length, results });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  });
+
   return router;
 }

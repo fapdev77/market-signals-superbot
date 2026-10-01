@@ -310,6 +310,30 @@ export const MIGRATIONS: Migration[] = [
       addColumnIfMissing(db, 'trade_signals', 'estimated_slippage_pct', 'REAL');
       addColumnIfMissing(db, 'trade_signals', 'execution_book_available', 'INTEGER');
     }
+  },
+  {
+    version: 12,
+    id: '012-backtest-schedules',
+    description:
+      'Agendamento diário automático de backtest com persistência de horário, ativo, perfil e histórico de execuções.',
+    up: db => {
+      exec(db, `
+        CREATE TABLE IF NOT EXISTS backtest_schedules (
+          id TEXT PRIMARY KEY,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          time_of_day TEXT NOT NULL DEFAULT '00:00',
+          timezone TEXT NOT NULL DEFAULT 'UTC',
+          symbol TEXT NOT NULL DEFAULT 'BTCUSDT',
+          days INTEGER NOT NULL DEFAULT 30,
+          profile TEXT NOT NULL DEFAULT 'daytrade',
+          last_run_at INTEGER,
+          last_run_status TEXT,
+          last_result_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    }
   }
 ];
 

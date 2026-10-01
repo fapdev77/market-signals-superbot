@@ -19,6 +19,7 @@ import {
   DEFAULT_FUNDING_INTERVAL_HOURS
 } from './server/binanceService.js';
 import { initBinanceWebSocket } from './server/binanceWebsocket.js';
+import { initBacktestScheduler } from './server/services/BacktestScheduler.js';
 import { processTickerState, buildTradeSignal, SIGNAL_LOOKBACK_CANDLES } from './server/signalEngine.js';
 import {
   saveSignalAndLedger,
@@ -663,6 +664,13 @@ async function startServer() {
 
     // 6.6.4: heartbeat externo opcional (HEARTBEAT_URL). Sem a variável, no-op.
     startHeartbeat();
+
+    // Agendador de backtest diário automático baseado no estado do bot
+    try {
+      initBacktestScheduler(() => botState);
+    } catch (schedErr) {
+      console.warn('BacktestScheduler init warning:', schedErr);
+    }
 
     // 6.5.2: filtros por símbolo (tickSize/stepSize/minQty/notional) para executabilidade.
     // Fail-open: sem filtros o sinal nasce sem veredito de executabilidade.

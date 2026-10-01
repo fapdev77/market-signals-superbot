@@ -21,6 +21,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isVacuuming, setIsVacuuming] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isExportingBurnIn, setIsExportingBurnIn] = useState<boolean>(false);
   const [clearingTableName, setClearingTableName] = useState<string | null>(null);
   const [expandedTable, setExpandedTable] = useState<string | null>(null);
   const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
@@ -161,6 +162,34 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
     }
   };
 
+  // Export 60-day burn-in / audit report
+  const handleExportBurnInReport = async (format: 'csv' | 'json' = 'csv') => {
+    if (isExportingBurnIn) return;
+    setIsExportingBurnIn(true);
+    try {
+      const res = await apiFetch(`/api/evidence/burnin-report?format=${format}`);
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `superbot-burnin-report-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('success', 'Relatório Gerado', `Download do relatório de auditoria & burn-in (${format.toUpperCase()}) concluído.`);
+      } else {
+        throw new Error('Erro ao gerar relatório.');
+      }
+    } catch (err: any) {
+      console.error('Burnin export error:', err);
+      showToast('error', 'Falha no Relatório', err.message || 'Não foi possível baixar o relatório de auditoria.');
+    } finally {
+      setIsExportingBurnIn(false);
+    }
+  };
+
   // Clear single SQLite table
   const handleClearTable = async (tableName: string) => {
     if (clearingTableName) return;
@@ -263,6 +292,16 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
             >
               <Download className={`w-3.5 h-3.5 ${isExporting ? 'animate-bounce' : ''}`} />
               <span>{isExporting ? 'Exportando...' : 'Exportar Backup JSON'}</span>
+            </button>
+
+            <button
+              onClick={() => handleExportBurnInReport('csv')}
+              disabled={isExportingBurnIn || isLoading}
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-500/30 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              title="Baixar relatório consolidado de auditoria e burn-in operacional (CSV)"
+            >
+              <Download className={`w-3.5 h-3.5 ${isExportingBurnIn ? 'animate-bounce' : ''}`} />
+              <span>{isExportingBurnIn ? 'Gerando...' : 'Relatório Burn-In (CSV)'}</span>
             </button>
 
             <button
