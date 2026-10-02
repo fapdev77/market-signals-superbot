@@ -1,6 +1,6 @@
 # Fase 5 — Feed, TradFi, paridade live×backtest, evidência e operação local
 
-> **Criado em:** 2026-09-29 · **Base:** commit `e6e3b6f` · **Status:** rascunho para revisão
+> **Criado em:** 2026-09-29 · **Base:** commit `e6e3b6f` · **Status:** concluída — todos os marcos implementados e cobertos por testes (atualizado 2026-10-01; estado da fase em `specs/phase-7.md`).
 > **Método:** SDD — Especificar (O quê) → Planejar (Como) → Decompor (Tarefas) → Implementar → Validar.
 > Cada item tem critérios de aceitação (CA) verificáveis e a lista de testes que devem existir **antes** da implementação (TDD).
 

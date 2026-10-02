@@ -124,7 +124,7 @@ export async function validateOutboundAIUrlWithDns(
         }
       }
     }
-  } catch (err: any) {
+  } catch (err) {
     return {
       isValid: false,
       error: `Falha na resolução de DNS para o host: ${err?.message || 'Host inacessível'}`

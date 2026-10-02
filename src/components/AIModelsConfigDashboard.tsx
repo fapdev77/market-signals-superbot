@@ -232,7 +232,7 @@ export const AIModelsConfigDashboard: React.FC<{
         latencyMs: data.latencyMs,
         diagnosticSteps: data.diagnosticSteps
       });
-    } catch (err: any) {
+    } catch (err) {
       setTestResult({
         modelId: model.id,
         loading: false,

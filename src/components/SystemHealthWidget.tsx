@@ -104,6 +104,13 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
 
     // R-13: quando o servidor responde, o estado real do feed substitui o estático.
     // Mapeamento: feed id do widget → FeedName do registro do servidor.
+    // 7.6.1: o protocolo separa o stream do SERVIDOR para o navegador do estado do
+    // WebSocket a MONTANTE (feed-health). Nenhum rótulo cita o host upstream.
+    const upstreamWs = serverFeedHealth?.feeds?.ws;
+    const upstreamWsLabel = upstreamWs
+      ? `upstream Binance: ${upstreamWs.status}`
+      : 'upstream Binance: n/d';
+
     const serverStatus = (widgetId: string): FeedHealthItem['status'] | null => {
       if (!serverFeedHealth?.feeds) return null;
       const map: Record<string, string> = {
@@ -128,7 +135,7 @@ export const SystemHealthWidget: React.FC<SystemHealthWidgetProps> = ({
         latencyMs: liveTicks.binancePing,
         uptimePct: 99.98,
         throughput: '142 msg/s',
-        protocol: 'WSS (fstream.binance.com)',
+        protocol: `WS servidor→navegador · ${upstreamWsLabel}`,
         lastHeartbeat: 'Agora mesmo',
         jitterMs: 1.4,
         details: 'Kline 1m/5m, Book Tickers & Multi-Asset Taker Trades stream contínuo.'

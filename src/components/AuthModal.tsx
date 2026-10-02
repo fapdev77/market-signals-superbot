@@ -54,7 +54,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
       } else {
         setError('Token de autenticação inválido. Verifique o valor no terminal ou nas variáveis de ambiente.');
       }
-    } catch (err: any) {
+    } catch (err) {
       setError(`Erro ao validar token: ${err.message || 'Falha de conexão'}`);
     } finally {
       setIsLoading(false);

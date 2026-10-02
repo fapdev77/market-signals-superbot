@@ -204,7 +204,8 @@ export const BinanceConnectionPanel: React.FC<BinanceConnectionPanelProps> = ({
       subType: l.type,
       level: l.level,
       provider: 'Binance',
-      modelOrUrl: 'fstream.binance.com',
+      // 7.6.1: rótulo genérico (o host upstream não vai para a UI).
+      modelOrUrl: 'Binance Futures WS (upstream)',
       message: l.message,
       details: l.details,
       durationMs: l.durationMs as number | undefined

@@ -67,7 +67,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       setAssets(assetsRes.assets || []);
       setSummary(assetsRes.summary || null);
       setSettings(settingsRes);
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Falha ao carregar Screener', err?.message || 'Erro ao sincronizar dados');
     } finally {
       setLoading(false);
@@ -91,7 +91,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       // Reload summary to reflect updated counts
       const updated = await apiClient.getScreenerAssets();
       setSummary(updated.summary);
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Erro ao alterar favorito', err?.message);
     }
   };
@@ -135,7 +135,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
           ? `${normalized} agora está na lista de exclusão e não será monitorado pelo robô.`
           : `${normalized} foi removido da lista de exclusão e reabilitado para análise.`
       );
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Erro ao atualizar lista de exclusão', err?.message);
     } finally {
       setIsExcludingLoading(false);
@@ -161,7 +161,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       }
       await loadData();
       showToast('success', 'Lista Redefinida', 'Pares estáveis padrão (USDT/USDC, USDG/USDT, PYUSD, etc.) restaurados.');
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Erro ao redefinir lista', err?.message);
     } finally {
       setIsExcludingLoading(false);
@@ -174,7 +174,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       const res = await apiClient.triggerScreenerScan();
       showToast('success', 'Varredura Concluída', `Radar reavaliado: ${res.monitoredCount} ativos ativos no universo de execução.`);
       await loadData();
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Erro na varredura', err?.message);
     } finally {
       setIsScanning(false);
@@ -190,7 +190,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       showToast('success', 'Configurações Salvas', 'Parâmetros do universo dinâmico, lista de exclusão e pesos de momentum atualizados.');
       setIsSettingsOpen(false);
       await loadData();
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Erro ao salvar configurações', err?.message);
     } finally {
       setSavingSettings(false);

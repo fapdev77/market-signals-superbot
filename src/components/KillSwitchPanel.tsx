@@ -78,7 +78,7 @@ export const KillSwitchPanel: React.FC = () => {
         enabled ? 'Kill-switch ativo — emissões suprimidas no próximo tick.' : 'Emissão de sinais liberada.'
       );
       load();
-    } catch (err: any) {
+    } catch (err) {
       showToast('error', 'Falha no kill-switch', err?.message || 'Tente novamente.');
     } finally {
       setBusy(false);

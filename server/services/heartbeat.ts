@@ -28,7 +28,7 @@ async function ping(url: string): Promise<void> {
       body: JSON.stringify({ ts: Date.now(), pid: process.pid }),
       signal: AbortSignal.timeout(5000)
     });
-  } catch (err: any) {
+  } catch (err) {
     console.warn('[Heartbeat] ping falhou (tentará novamente no próximo intervalo):', err?.message || err);
   }
 }

@@ -132,7 +132,7 @@ export class HistoricalDataService {
       }
 
       syncStates[symbol] = { symbol, progress: 100, status: 'DONE' };
-    } catch (err: any) {
+    } catch (err) {
       console.error(`Sync error for ${symbol}:`, err);
       syncStates[symbol] = { symbol, progress: syncStates[symbol].progress, status: 'ERROR', error: err.message };
     }

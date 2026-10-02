@@ -1,6 +1,6 @@
 # Fase 6 — Fechamento de gaps: base reprodutível, provas reais, evidência íntegra e motor final
 
-> **Criado em:** 2026-09-30 · **Base:** commit `e05726d` · **Status:** rascunho para revisão
+> **Criado em:** 2026-09-30 · **Base:** commit `e05726d` · **Status:** concluída (2026-10-01) — marcos e checkpoints em `specs/phase-6-plan.md`; a evidência operacional (6.9) só inicia após o congelamento do motor na Fase 7 (`specs/phase-7.md`).
 > **Método:** SDD — Especificar → Planejar → Decompor → Implementar → Validar. Cada item tem critérios de aceitação (CA) verificáveis e os testes que devem existir **antes** da implementação (TDD).
 > **Objetivo:** fechar todos os gaps abertos desde a Fase 1, de modo que o sistema não tenha dado sintético sem rótulo, evidência com viés, suposição sem prova nem modo de falha sem alerta.
 

@@ -98,3 +98,16 @@ O módulo `server/utils/outboundPolicy.ts` audita todas as chamadas de rede exte
 * **CI (`.github/workflows/ci.yml`):** `npm ci` → `npm run typecheck` → `npx vitest run` → `npm run build` em Node 20.x e 22.x, além de job de `npm audit --omit=dev`.
 * **Lockfile Único:** Somente `package-lock.json` é versionado (`bun.lock` removido); `engines.node >= 20.0.0`.
 * **Docker:** `Dockerfile` multi-stage, usuário `node` (non-root), volume `/app/data` para o SQLite e `HEALTHCHECK` contra `/api/health`.
+
+---
+
+## 9. Content-Security-Policy (7.6.2)
+
+* Em produção, o app sempre emite CSP. O padrão é **report-only**
+  (`Content-Security-Policy-Report-Only`), que apenas registra violações — sem bloquear nada.
+* Depois de pelo menos 7 dias em report-only **sem violações inesperadas** (via `CSP_REPORT_URI`
+  ou logs), ative o modo bloqueante com `CSP_ENFORCE=true`. Neste caso o cabeçalho passa a ser o
+  `Content-Security-Policy` (e o report-only é desligado nessa resposta).
+* Fora de produção nenhum dos dois cabeçalhos é emitido (o dev server do Vite injeta o próprio CSP para HMR).
+* Rótulos de UI não expõem o host do WebSocket a montante: o painel separa o stream servidor→navegador do
+  estado do feed a montante (`/api/health` / `feed-health`).

@@ -154,7 +154,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
               }));
               applyTickers(list);
             }
-          } catch (err: any) {
+          } catch (err) {
             addLog('WARN', `Erro ao processar pacote do stream: ${err?.message || err}`);
           }
         };
@@ -173,7 +173,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
 
         // Servidor encerrou o stream — reconectar com backoff.
         addLog('WARN', 'Stream encerrado pelo servidor. Reconectando...');
-      } catch (err: any) {
+      } catch (err) {
         if (err?.name === 'AbortError') return; // desmontagem deliberada
         const errorMsg = err?.message || 'Falha de rede no stream do servidor';
         setStatus(prev => ({ ...prev, connected: false, connecting: false, lastError: errorMsg }));

@@ -100,7 +100,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       } else {
         throw new Error('Falha na resposta do servidor.');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error fetching database info:', err);
       showToast('error', 'Falha ao Carregar Telemetria', 'Não foi possível obter dados do banco de dados.');
     } finally {
@@ -126,7 +126,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       } else {
         throw new Error(data.error || 'Falha na otimização.');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Vacuum error:', err);
       showToast('error', 'Erro na Otimização', err.message || 'Falha ao compactar o banco de dados.');
     } finally {
@@ -154,7 +154,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       } else {
         throw new Error('Erro ao gerar exportação.');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Export error:', err);
       showToast('error', 'Falha na Exportação', err.message || 'Não foi possível baixar o backup.');
     } finally {
@@ -182,7 +182,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       } else {
         throw new Error('Erro ao gerar relatório.');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Burnin export error:', err);
       showToast('error', 'Falha no Relatório', err.message || 'Não foi possível baixar o relatório de auditoria.');
     } finally {
@@ -210,7 +210,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       } else {
         throw new Error(data.error || 'Falha ao limpar tabela.');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Clear table error:', err);
       showToast('error', 'Erro ao Limpar Tabela', err.message || 'Falha na exclusão dos dados.');
     } finally {

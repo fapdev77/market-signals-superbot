@@ -89,7 +89,7 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
           setEditedPrompt(data.prompt);
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Erro ao buscar preview do prompt:', err);
       setErrorMsg(err.message || 'Falha ao conectar com o gerador de prompt.');
     } finally {
@@ -163,7 +163,7 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
       const review: AIReviewResponse = await res.json();
       onReviewComplete(review);
       onClose();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Falha ao executar auditoria com prompt:', err);
       setErrorMsg(err.message || 'Falha ao processar a auditoria com a IA.');
     } finally {

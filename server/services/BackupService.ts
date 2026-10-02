@@ -90,7 +90,7 @@ export function checkDatabaseIntegrity(dbPath: string, sqlEngine?: any): Integri
     }
 
     return { healthy: false, details: 'PRAGMA quick_check returned no result' };
-  } catch (err: any) {
+  } catch (err) {
     return { healthy: false, details: err?.message || String(err) };
   }
 }
@@ -149,7 +149,7 @@ export function restoreLatestValidBackup(dbPath: string, backupDir: string): Res
         fs.renameSync(tempPath, dbPath);
         console.warn(`♻️ [DB RECOVERY] Banco corrompido restaurado com sucesso a partir de: ${backup.filename}`);
         return { success: true, backupPath: backup.fullPath };
-      } catch (err: any) {
+      } catch (err) {
         console.error(`Falha ao copiar backup ${backup.filename}:`, err);
       }
     } else {

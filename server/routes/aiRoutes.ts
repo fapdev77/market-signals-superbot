@@ -186,7 +186,7 @@ export function createAIRouter(
         dailyMetrics,
         bestDay: [...dailyMetrics].sort((a, b) => b.winRate - a.winRate)[0] || null
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error computing signal performance hit rate:', err);
       res.status(500).json({ success: false, error: err?.message || 'Failed to compute hit rate' });
     }

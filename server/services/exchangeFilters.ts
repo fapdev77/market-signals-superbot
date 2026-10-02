@@ -2,9 +2,9 @@
  * 6.5.2 — Filtros do exchange (G-12) — módulo PURO, sem I/O.
  *
  * Lê PRICE_FILTER (tickSize), LOT_SIZE (stepSize, minQty) e o filtro de notional
- * mínimo do `exchangeInfo` da fapi. Nomes validados na fixture real de 2026-09-30
- * (tests/fixtures/binance/exchangeInfo.json): o filtro de notional na fapi chama-se
- * `MIN_NOTIONAL` com campo `notional` (NÃO `minNotional`, como no spot).
+ * mínimo do `exchangeInfo` da fapi. Nomes validados contra o `exchangeInfo` real de 2026-09-30:
+ * o filtro de notional na fapi chama-se `MIN_NOTIONAL` com campo `notional`
+ * (NÃO `minNotional`, como no spot).
  *
  * Sem filtro ⇒ null e o caller trata como "executabilidade desconhecida" (não bloqueia).
  */

@@ -327,7 +327,7 @@ export function initBinanceWebSocket() {
             `Fluxo em tempo real ativo: ${wsStatus.messagesReceived} pacotes recebidos de tickers.`
           );
         }
-      } catch (err: any) {
+      } catch (err) {
         addBinanceLog('WARN', 'WEBSOCKET', `Erro ao decodificar JSON do WebSocket: ${err.message}`);
       }
     });
@@ -360,7 +360,7 @@ export function initBinanceWebSocket() {
       }, delayMs);
     });
 
-  } catch (err: any) {
+  } catch (err) {
     wsStatus.connected = false;
     wsStatus.connecting = false;
     wsStatus.lastError = err.message;

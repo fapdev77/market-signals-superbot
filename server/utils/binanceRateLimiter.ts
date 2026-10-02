@@ -36,6 +36,16 @@ export class BinanceRateLimiter {
   }
 
   /**
+   * 7.1.3 — define o limite de REQUEST_WEIGHT do exchangeInfo REAL. Chamado por
+   * `captureExchangeRateLimits`; nunca é assumido no código.
+   */
+  static setRequestWeightLimit(limit: number) {
+    if (Number.isFinite(limit) && limit > 0) {
+      state.maxWeight1m = limit;
+    }
+  }
+
+  /**
    * Updates used weight from Binance response headers (x-mbx-used-weight-1m or x-mbx-used-weight)
    */
   static updateFromHeaders(headers: Record<string, string | string[] | undefined>) {
@@ -46,6 +56,19 @@ export class BinanceRateLimiter {
       const parsed = parseInt(String(usedWeight), 10);
       if (!isNaN(parsed)) {
         state.usedWeight1m = parsed;
+        // 7.1.3: orçamento de peso — alerta ao passar de 70% do limite real.
+        const warnAt = state.maxWeight1m * 0.7;
+        if (state.maxWeight1m > 0 && state.usedWeight1m >= warnAt) {
+          const pct = Math.round((state.usedWeight1m / state.maxWeight1m) * 100);
+          void import('../services/operationalAlerts.js')
+            .then(({ emitOperationalAlert }) => emitOperationalAlert(
+              'RATE_LIMIT_BUDGET',
+              pct >= 90 ? 'HIGH' : 'MEDIUM',
+              `Peso REST em ${state.usedWeight1m}/${state.maxWeight1m} (${pct}%) do orçamento por minuto.`,
+              { usedWeight1m: state.usedWeight1m, maxWeight1m: state.maxWeight1m, pct }
+            ))
+            .catch(() => { /* best-effort */ });
+        }
         // If weight > 85% of limit (1020 / 1200), preemptively throttle
         if (state.usedWeight1m >= 1000) {
           state.isThrottled = true;

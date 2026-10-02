@@ -6,17 +6,46 @@ import { PROFILE_PRESETS } from '../../src/constants.js';
 import { processTickerState, buildTradeSignal, SIGNAL_LOOKBACK_CANDLES } from '../signalEngine.js';
 import { resolvePosition, type PositionState } from './positionResolution.js';
 // 6.5.1/CA-5.2: formatação de cálculo usa dRound (decimal exato), nunca toFixed.
-import { dRound } from '../utils/decimal.js';
+// 7.6.3: a aritmética de PnL e custos do backtest também usa decimal (dAdd/dSub/dMul/dDiv),
+// fechando exato a soma das pernas antes das taxas/funding.
+import { dAdd, dSub, dMul, dDiv, dRound } from '../utils/decimal.js';
 import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './FundingService.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
 import { calculateFitnessExpectancy, evaluateAutoTuneHoldout } from './autoTuneOptimizer.js';
 // 6.7.5/G-15: split temporal 3-way — treino → validação → holdout intocado (blocos contíguos).
 import { splitThreeWay } from './autoTuneSplit.js';
+// 7.2.1/CA-2.2: o braço "com confirmação" usa o MESMO código puro do ciclo live
+// (`evaluatePendingEntry` + `confirmEntry`). Nada de reimplementação paralela.
+import { evaluatePendingEntry } from './pendingEntryLifecycle.js';
+import { confirmEntry } from './entryConfirmation.js';
 
 // Deterministic Pseudo-Random Number Generator (Mulberry32) for reproducible backtests and mutations
 // (também usado pelo alinhamento de janela do runAutoTune)
 const BACKTEST_CANDLE_MS = 15 * 60 * 1000;
+
+/**
+ * 7.2.1 — agrega candles de 1m em 5m para a regra R4 do `confirmEntry` no backtest.
+ * LIMITAÇÃO declarada: o live usa a vela de 5m REAL da exchange; aqui a 5m é derivada
+ * das 1m porque o histórico só tem 1m.
+ */
+function aggregateTo5m(candles: KlineCandle[]): KlineCandle[] {
+  const out: KlineCandle[] = [];
+  for (let i = 0; i < candles.length; i += 5) {
+    const chunk = candles.slice(i, i + 5);
+    if (chunk.length === 0) continue;
+    out.push({
+      timestamp: chunk[0].timestamp,
+      open: chunk[0].open,
+      high: Math.max(...chunk.map(c => c.high)),
+      low: Math.min(...chunk.map(c => c.low)),
+      close: chunk[chunk.length - 1].close,
+      volume: chunk.reduce((a, c) => a + c.volume, 0),
+      takerBuyVolume: chunk.reduce((a, c) => a + c.takerBuyVolume, 0)
+    });
+  }
+  return out;
+}
 
 function createPRNG(seed: number = 42) {
   let s = Math.floor(seed) || 42;
@@ -92,6 +121,13 @@ export interface BacktestResolution {
   isWin: boolean;
   /** Gross PnL in % of the position notional, BEFORE fees/funding. */
   grossPnlPct: number;
+  /**
+   * True when THIS candle's legs close the ENTIRE remaining position (final stop
+   * or TP2). Mirrors `resolvePosition.hasClosedFull` and the live path
+   * (`TickProcessor`), so a runner stop after a TP1 partial frees the engine
+   * instead of being re-resolved every candle (partial leg size is 0.5).
+   */
+  hasClosedFull: boolean;
   nextState: BacktestPositionFlags & { stopLoss: number };
 }
 
@@ -133,6 +169,7 @@ export function resolveBacktestPosition(
     exitLegs: res.exitLegs,
     isWin: res.isWin,
     grossPnlPct: res.grossPnlPct,
+    hasClosedFull: res.hasClosedFull,
     nextState: {
       partialTaken: res.nextPositionState.partialTaken,
       isBreakevenActive: res.nextPositionState.isBreakevenActive,
@@ -463,7 +500,31 @@ export class BacktestEngine {
     let fundingFallbackEventsTotal = 0;
 
     // Phase 2.5.4: entry is deferred to the next candle's open to remove lookahead bias.
-    let pendingEntry: { direction: 'LONG' | 'SHORT'; stopLoss: number; target1: number; target2: number } | null = null;
+    let pendingEntry: { direction: 'LONG' | 'SHORT'; stopLoss: number; target1: number; target2: number; rIndex: number; createdAt: number } | null = null;
+
+    // 7.2.1 — braço "com confirmação": o pendente é governado pelas funções puras do live.
+    let pendingConfirmation: {
+      signal: { direction: 'LONG' | 'SHORT'; entryZone: [number, number]; stopLoss: number; target1: number; target2: number; strategyCategory?: string; confluenceScore?: number; createdAt: number };
+      startIndex: number;
+      rIndex: number;
+    } | null = null;
+
+    // 7.2 — estatísticas por sinal emitido (iguais nos dois braços; R = 0 para não preenchido).
+    const ecStats = {
+      enabled: config.entryConfirmation === true,
+      signalsEmitted: 0,
+      entriesFilled: 0,
+      entriesNotFilled: 0,
+      entriesInvalidated: 0,
+      rPerSignal: [] as number[],
+      fillMinutesSum: 0,
+      fillCount: 0,
+      limitation: (config.entryConfirmation === true
+        ? 'R4 usa vela de 5m AGREGADA de 1m (o live usa a 5m real da exchange); R por sinal emitido (não preenchido = 0).'
+        : undefined) as string | undefined
+    };
+    let activeSignalRIndex = -1;
+    let activeRiskPct = 0;
 
     // Track active position state
     let isBreakevenActive = false;
@@ -505,6 +566,58 @@ export class BacktestEngine {
       // Phase 2.5.4: fill a signal raised on the PREVIOUS candle at this candle's open.
       // R-9: the fill candle registers the position but cannot resolve it.
       let openedThisCandle = false;
+
+      // 7.2.1 — braço com confirmação: pendente resolvido pelas funções puras do live.
+      if (pendingConfirmation && !inPosition) {
+        const pc = pendingConfirmation;
+        const candles1m = candleObjects.slice(pc.startIndex + 1, i + 1);
+        const evaluation = evaluatePendingEntry({
+          signal: {
+            id: 'bt-pending',
+            direction: pc.signal.direction,
+            entryZone: pc.signal.entryZone,
+            stopLoss: pc.signal.stopLoss,
+            target1: pc.signal.target1,
+            target2: pc.signal.target2,
+            strategyCategory: pc.signal.strategyCategory,
+            createdAt: pc.signal.createdAt
+          },
+          candles1m,
+          // Mesmo wrapper do live (server.ts): o score cai para o do pendente quando ausente.
+          confirm: (p) => confirmEntry({ ...p, confluenceScore: p.confluenceScore ?? pc.signal.confluenceScore ?? 0 }),
+          confluenceScore: pc.signal.confluenceScore,
+          klines5m: aggregateTo5m(candles1m)
+        });
+
+        if (evaluation.transition === 'ACTIVATED') {
+          inPosition = true;
+          isBreakevenActive = false;
+          partialTaken = false;
+          openedThisCandle = true;
+          posDirection = pc.signal.direction;
+          const rawFill = evaluation.entryPrice ?? candle.close;
+          entryPrice = posDirection === 'LONG'
+            ? dMul(rawFill, dAdd(1, dDiv(slipPct, 100)))
+            : dMul(rawFill, dSub(1, dDiv(slipPct, 100)));
+          entryTime = candle.timestamp;
+          stopLoss = pc.signal.stopLoss;
+          takeProfit1 = pc.signal.target1;
+          takeProfit2 = pc.signal.target2;
+          activeSignalRIndex = pc.rIndex;
+          activeRiskPct = entryPrice > 0 ? dMul(dDiv(Math.abs(dSub(entryPrice, stopLoss)), entryPrice), 100) : 0;
+          ecStats.entriesFilled++;
+          ecStats.fillCount++;
+          ecStats.fillMinutesSum += Math.max(0, (candle.timestamp - pc.signal.createdAt) / 60000);
+          pendingConfirmation = null;
+        } else if (evaluation.transition === 'ENTRY_NOT_FILLED') {
+          ecStats.entriesNotFilled++;
+          pendingConfirmation = null;
+        } else if (evaluation.transition === 'ENTRY_INVALIDATED') {
+          ecStats.entriesInvalidated++;
+          pendingConfirmation = null;
+        }
+      }
+
       if (pendingEntry && !inPosition) {
         inPosition = true;
         isBreakevenActive = false;
@@ -512,16 +625,24 @@ export class BacktestEngine {
         openedThisCandle = true;
         posDirection = pendingEntry.direction;
         entryPrice = pendingEntry.direction === 'LONG'
-          ? candle.open * (1 + slipPct / 100)
-          : candle.open * (1 - slipPct / 100);
+          ? dMul(candle.open, dAdd(1, dDiv(slipPct, 100)))
+          : dMul(candle.open, dSub(1, dDiv(slipPct, 100)));
         entryTime = candle.timestamp;
         stopLoss = pendingEntry.stopLoss;
         takeProfit1 = pendingEntry.target1;
         takeProfit2 = pendingEntry.target2;
+        activeSignalRIndex = pendingEntry.rIndex;
+        activeRiskPct = entryPrice > 0 ? dMul(dDiv(Math.abs(dSub(entryPrice, stopLoss)), entryPrice), 100) : 0;
+        ecStats.entriesFilled++;
+        ecStats.fillCount++;
+        ecStats.fillMinutesSum += Math.max(0, (candle.timestamp - pendingEntry.createdAt) / 60000);
         pendingEntry = null;
       }
 
-      if (!inPosition) {
+      // 7.2.1 — enquanto há um pendente (controle ou confirmação) o sinal não é
+      // reemitido: reproduz o live (um PENDING_ENTRY por vez) e evita sobrescrever
+      // o pendente do braço com confirmação antes de ele preencher/expirar.
+      if (!inPosition && !pendingConfirmation && !pendingEntry) {
         // Construct raw ticker state for signalEngine
         const rawTicker = {
           symbol: config.symbol,
@@ -557,17 +678,41 @@ export class BacktestEngine {
           );
 
           if (signal && signal.validationStatus !== 'REJECTED_SPIKE') {
-            // Phase 2.5.4: the signal is derived from THIS candle's close, so the fill belongs to the
-            // NEXT candle's open. Filling at this candle's open was lookahead bias.
-            pendingEntry = {
-              direction: signal.direction,
-              stopLoss: signal.stopLoss,
-              target1: signal.target1,
-              target2: signal.target2
-            };
+            const rIndex = ecStats.rPerSignal.length;
+            ecStats.rPerSignal.push(0);
+            ecStats.signalsEmitted++;
+
+            if (config.entryConfirmation === true) {
+              // 7.2.1 — braço com confirmação: PENDING_ENTRY gerenciado pelo ciclo puro do live.
+              pendingConfirmation = {
+                signal: {
+                  direction: signal.direction,
+                  entryZone: signal.entryZone,
+                  stopLoss: signal.stopLoss,
+                  target1: signal.target1,
+                  target2: signal.target2,
+                  strategyCategory: signal.strategyCategory,
+                  confluenceScore: signal.confluenceScore,
+                  createdAt: candle.timestamp
+                },
+                startIndex: i,
+                rIndex
+              };
+            } else {
+              // Phase 2.5.4: the signal is derived from THIS candle's close, so the fill belongs to the
+              // NEXT candle's open. Filling at this candle's open was lookahead bias.
+              pendingEntry = {
+                direction: signal.direction,
+                stopLoss: signal.stopLoss,
+                target1: signal.target1,
+                target2: signal.target2,
+                rIndex,
+                createdAt: candle.timestamp
+              };
+            }
           }
         }
-      } else if (!openedThisCandle) {
+      } else if (inPosition && !openedThisCandle) {
         // R-9 & M2.4: resolution via the pure, unit-tested resolver (stop-first,
         // TP1 = 50% partial + breakeven, runner until TP2/breakeven-stop).
         const resolution = resolveBacktestPosition(
@@ -586,7 +731,10 @@ export class BacktestEngine {
           // Which legs closed on THIS candle?
           const closedLegs = resolution.exitLegs;
           const closedSize = closedLegs.reduce((a, l) => a + l.size, 0);
-          const positionFullyClosed = closedSize >= 0.999;
+          // 7.2 fix — usa o sinal do resolver compartilhado (paridade com o live em
+          // TickProcessor): um runner parado após o parcial de TP1 fecha a posição,
+          // mesmo com `closedSize` = 0.5, e não a re-resolve a cada candle.
+          const positionFullyClosed = resolution.hasClosedFull;
 
           const durationMin = Math.max(1, Math.round((candle.timestamp - entryTime) / (60 * 1000)));
 
@@ -605,30 +753,31 @@ export class BacktestEngine {
           fundingCoverageCoveredTotal += fundingResult.coveredEvents;
           fundingFallbackEventsTotal += Math.max(0, fundingResult.expectedEvents - fundingResult.coveredEvents);
 
-          // Net trade PnL = Gross % (this candle's legs) - fees on closed size - funding on closed size
-          const feeCostPct = roundtripFee * closedSize;
+          // Net trade PnL = Gross % (this candle's legs) - fees on closed size - funding on closed size.
+          // 7.6.3: tudo em decimal — grossPnlPct já é a soma decimal das pernas.
+          const feeCostPct = dMul(roundtripFee, closedSize);
           const fundingCostPct = fundingResult.totalFundingCostPct;
-          const tradePnlPct = resolution.grossPnlPct - feeCostPct - fundingCostPct;
-          const profit = (tradePnlPct / 100) * balance;
-          balance += profit;
+          const tradePnlPct = dSub(dSub(resolution.grossPnlPct, feeCostPct), fundingCostPct);
+          const profit = dMul(dDiv(tradePnlPct, 100), balance);
+          balance = dAdd(balance, profit);
 
           // R-10: the in/out-of-sample split is aggregated from the recorded
           // trades after the loop (see aggregateWalkForward), so it stays in one
           // place and follows the rolling windows.
           if (tradePnlPct > 0) {
             wins++;
-            totalProfit += Math.max(0, profit);
-            totalWinPctSum += Math.abs(tradePnlPct);
+            totalProfit = dAdd(totalProfit, Math.max(0, profit));
+            totalWinPctSum = dAdd(totalWinPctSum, Math.abs(tradePnlPct));
           } else {
             losses++;
-            totalLoss += Math.abs(profit);
-            totalLossPctSum += Math.abs(tradePnlPct);
+            totalLoss = dAdd(totalLoss, Math.abs(profit));
+            totalLossPctSum = dAdd(totalLossPctSum, Math.abs(tradePnlPct));
           }
 
           if (balance > peakBalance) {
             peakBalance = balance;
           } else {
-            const drawdown = ((peakBalance - balance) / peakBalance) * 100;
+            const drawdown = dMul(dDiv(dSub(peakBalance, balance), peakBalance), 100);
             if (drawdown > maxDrawdown) maxDrawdown = drawdown;
           }
 
@@ -666,6 +815,11 @@ export class BacktestEngine {
             inPosition = false;
             partialTaken = false;
             isBreakevenActive = false;
+            // 7.2 — R do sinal emitido que gerou este trade (risco original do sinal).
+            if (activeSignalRIndex >= 0) {
+              ecStats.rPerSignal[activeSignalRIndex] = activeRiskPct > 0 ? dRound(tradePnlPct / activeRiskPct, 4) : 0;
+              activeSignalRIndex = -1;
+            }
           }
         }
       }
@@ -673,8 +827,8 @@ export class BacktestEngine {
 
     const totalTrades = wins + losses;
     const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
-    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? 9.9 : 0;
-    const netProfitPct = ((balance - initialBalance) / initialBalance) * 100;
+    const profitFactor = totalLoss > 0 ? dDiv(totalProfit, totalLoss) : totalProfit > 0 ? 9.9 : 0;
+    const netProfitPct = dMul(dDiv(dSub(balance, initialBalance), initialBalance), 100);
     const avgWinPct = wins > 0 ? totalWinPctSum / wins : 0;
     const avgLossPct = losses > 0 ? totalLossPctSum / losses : 0;
     const avgRiskReward = avgLossPct > 0 ? avgWinPct / avgLossPct : preset.targetRiskRatio;
@@ -747,6 +901,7 @@ export class BacktestEngine {
       startTime: klines[0].openTime,
       endTime: klines[klines.length - 1].openTime,
       totalCandlesTested: klines.length,
+      entryConfirmation: ecStats,
       totalTrades,
       winningTrades: wins,
       losingTrades: losses,

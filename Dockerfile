@@ -34,7 +34,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 
 # Application state lives here; mount a volume to persist it.
-RUN mkdir -p /app/data
+# chown before VOLUME/USER so the unprivileged `node` user can write the database
+# (otherwise the server fails at boot when /app/data is owned by root).
+RUN mkdir -p /app/data && chown -R node:node /app/data
 VOLUME ["/app/data"]
 
 # Cloud Run / orchestration platforms inject PORT. HOST stays 0.0.0.0 to accept container traffic.

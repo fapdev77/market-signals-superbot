@@ -41,7 +41,7 @@ export class WebhookAlertSink implements AlertSink {
         signal: AbortSignal.timeout(5000)
       });
       return res.ok;
-    } catch (err: any) {
+    } catch (err) {
       console.error(`[AlertService] Erro ao enviar webhook para ${this.url}:`, err?.message || err);
       return false;
     }
@@ -73,7 +73,7 @@ export class TelegramAlertSink implements AlertSink {
         signal: AbortSignal.timeout(5000)
       });
       return res.ok;
-    } catch (err: any) {
+    } catch (err) {
       console.error('[AlertService] Erro ao enviar alerta Telegram:', err?.message || err);
       return false;
     }

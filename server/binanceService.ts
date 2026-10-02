@@ -46,8 +46,15 @@ export const DEFAULT_SYMBOLS = [
   'LINKUSDT',
   'AAVEUSDT',
   'AVAXUSDT',
-  'NEARUSDT',
-  // TradFi Equities / US Stocks & Commodities
+  'NEARUSDT'
+];
+
+/**
+ * 7.1.2/D2 — fonte única dos símbolos TradFi monitorados.
+ * Os símbolos TradFi foram removidos de `DEFAULT_SYMBOLS`: quem decide o que é
+ * monitorado no TradFi é esta lista (configurável) ∩ registro descoberto.
+ */
+export const DEFAULT_TRADFI_MONITORED_SYMBOLS = [
   'TSLAUSDT',
   'NVDAUSDT',
   'AAPLUSDT',
@@ -56,6 +63,57 @@ export const DEFAULT_SYMBOLS = [
   'XAUUSDT',
   'PAXGUSDT'
 ];
+
+/** Teto default de símbolos TradFi monitorados (7.1.2); sobreponível por env. */
+export const DEFAULT_TRADFI_MAX_MONITORED = 10;
+
+/** Avs já emitidos sobre símbolos configurados que faltam no registro (aviso uma vez). */
+const tradfiMissingRegistryWarnings = new Set<string>();
+
+/** Test-only: limpa o controle de avisos de símbolos ausentes. */
+export function __resetTradfiMonitoredWarningsForTests(): void {
+  tradfiMissingRegistryWarnings.clear();
+}
+
+/** 7.1.2 — lista monitorada configurada (env `TRADFI_MONITORED_SYMBOLS`). */
+export function getConfiguredTradfiMonitoredSymbols(): string[] {
+  const raw = process.env.TRADFI_MONITORED_SYMBOLS;
+  const list = raw && raw.trim()
+    ? raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+    : [...DEFAULT_TRADFI_MONITORED_SYMBOLS];
+  return Array.from(new Set(list));
+}
+
+/** 7.1.2 — teto de símbolos TradFi monitorados (env `TRADFI_MAX_MONITORED`). */
+export function getTradfiMaxMonitored(): number {
+  const raw = Number(process.env.TRADFI_MAX_MONITORED);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_TRADFI_MAX_MONITORED;
+}
+
+/**
+ * 7.1.2 — interseção entre a lista configurada e o registro descoberto (status TRADING,
+ * pois o registro só contém TRADING), truncada ao teto. Símbolo configurado ausente do
+ * registro é ignorado com aviso emitido uma única vez.
+ */
+export function getTradfiMonitoredSymbols(registry: TradfiAsset[] = TRADFI_ASSETS): string[] {
+  const configured = getConfiguredTradfiMonitoredSymbols();
+  const available = new Set(registry.map(a => a.symbol));
+
+  const missing = configured.filter(s => !available.has(s));
+  const newlyMissing = missing.filter(s => !tradfiMissingRegistryWarnings.has(s));
+  if (newlyMissing.length > 0) {
+    for (const s of newlyMissing) tradfiMissingRegistryWarnings.add(s);
+    addBinanceLog('WARN', 'REST_API', `TradFi monitorado ignorado (ausente do registro): ${newlyMissing.join(', ')}.`);
+  }
+
+  const max = getTradfiMaxMonitored();
+  const intersected = configured.filter(s => available.has(s));
+  if (intersected.length > max) {
+    addBinanceLog('WARN', 'REST_API', `Lista TradFi monitorada truncada para ${max} símbolo(s) (TRADFI_MAX_MONITORED).`);
+    return intersected.slice(0, max);
+  }
+  return intersected;
+}
 
 // ---------------------------------------------------------------------------------------------
 // TradFi registry (Phase 2.5.5)
@@ -98,8 +156,42 @@ const COMMODITY_BASE_ASSETS = new Set([
 export const TRADFI_ASSETS: TradfiAsset[] = [];
 
 let tradfiRegistryRefreshedAt = 0;
+/** 7.1.1 — instante do último resultado BOM (usado para decidir a validade do registro). */
+let tradfiRegistryAsOf = 0;
 let tradfiContractsCache: Set<string> | null = null;
 const TRADFI_REGISTRY_TTL_MS = 5 * 60 * 1000;
+/** 7.1.1 — o último resultado bom vale por até 24 h antes de o registro esvaziar. */
+export const TRADFI_REGISTRY_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+
+/** 7.1.1 — instante do último resultado bom do registro TradFi (0 = nunca houve). */
+export function getTradfiRegistryAsOf(): number {
+  return tradfiRegistryAsOf;
+}
+
+/** 7.1.3 — limite de REQUEST_WEIGHT do exchangeInfo REAL (0 = ainda não conhecido). */
+let exchangeRequestWeightLimit = 0;
+export function getExchangeRequestWeightLimit(): number {
+  return exchangeRequestWeightLimit;
+}
+
+/**
+ * 7.1.3 — captura o limite `REQUEST_WEIGHT` do `exchangeInfo` real e o propaga ao limiter.
+ * Nunca assume o valor: se o campo não vier, o limite permanece desconhecido.
+ */
+function captureExchangeRateLimits(
+  exchangeInfo: { rateLimits?: Array<{ rateLimitType?: string; limit?: number }> } | null | undefined
+): void {
+  const limits = Array.isArray(exchangeInfo?.rateLimits) ? exchangeInfo.rateLimits : [];
+  for (const l of limits) {
+    if (String(l?.rateLimitType || '').toUpperCase() !== 'REQUEST_WEIGHT') continue;
+    const limit = Number(l?.limit);
+    if (Number.isFinite(limit) && limit > 0) {
+      exchangeRequestWeightLimit = limit;
+      BinanceRateLimiter.setRequestWeightLimit(limit);
+      return;
+    }
+  }
+}
 
 /**
  * Classifies a single `exchangeInfo` symbol entry, or returns null when the exchange gives no evidence
@@ -161,6 +253,7 @@ export async function refreshSymbolFilters(): Promise<void> {
   if (symbolFiltersCache.size > 0 && now - symbolFiltersRefreshedAt < SYMBOL_FILTERS_TTL_MS) return;
   try {
     const { data } = await fetchWithFallback(() => '/fapi/v1/exchangeInfo');
+    captureExchangeRateLimits(data);
     const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
     for (const s of symbols) {
       const f = extractSymbolFilters(s);
@@ -210,36 +303,55 @@ export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
     }
   };
 
+  let discoverySucceeded = false;
   try {
     const { data } = await fetchWithFallback(() => '/fapi/v1/exchangeInfo');
+    captureExchangeRateLimits(data);
     const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
     processSymbolList(symbols);
+    discoverySucceeded = true;
 
     addBinanceLog(
       'INFO',
       'REST_API',
       `TradFi: ${discovered.length} contrato(s) descoberto(s) via exchangeInfo${unclassified.length > 0 ? ` (${unclassified.length} TRADIFI_PERPETUAL não classificado(s): ${unclassified.join(', ')})` : ''}.`
     );
-  } catch (err: any) {
-    try {
-      const { readFileSync } = await import('fs');
-      const { resolve } = await import('path');
-      const fixturePath = resolve(process.cwd(), 'tests/fixtures/binance/exchangeInfo.json');
-      const raw = JSON.parse(readFileSync(fixturePath, 'utf8'));
-      if (Array.isArray(raw?.symbols)) {
-        processSymbolList(raw.symbols);
-        addBinanceLog('INFO', 'REST_API', `TradFi: ${discovered.length} contrato(s) carregado(s) via fixture oficial de contingência.`);
-      }
-    } catch {
-      addBinanceLog('WARN', 'REST_API', `Falha ao carregar exchangeInfo para TradFi: ${err?.message}. Registro mantido vazio.`);
-    }
+  } catch (err) {
+    // 7.1.1/D1 — SEM fixture de contingência: dado velho NÃO é dado vivo. O último
+    // resultado bom vale por até 24 h; além disso (ou sem resultado bom), o registro esvazia.
+    const staleAge = tradfiRegistryAsOf > 0 ? now - tradfiRegistryAsOf : Infinity;
+    const keepLastGood = tradfiRegistryAsOf > 0 && staleAge <= TRADFI_REGISTRY_MAX_STALE_MS;
+    addBinanceLog(
+      keepLastGood ? 'WARN' : 'ERROR',
+      'REST_API',
+      keepLastGood
+        ? `exchangeInfo indisponível (${err?.message}). Mantendo o último registro TradFi bom (${Math.round(staleAge / 60000)} min atrás).`
+        : `exchangeInfo indisponível (${err?.message}) e sem registro TradFi bom recente. Registro vazio: nenhum sinal TradFi novo será emitido.`
+    );
+    void import('./services/operationalAlerts.js')
+      .then(({ emitOperationalAlert }) => emitOperationalAlert(
+        'TRADFI_REGISTRY_UNAVAILABLE',
+        'HIGH',
+        `Registro TradFi indisponível: exchangeInfo falhou (${err?.message || err}). ${keepLastGood ? 'Mantendo o último resultado bom (≤24 h).' : 'Registro vazio (fail-closed).'}`,
+        { error: err?.message || String(err), staleAgeMs: Number.isFinite(staleAge) ? staleAge : null }
+      ))
+      .catch(() => { /* best-effort: nunca interfere no tick */ });
+    tradfiRegistryRefreshedAt = now;
   }
 
-  // Mutate in place so existing importers keep observing the same array binding.
-  TRADFI_ASSETS.length = 0;
-  TRADFI_ASSETS.push(...discovered);
-  tradfiRegistryRefreshedAt = now;
-  tradfiContractsCache = new Set(discovered.map(a => a.symbol));
+  if (discoverySucceeded) {
+    // Mutate in place so existing importers keep observing the same array binding.
+    TRADFI_ASSETS.length = 0;
+    TRADFI_ASSETS.push(...discovered);
+    tradfiRegistryAsOf = now;
+    tradfiContractsCache = new Set(discovered.map(a => a.symbol));
+  } else if (!(tradfiRegistryAsOf > 0 && now - tradfiRegistryAsOf <= TRADFI_REGISTRY_MAX_STALE_MS)) {
+    // Falha sem resultado bom dentro de 24 h: esvazia (fail-closed).
+    TRADFI_ASSETS.length = 0;
+    tradfiContractsCache = new Set();
+    tradfiRegistryAsOf = 0;
+  }
+
   return TRADFI_ASSETS;
 }
 
@@ -258,6 +370,25 @@ export async function fetchBinanceTradfiContracts(): Promise<Set<string>> {
 export function getTradfiAsset(symbol: string): TradfiAsset | undefined {
   const clean = String(symbol || '').toUpperCase();
   return TRADFI_ASSETS.find(a => a.symbol === clean);
+}
+
+/** Test-only: injeta um registro TradFi sem rede (`asOf` = instante do último resultado bom). */
+export function __seedTradfiRegistryForTests(assets: TradfiAsset[], asOf: number): void {
+  TRADFI_ASSETS.length = 0;
+  TRADFI_ASSETS.push(...assets);
+  tradfiRegistryAsOf = asOf;
+  tradfiRegistryRefreshedAt = 0; // força uma nova tentativa de refresh
+  tradfiContractsCache = new Set(assets.map(a => a.symbol));
+}
+
+/** Test-only: zera o estado do registro TradFi. */
+export function __resetTradfiRegistryForTests(): void {
+  TRADFI_ASSETS.length = 0;
+  tradfiRegistryAsOf = 0;
+  tradfiRegistryRefreshedAt = 0;
+  tradfiContractsCache = null;
+  exchangeRequestWeightLimit = 0;
+  tradfiMissingRegistryWarnings.clear();
 }
 
 /**
@@ -323,7 +454,7 @@ export const TRADFI_CATEGORY_TO_SCHEDULE_MARKET: Record<TradfiCategory, string> 
 
 /**
  * 6.1.4 — `underlyingType` reportado pelo `exchangeInfo` → chave do `tradingSchedule`.
- * Validado contra as chaves reais capturadas em `tests/fixtures/binance/tradingSchedule.json`
+ * Validado contra as chaves reais observadas no endpoint `tradingSchedule` da exchange
  * (EQUITY, COMMODITY, FX, CN_EQUITY, HK_EQUITY, KR_EQUITY).
  */
 export const TRADFI_UNDERLYING_TO_SCHEDULE_MARKET: Record<string, string> = {
@@ -401,7 +532,7 @@ export async function refreshTradingSchedule(force: boolean = false): Promise<bo
     tradingScheduleLastError = null;
     recordFeedSuccess('tradingSchedule');
     return true;
-  } catch (err: any) {
+  } catch (err) {
     recordFeedFailure('tradingSchedule', err?.message || String(err));
     tradingScheduleLastError = err?.message || String(err);
     // Um calendário anterior ainda dentro de 2× TTL continua utilizável (aviso sem derrubar o gate).
@@ -504,10 +635,21 @@ export function getTradfiExtendedScoreBonus(sessionType?: TradingSessionType | n
  * - Fail-closed if tradingSchedule is missing and TRADFI_SCHEDULE_FALLBACK is not 'clock'.
  */
 export function canGenerateSignalsForAsset(
-  asset: { symbol: string; contractType?: string; tradfiCategory?: TradfiCategory | null },
+  asset: { symbol: string; contractType?: string; tradfiCategory?: TradfiCategory | null; underlyingType?: string },
   at: Date = new Date()
 ): { allow: boolean; reason?: string; session?: TradingSessionType; scoreBonus?: number } {
   const contractType = String(asset.contractType || '').toUpperCase();
+
+  // 7.1.4: contratos sem calendário publicado (PREMARKET) NUNCA geram sinais —
+  // fail-closed por ausência de sessão, mesmo que apareçam na lista monitorada.
+  const underlying = String(asset.underlyingType || '').toUpperCase();
+  if (underlying && TRADFI_UNDERLYING_NO_CALENDAR.has(underlying)) {
+    incrementMetric('tradingScheduleBlocks');
+    return {
+      allow: false,
+      reason: `Contrato ${underlying} sem calendário de sessão publicado pela exchange (fail-closed).`
+    };
+  }
 
   // M1.3: Crypto perpetuals are NEVER blocked by traditional market calendar
   if (contractType !== 'TRADIFI_PERPETUAL') {
@@ -571,9 +713,15 @@ export function isScheduleGatedSymbol(asset: {
  * (`scheduleGated`) e mantém o registro do bloqueio em métrica.
  */
 export function evaluateTickTradfiGate(
-  asset: { symbol: string; contractType?: string; tradfiCategory?: TradfiCategory | null },
+  asset: { symbol: string; contractType?: string; tradfiCategory?: TradfiCategory | null; underlyingType?: string },
   at: Date = new Date()
 ): { allow: boolean; reason?: string; session?: TradingSessionType; scoreBonus?: number; scheduleGated: boolean } {
+  // 7.1.4: PREMARKET é fail-closed mesmo antes da checagem de escopo do gate.
+  const underlying = String(asset.underlyingType || '').toUpperCase();
+  if (underlying && TRADFI_UNDERLYING_NO_CALENDAR.has(underlying)) {
+    return { ...canGenerateSignalsForAsset(asset, at), scheduleGated: true };
+  }
+
   const scheduleGated = isScheduleGatedSymbol(asset);
   if (!scheduleGated) {
     // PERPETUAL: nunca bloqueado por calendário (M1.3 / 6.4.1).
@@ -666,7 +814,7 @@ async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => stri
 
       return { data: response.data, endpoint: ep.base };
 
-    } catch (err: any) {
+    } catch (err) {
       const latency = Date.now() - startTime;
       const status = err?.status || 0;
       const errMsg = err?.message || 'Falha de conexão com a API';
@@ -730,7 +878,7 @@ export async function fetchBinanceFuturesTickers(symbolsToFilter?: string[]): Pr
     }
     recordFeedFailure('ticker', 'resposta de tickers vazia/malformada');
     return [];
-  } catch (err: any) {
+  } catch (err) {
     recordFeedFailure('ticker', err?.message || 'tickers REST inacessível');
     const now = Date.now();
     if (now - lastFallbackNoticeLogged > 30000) {
@@ -960,7 +1108,7 @@ export async function fetchFundingRate(symbol: string): Promise<{
           };
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       recordFeedFailure('funding', err?.message || 'premiumIndex falhou para ' + symbol);
       // Fall through to the cached value below (and report isDegraded)
     }
@@ -1298,7 +1446,7 @@ export async function fetchKlines(
       recordFeedSuccess('klines');
       return candles;
     }
-  } catch (err: any) {
+  } catch (err) {
     recordFeedFailure('klines', err?.message || 'klines falhou para ' + symbol);
     addBinanceLog('WARN', 'REST_API', `Falha ao obter klines para ${symbol} (${interval}): ${err?.message || err}`);
   }

@@ -4,7 +4,7 @@
  * REGRA DO DIRETÓRIO
  * ------------------
  * Nada em `server/demo/` pode ser chamado sem que `ALLOW_SYNTHETIC_DATA === 'true'` (ou, no
- * caso de seeds de teste, via `tests/helpers/backtestSeed.ts`). Os chamadores ficam responsáveis
+ * caso de seeds de teste). Os chamadores ficam responsáveis
  * pelo gate; este diretório só produz o dado e o marca como `DEMO` na persistência.
  *
  * Motivo: antes das Fases 1/2.5 os geradores estavam espalhados por `binanceService`,

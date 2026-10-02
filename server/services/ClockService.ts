@@ -93,7 +93,7 @@ export async function checkBinanceServerTimeDrift(
       serverTime: adjustedServerTime,
       alertService
     });
-  } catch (err: any) {
+  } catch (err) {
     console.warn('[ClockService] Falha ao consultar /fapi/v1/time:', err?.message || err);
     return { driftMs: lastKnownDriftMs, degraded: clockDegraded };
   }

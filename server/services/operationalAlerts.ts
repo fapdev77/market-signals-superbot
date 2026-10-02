@@ -6,7 +6,8 @@
  * por chave já existente (garante o "exatamente 1 alerta na janela" do CA-6.1).
  *
  * Catálogo FECHADO (6.6.1): FEED_DEGRADED, WS_SILENT, RATE_LIMIT_COOLDOWN,
- * KILL_SWITCH_CHANGED, BACKUP_FAILED, LEDGER_WRITE_FAILED, DB_SIZE_THRESHOLD,
+ * RATE_LIMIT_BUDGET (7.1.3), KILL_SWITCH_CHANGED, BACKUP_FAILED, LEDGER_WRITE_FAILED,
+ * LEDGER_RECONCILED (7.3.2), TRADFI_REGISTRY_UNAVAILABLE (7.1.1), DB_SIZE_THRESHOLD,
  * DB_SAVE_SLOW, CLOCK_DRIFT, INTEGRITY_FAILURE (+ OPERATIONAL_TEST para o endpoint
  * de teste). Tipo fora do catálogo lança — alerta inventado não passa.
  *
@@ -20,9 +21,12 @@ export type OperationalAlertType =
   | 'FEED_DEGRADED'
   | 'WS_SILENT'
   | 'RATE_LIMIT_COOLDOWN'
+  | 'RATE_LIMIT_BUDGET'
   | 'KILL_SWITCH_CHANGED'
   | 'BACKUP_FAILED'
   | 'LEDGER_WRITE_FAILED'
+  | 'LEDGER_RECONCILED'
+  | 'TRADFI_REGISTRY_UNAVAILABLE'
   | 'DB_SIZE_THRESHOLD'
   | 'DB_SAVE_SLOW'
   | 'CLOCK_DRIFT'
@@ -33,9 +37,12 @@ export const OPERATIONAL_ALERT_TYPES: readonly OperationalAlertType[] = [
   'FEED_DEGRADED',
   'WS_SILENT',
   'RATE_LIMIT_COOLDOWN',
+  'RATE_LIMIT_BUDGET',
   'KILL_SWITCH_CHANGED',
   'BACKUP_FAILED',
   'LEDGER_WRITE_FAILED',
+  'LEDGER_RECONCILED',
+  'TRADFI_REGISTRY_UNAVAILABLE',
   'DB_SIZE_THRESHOLD',
   'DB_SAVE_SLOW',
   'CLOCK_DRIFT',
@@ -48,9 +55,12 @@ const DEFAULT_SEVERITY: Record<OperationalAlertType, 'LOW' | 'MEDIUM' | 'HIGH' |
   FEED_DEGRADED: 'HIGH',
   WS_SILENT: 'HIGH',
   RATE_LIMIT_COOLDOWN: 'MEDIUM',
+  RATE_LIMIT_BUDGET: 'MEDIUM',
   KILL_SWITCH_CHANGED: 'CRITICAL',
   BACKUP_FAILED: 'CRITICAL',
   LEDGER_WRITE_FAILED: 'CRITICAL',
+  LEDGER_RECONCILED: 'MEDIUM',
+  TRADFI_REGISTRY_UNAVAILABLE: 'HIGH',
   DB_SIZE_THRESHOLD: 'CRITICAL',
   DB_SAVE_SLOW: 'MEDIUM',
   CLOCK_DRIFT: 'MEDIUM',
@@ -110,7 +120,7 @@ export async function emitOperationalAlert(
 
   try {
     return await service.emitAlert(payload.key, payload.severity, payload.message, payload.metadata, now);
-  } catch (err: any) {
+  } catch (err) {
     // Última linha de defesa (CA-6.2): o serviço base já isola sinks, mas uma falha
     // inesperada aqui jamais derruba o loop de trading.
     console.error(`[OperationalAlerts] falha inesperada ao emitir ${type}:`, err?.message || err);
@@ -145,7 +155,7 @@ export async function dispatchTestAlert(
       try {
         const delivered = await sink.send(payload);
         return { sink: sink.name, delivered: delivered === true };
-      } catch (err: any) {
+      } catch (err) {
         return { sink: sink.name, delivered: false, error: String(err?.message || err) };
       }
     })

@@ -29,7 +29,7 @@ export function createEvidenceRouter(): Router {
         origin,
         summary
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to generate evidence summary:', err);
       res.status(500).json({ error: 'Falha ao gerar resumo de evidência operacional', details: err?.message });
     }
@@ -85,7 +85,7 @@ export function createEvidenceRouter(): Router {
         decision,
         summary
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to evaluate go/no-go:', err);
       res.status(500).json({ error: 'Falha ao avaliar critérios go/no-go', details: err?.message });
     }
@@ -109,7 +109,7 @@ export function createEvidenceRouter(): Router {
       await recordAuditLog('RESET_LEDGER', req.originalUrl, getAuditActor(req));
 
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to reset signal ledger:', err);
       res.status(400).json({ error: err?.message || 'Falha ao resetar signal ledger' });
     }
@@ -211,7 +211,7 @@ export function createEvidenceRouter(): Router {
         success: true,
         report: reportData
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to generate burnin report:', err);
       res.status(500).json({ error: 'Falha ao gerar relatório consolidado de burn-in', details: err?.message });
     }

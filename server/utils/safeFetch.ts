@@ -79,7 +79,7 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
           });
 
           res.on('error', (resErr) => {
-            try { req.destroy(); } catch (_) {}
+            try { req.destroy(); } catch (_) { /* socket já encerrado */ }
             rejectOnce(resErr);
           });
 
@@ -101,7 +101,7 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
               json: async () => {
                 try {
                   return JSON.parse(textContent);
-                } catch (e: any) {
+                } catch (e) {
                   throw new Error(`JSON parse failed for ${urlStr}: ${e.message}. Body: ${textContent.slice(0, 100)}`);
                 }
               },
@@ -119,7 +119,7 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
       if (init.signal) {
         const onAbort = () => {
           const abortErr = init.signal.reason || new Error('This operation was aborted');
-          try { req.destroy(abortErr); } catch (_) {}
+          try { req.destroy(abortErr); } catch (_) { /* socket já encerrado */ }
           rejectOnce(abortErr);
         };
         init.signal.addEventListener('abort', onAbort, { once: true });
@@ -130,7 +130,7 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
 
       req.on('timeout', () => {
         const timeoutErr = new Error(`Timeout de conexão (${timeoutMs}ms) em ${parsedUrl.hostname}`);
-        try { req.destroy(timeoutErr); } catch (_) {}
+        try { req.destroy(timeoutErr); } catch (_) { /* socket já encerrado */ }
         rejectOnce(timeoutErr);
       });
 

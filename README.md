@@ -160,10 +160,14 @@ O arquivo `.env` suporta as seguintes configurações de operação e proteção
 | `GEMINI_API_KEY` | `string` | *vazio* | Chave de API do Google Gemini para auditoria e diagnósticos de IA. |
 | `PORT` | `number` | `3000` | Porta TCP em que o servidor Express escuta. |
 | `HOST` | `string` | `0.0.0.0` | Endereço de interface de rede para escuta (definir `127.0.0.1` para ambientes estritamente locais). |
-| `NODE_ENV` | `string` | `development` | Ambiente de execução (`development`, `test` ou `production`). Em `production`, ativa o cabeçalho `Content-Security-Policy-Report-Only` (6.8.2) e o bind restrito (ver `ALLOW_PUBLIC_BIND`). |
+| `NODE_ENV` | `string` | `development` | Ambiente de execução (`development`, `test` ou `production`). Em `production`, ativa o cabeçalho de CSP (report-only por padrão; bloqueante com `CSP_ENFORCE=true`, 7.6.2) e o bind restrito (ver `ALLOW_PUBLIC_BIND`). |
 | `CSP_REPORT_URI` | `string` | *vazio* | Endpoint que coleta as violações de CSP report-only (produção). Endurecer o CSP só após 1 semana sem violações inesperadas. |
+| `CSP_ENFORCE` | `boolean` | `false` | 7.6.2: em produção, `true` troca o `Content-Security-Policy-Report-Only` pelo `Content-Security-Policy` bloqueante. Ativar só após a janela de observação sem violações inesperadas. |
+| `TRADFI_MONITORED_SYMBOLS` | `string` | *vazio* | 7.1: lista extra (separada por vírgula) de símbolos TradFi monitorados, além do universo descoberto via `exchangeInfo`. Nunca usa fixture em produção. |
+| `TRADFI_MAX_MONITORED` | `number` | `10` | 7.1: teto de símbolos TradFi monitorados simultaneamente (limita peso REST). |
+| `LEDGER_RECONCILE_INTERVAL_MS` | `number` | `900000` | 7.3.2: intervalo da reconciliação periódica do ledger × sinais (default 15 min), além da reconciliação no boot e após cada sweep. |
 | `STREAM_TICKERS_INTERVAL_MS` | `number` | `3000` | Intervalo entre snapshots do stream de preços do servidor (`/api/stream/tickers`). |
-| `ENTRY_CONFIRMATION_ENABLED` | `boolean` | `false` | Flag D8 (6.7): sinais nascem `PENDING_ENTRY` e só ativam com toque da zona + confirmação R1–R5. Não ativar sem o backtest comparativo. |
+| `ENTRY_CONFIRMATION_ENABLED` | `boolean` | `true` | Flag D8 (6.7): sinais nascem `PENDING_ENTRY` e só ativam com toque da zona + confirmação R1–R5. Default `true` desde a decisão 7.2 (2026-10-02), aprovada pela regra pré-registrada — evidência em `docs/evidence/`. |
 
 ### 🔒 Particularidades de Ambiente & Exceções
 

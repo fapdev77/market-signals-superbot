@@ -176,6 +176,27 @@ curl -X POST http://127.0.0.1:3000/api/system/risk-limits \
     sudo systemctl restart systemd-timesyncd # ou chronyd
     ```
 
+## 6. Ledger & Confirmação de Entrada (Fase 7)
+
+### 6.1 Robustez do ledger (7.3)
+- **Gravação de `EXPIRED`:** usa a mesma rotina de **3 tentativas + backoff** dos demais eventos.
+  Em falha persistente, incrementa `ledger_write_failures` e emite o alerta
+  `operational.ledger_write_failed` (deduplicado por janela). O sweep é **fail-open**: o sinal já
+  fica `EXPIRED` em `trade_signals`.
+- **Reconciliação períodica (7.3.2):** `reconcileLedgerWithSignals()` roda no boot, **após cada sweep**
+  e a cada `LEDGER_RECONCILE_INTERVAL_MS` (default 15 min). Se criar qualquer evento retroativo,
+  emite `operational.ledger_reconciled` (MEDIUM, uma vez por janela) — indica falha que passou despercebida.
+- **Invariantes (7.3.3):** `GET /api/system/metrics` expõe `ledgerInvariantViolations`
+  (`{ terminalSignalsMissingEvent, orphanEvents, total }`). Valor > 0 após a reconciliação gera
+  alerta `ledger_write_failed` (HIGH).
+
+### 6.2 Confirmação de entrada (`ENTRY_CONFIRMATION_ENABLED`, 7.2)
+- Default `true` desde a decisão 7.2 (2026-10-02). Quando `true`, sinais nascem `PENDING_ENTRY` e só ativam com toque da zona **e**
+  confirmação R1–R5; sem preenchimento em N velas 1m, o pendente vira `ENTRY_NOT_FILLED` (não-evento para o R).
+- A decisão está registrada em `docs/evidence/decision-entry-confirmation.md`; a evidência pareada
+  (controle × confirmação) em `docs/evidence/entry-confirmation-comparison-<data>.md`, gerada com
+  `npm run compare:entry`.
+
 ### 5.4 Gatilhos de Reabertura de Decisão do Banco (M4.5)
 - Arquivo SQLite > 250 MB.
 - p95 da duração de gravação > 500 ms.

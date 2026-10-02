@@ -81,7 +81,7 @@ export const ResetConfirmModal: React.FC<ResetConfirmModalProps> = ({
 
       setHasDownloadedBackup(true);
       showToast('success', 'Backup Exportado com Sucesso', 'Arquivo de segurança salvo no seu computador.');
-    } catch (err: any) {
+    } catch (err) {
       console.error('Backup download error:', err);
       showToast('error', 'Falha ao Exportar Backup', 'Não foi possível compilar o arquivo de backup.');
     } finally {
@@ -139,7 +139,7 @@ export const ResetConfirmModal: React.FC<ResetConfirmModalProps> = ({
       // Close modal and invoke callback
       onClose();
       onSuccessReset();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Factory reset failed:', err);
       showToast('error', 'Erro no Reset de Fábrica', err?.message || 'Falha ao redefinir o sistema.');
       setIsResetting(false);

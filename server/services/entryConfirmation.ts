@@ -23,6 +23,12 @@ export interface KlineLike {
   close: number;
   /** Volume comprado por takers da vela (campo `t` dos klines da Binance). */
   takerBuyBaseVolume?: number;
+  /**
+   * 7.2 — o `KlineCandle` do projeto carrega o volume comprado em `takerBuyVolume`
+   * (não em `takerBuyBaseVolume`). Sem este fallback, R3 lia `undefined` em todo
+   * sinal live/backtest e rejeitava LONGs. Mantido por compatibilidade.
+   */
+  takerBuyVolume?: number;
   volume?: number;
 }
 
@@ -107,9 +113,10 @@ export function confirmEntry(params: {
       reasons.push(`R2 body: corpo do 1m é ${bodyDirection}, esperado ${isLong ? 'UP (close >= open)' : 'DOWN (close <= open)'}.`);
     }
 
-    // R3 — fluxo taker
+    // R3 — fluxo taker (aceita as duas formas do volume comprado por takers)
     const vol = c1.volume ?? 0;
-    const takerBuyRatio = vol > 0 ? (c1.takerBuyBaseVolume ?? 0) / vol : 0.5;
+    const takerBuyVolume = c1.takerBuyBaseVolume ?? c1.takerBuyVolume ?? 0;
+    const takerBuyRatio = vol > 0 ? takerBuyVolume / vol : 0.5;
     details.takerBuyRatio = takerBuyRatio;
     const takerOk = isLong
       ? takerBuyRatio >= ENTRY_THRESHOLDS.takerBuyLong

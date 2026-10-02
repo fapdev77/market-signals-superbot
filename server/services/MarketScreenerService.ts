@@ -2,7 +2,7 @@ import { ScreenerAsset, ScreenerSettings, ScreenerScanSummary, MarketSector } fr
 import { requestJsonLimited } from '../utils/httpClient.js';
 import { addBinanceLog } from '../binanceWebsocket.js';
 import { getFavoriteSymbols, getScreenerSettings, saveScreenerSettings, getActiveSignals, setWatchedSymbol, DEFAULT_EXCLUDED_SYMBOLS } from '../db.js';
-import { DEFAULT_SYMBOLS, getTradfiAsset, TRADFI_ASSETS } from '../binanceService.js';
+import { DEFAULT_SYMBOLS, getTradfiAsset, getTradfiMonitoredSymbols } from '../binanceService.js';
 // 6.4: núcleo puro do screener — universo via exchangeInfo, score sem
 // métricas do nome, renormalização de fatores, RVOL real, sem fallback spot.
 import {
@@ -56,7 +56,6 @@ const SECTOR_MAP: Record<string, { sector: MarketSector; tag: string }> = {
   NVDAUSDT: { sector: 'TRADFI', tag: 'NVIDIA Corp / US Stock' },
   MSFTUSDT: { sector: 'TRADFI', tag: 'Microsoft / US Stock' },
   AMZNUSDT: { sector: 'TRADFI', tag: 'Amazon.com / US Stock' },
-  GOOGUSDT: { sector: 'TRADFI', tag: 'Alphabet / US Stock' },
   METAUSDT: { sector: 'TRADFI', tag: 'Meta Platforms / US Stock' },
   SPYUSDT: { sector: 'TRADFI', tag: 'S&P 500 ETF Index' },
   QQQUSDT: { sector: 'TRADFI', tag: 'Nasdaq 100 ETF Index' },
@@ -98,7 +97,9 @@ export class MarketScreenerService {
   }
 
   public getMonitoredSymbols(): string[] {
-    const tradfiSymbols = TRADFI_ASSETS.map(a => a.symbol);
+    // 7.1.2: apenas a interseção da lista configurada com o registro descoberto —
+    // nunca todos os TRADFI_ASSETS (até 213 contratos) a cada tick.
+    const tradfiSymbols = getTradfiMonitoredSymbols();
     if (tradfiSymbols.length > 0) {
       return Array.from(new Set([...this.activeMonitoredSymbols, ...tradfiSymbols]));
     }
@@ -418,7 +419,7 @@ export class MarketScreenerService {
 
       return { assets: processed, summary };
 
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error running Market Screener scan:', err);
       const fallbackSummary = this.buildFallbackSummary();
       return { assets: this.cachedScreenerAssets, summary: fallbackSummary };

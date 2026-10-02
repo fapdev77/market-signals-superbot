@@ -128,7 +128,7 @@ export async function executeScheduledBacktest(
       await ensureFundingCoverage(symbol, days, {
         budgetPerMinute: defaultFundingBudgetPerMinute()
       });
-    } catch (fundErr: any) {
+    } catch (fundErr) {
       console.warn(`[scheduler] Aviso ao sincronizar funding para ${symbol}:`, fundErr?.message || fundErr);
     }
 
@@ -162,7 +162,7 @@ export async function executeScheduledBacktest(
         netProfit: result.netProfit
       }
     };
-  } catch (err: any) {
+  } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     await backtestScheduleDao.updateLastRun(schedule.id, `FAILED: ${errorMsg}`);
 

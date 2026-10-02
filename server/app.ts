@@ -83,8 +83,14 @@ export function createApp(ctx: AppContext): express.Express {
     if (reportUri && reportUri.trim()) {
       cspDirectives.push(`report-uri ${reportUri.trim()}`);
     }
+    // 7.6.2: com `CSP_ENFORCE=true` o cabeçalho passa a BLOQUEAR (Content-Security-Policy);
+    // caso contrário mantém-se apenas o report-only (janela de observação de 1 semana).
+    const cspEnforce = process.env.CSP_ENFORCE === 'true';
+    const cspHeader = cspEnforce
+      ? 'Content-Security-Policy'
+      : 'Content-Security-Policy-Report-Only';
     app.use((req, res, next) => {
-      res.setHeader('Content-Security-Policy-Report-Only', cspDirectives.join('; '));
+      res.setHeader(cspHeader, cspDirectives.join('; '));
       next();
     });
   }

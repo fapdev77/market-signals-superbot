@@ -140,7 +140,7 @@ export function createMarketRouter(
       const ticker = tickerCache[symbol];
       const depthData = await fetchOrderBookDepth(symbol, ticker?.price, limit);
       res.json(depthData);
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to fetch depth data' });
     }
   });
@@ -268,7 +268,7 @@ export function createMarketRouter(
       }
 
       res.json({ assets, summary, monitoredSymbols: marketScreener.getMonitoredSymbols() });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to fetch screener assets' });
     }
   });
@@ -296,7 +296,7 @@ export function createMarketRouter(
       }
 
       res.json({ success: true, symbol: symbol.toUpperCase(), isFavorite: updatedStatus });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to toggle favorite' });
     }
   });
@@ -307,7 +307,7 @@ export function createMarketRouter(
       const { getScreenerSettings } = await import('../db.js');
       const settings = await getScreenerSettings();
       res.json(settings);
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to fetch screener settings' });
     }
   });
@@ -326,7 +326,7 @@ export function createMarketRouter(
       }
 
       res.json({ success: true, settings: req.body, summary: scanResult.summary });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to save screener settings' });
     }
   });
@@ -342,7 +342,7 @@ export function createMarketRouter(
       }
 
       res.json({ success: true, summary: scanResult.summary, monitoredCount: scanResult.assets.filter(a => a.isMonitored).length });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to run screener scan' });
     }
   });
@@ -367,7 +367,7 @@ export function createMarketRouter(
       }
 
       res.json({ success: true, symbol: symbol.toUpperCase(), excludedSymbols: updatedList, summary: scanResult.summary });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to toggle exclusion' });
     }
   });
@@ -386,7 +386,7 @@ export function createMarketRouter(
       }
 
       res.json({ success: true, excludedSymbols: defaultList, summary: scanResult.summary });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to reset exclusions' });
     }
   });
@@ -420,7 +420,7 @@ export function createMarketRouter(
       });
 
       res.json(items);
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: err?.message || 'Failed to load TradFi assets' });
     }
   });

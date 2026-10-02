@@ -175,6 +175,28 @@ describe('R-9 backtest partial + runner resolution', () => {
     expect(leg2.isWin).toBe(true);
   });
 
+  it('flags hasClosedFull when the runner stops after a TP1 partial (frees the engine)', () => {
+    // Regression: the runner-stop leg has size 0.5, so an engine closing on
+    // `closedSize >= 0.999` would never free the position and would re-resolve
+    // the same trade every candle. `hasClosedFull` is the correct signal.
+    const leg1 = resolveBacktestPosition(
+      { ...baseCandle, high: 111, low: 95, close: 108 },
+      longPos,
+      { partialTaken: false, isBreakevenActive: false },
+      slipPct
+    )!;
+    expect(leg1.hasClosedFull).toBe(false);
+
+    const leg2 = resolveBacktestPosition(
+      { ...baseCandle, timestamp: 2_000, high: 105, low: 99, close: 100 },
+      longPos,
+      leg1.nextState,
+      slipPct
+    )!;
+    expect(leg2.exitLegs).toEqual([{ leg: 'RUNNER', price: leg2.exitPrice, size: 0.5 }]);
+    expect(leg2.hasClosedFull).toBe(true);
+  });
+
   it('stop wins even when the breakeven stop and TP1 are touched together (stop-first rule)', () => {
     // After breakeven, stop = 100; a candle touching 100 and 110 resolves as stop.
     const result = resolveBacktestPosition(

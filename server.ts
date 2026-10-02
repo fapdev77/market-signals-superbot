@@ -154,7 +154,7 @@ async function startServer() {
   try {
     await ensureSqlInstance();
     initOrRestoreDatabase(dbPath, backupDir);
-  } catch (err: any) {
+  } catch (err) {
     console.error('❌ [FATAL DATABASE INTEGRITY ERROR]:', err?.message || err);
     // 6.6: INTEGRITY_FAILURE do catálogo (best-effort; o processo sai em seguida — o
     // heartbeat externo é quem percebe a ausência se o processo morrer).
@@ -169,7 +169,7 @@ async function startServer() {
   try {
     const database = await getDb();
     await loadAppStateFromDb(database);
-  } catch (err: any) {
+  } catch (err) {
     console.warn('⚠️ Falha ao inicializar banco para app_state:', err?.message || err);
   }
 
@@ -177,9 +177,23 @@ async function startServer() {
   // retroativos (reconciled) para sinais terminais sem evento no ledger.
   try {
     await reconcileLedgerWithSignals();
-  } catch (err: any) {
+  } catch (err) {
     console.warn('⚠️ Falha na reconciliação do ledger no boot:', err?.message || err);
   }
+
+  // 7.3.2: reconciliação periódica (default 15 min). Cada passada emite
+  // LEDGER_RECONCILED se criar evento retroativo (deduplicado) e alerta de
+  // invariante violada (7.3.3).
+  const ledgerReconcileIntervalMs =
+    Number(process.env.LEDGER_RECONCILE_INTERVAL_MS) > 0
+      ? Number(process.env.LEDGER_RECONCILE_INTERVAL_MS)
+      : 15 * 60 * 1000;
+  const ledgerReconcileTimer = setInterval(() => {
+    reconcileLedgerWithSignals().catch(err =>
+      console.warn('⚠️ Falha na reconciliação periódica do ledger:', err?.message || err)
+    );
+  }, ledgerReconcileIntervalMs);
+  ledgerReconcileTimer.unref();
 
   // 6.3.3: gatilho diário de sincronização de funding para os símbolos
   // monitorados, com orçamento de páginas por minuto (rate limiter).
@@ -202,7 +216,7 @@ async function startServer() {
   const scheduledBackupTimer = setInterval(() => {
     try {
       createScheduledBackup(dbPath, backupDir);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Falha ao executar backup agendado:', err);
       void emitOperationalAlert('BACKUP_FAILED', 'CRITICAL', `Backup agendado do banco falhou: ${err?.message || err}`, {
         dbPath,
@@ -452,7 +466,7 @@ async function startServer() {
                         strategyProfile,
                         withEntryEvent: !pendingEntryFlow
                       });
-                    } catch (ledgerErr: any) {
+                    } catch (ledgerErr) {
                       incrementMetric(METRIC_NAMES.signalsSuppressedLedgerFailure);
                       logJson('ERROR', 'tick', 'Sinal suprimido: falha na gravação do ledger', { symbol, category: targetCategory, signalId: newSignal.id, correlationId: currentTickId });
                       console.error(`⛔ [LEDGER FAIL-CLOSED] Sinal ${symbol}/${targetCategory} não emitido: ledger indisponível.`);
@@ -539,7 +553,7 @@ async function startServer() {
                         }
                       }
                     }
-                  } catch (pendingErr: any) {
+                  } catch (pendingErr) {
                     console.warn(`[pending-entry] Falha ao avaliar pendentes de ${symbol} (segue no próximo tick):`, pendingErr?.message || pendingErr);
                   }
                   }

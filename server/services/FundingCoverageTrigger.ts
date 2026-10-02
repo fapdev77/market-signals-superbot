@@ -116,7 +116,7 @@ export async function runDailyFundingSync(
         now: options.now
       });
       results.push({ symbol, status: coverage.synced ? 'SYNCED' : 'UPTODATE', recordsSynced: coverage.records });
-    } catch (err: any) {
+    } catch (err) {
       console.warn(`[FundingSync] Falha no gatilho diário para ${symbol}:`, err?.message || err);
       results.push({ symbol, status: 'ERROR', recordsSynced: 0 });
     }

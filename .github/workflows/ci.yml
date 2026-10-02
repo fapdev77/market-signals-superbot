@@ -33,6 +33,11 @@ jobs:
       - name: Install (clean, lockfile-exact)
         run: npm ci
 
+      # 7.0.2/CA-0.2: valida que os hashes do lock batem com o registry oficial.
+      # É a checagem que teria barrado o lock corrompido antes do `npm ci` falhar.
+      - name: Verify lock integrity against registry
+        run: npm run verify:lock
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -48,6 +53,33 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # 7.0.4/H-02: o Docker nunca era construído no CI. Este job constrói a imagem,
+  # sobe o contêiner e espera o /api/health responder 200 (CA-0.4).
+  docker:
+    name: Docker image build and health
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t superbot-ci .
+
+      - name: Run container and wait for /api/health (200)
+        run: |
+          docker run -d --name superbot-ci -e API_AUTH_TOKEN=ci_token -p 3000:3000 superbot-ci
+          for i in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health || true)"
+            if [ "$code" = "200" ]; then echo "healthy after ${i} attempt(s)"; exit 0; fi
+            sleep 2
+          done
+          echo "container did not become healthy"; docker logs superbot-ci; exit 1
+
+      - name: Container logs (always)
+        if: always()
+        run: docker logs superbot-ci || true
 
   audit:
     name: Production dependency audit

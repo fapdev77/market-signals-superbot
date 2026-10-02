@@ -10,6 +10,7 @@ import {
   getAuditLogs,
   getActiveSignals,
   getDbMetrics,
+  getLedgerInvariantViolations,
   getDb
 } from '../db.js';
 import {
@@ -25,7 +26,8 @@ import {
 } from '../services/RiskManager.js';
 import { getFeedHealth } from '../services/feedHealth.js';
 import { getMetrics } from '../utils/metrics.js';
-import { getTradingScheduleStatus } from '../binanceService.js';
+import { BinanceRateLimiter } from '../utils/binanceRateLimiter.js';
+import { getTradingScheduleStatus, getExchangeRequestWeightLimit, getTradfiRegistryAsOf } from '../binanceService.js';
 import { getWebSocketStatus } from '../binanceWebsocket.js';
 import { isClockDegraded, getClockDriftMs, getLastClockCheckTime } from '../services/ClockService.js';
 import { parseOriginFilter } from '../utils/dataOrigin.js';
@@ -48,7 +50,7 @@ export function createSystemRouter(
     try {
       const stats = await getDatabaseStats();
       res.json(stats);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to get database stats:', err);
       res.status(500).json({ error: 'Falha ao obter estatísticas do banco de dados', details: err?.message });
     }
@@ -60,7 +62,7 @@ export function createSystemRouter(
       const limit = Math.min(200, Math.max(10, parseInt((req.query.limit as string) || '50', 10)));
       const logs = await getAuditLogs(limit);
       res.json(logs);
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: 'Falha ao buscar logs de auditoria', details: err?.message });
     }
   });
@@ -71,7 +73,7 @@ export function createSystemRouter(
       const result = await vacuumDatabase();
       await recordAuditLog('DATABASE_VACUUM', req.originalUrl, getAuditActor(req), result);
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to vacuum database:', err);
       res.status(500).json({ error: 'Falha ao otimizar banco de dados', details: err?.message });
     }
@@ -87,7 +89,7 @@ export function createSystemRouter(
         triggerMarketScan().catch(err => console.warn('Background scan warning after clear:', err));
       }
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error(`Failed to clear table ${table}:`, err);
       res.status(400).json({ error: err?.message || 'Falha ao limpar tabela' });
     }
@@ -105,7 +107,7 @@ export function createSystemRouter(
         res.setHeader('Content-Type', 'application/json');
       }
       res.json(data);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to export database:', err);
       res.status(500).json({ error: 'Falha ao exportar backup do banco de dados', details: err?.message });
     }
@@ -137,7 +139,7 @@ export function createSystemRouter(
         message: 'Aplicação restaurada para o padrão de fábrica com sucesso.',
         details: result
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to perform global factory reset:', err);
       res.status(500).json({ error: 'Falha ao executar reset de fábrica', details: err?.message });
     }
@@ -146,14 +148,31 @@ export function createSystemRouter(
   // ---------------------------------------------------------------------------------------------
   // R-15: métricas em memória (contadores de ticks, sinais, bloqueios e erros por feed)
   // M4.4: Métricas de tamanho do arquivo e duração do save do banco de dados
-  router.get('/metrics', (req: Request, res: Response) => {
+  router.get('/metrics', async (req: Request, res: Response) => {
     try {
+      // 7.1.3: peso REST observado (x-mbx-used-weight-1m) e o limite real do exchangeInfo.
+      const rateState = BinanceRateLimiter.getState();
+      const requestWeightLimit = getExchangeRequestWeightLimit() || rateState.maxWeight1m;
+      // 7.3.3: invariantes do ledger (terminais sem evento + eventos órfãos).
+      const ledgerInvariantViolations = await getLedgerInvariantViolations();
       res.json({
         success: true,
         metrics: getMetrics(),
-        database: getDbMetrics()
+        database: getDbMetrics(),
+        ledgerInvariantViolations,
+        binanceUsedWeight1m: rateState.usedWeight1m,
+        binance: {
+          usedWeight1m: rateState.usedWeight1m,
+          maxWeight1m: rateState.maxWeight1m,
+          requestWeightLimit,
+          budgetRatio: requestWeightLimit > 0 ? rateState.usedWeight1m / requestWeightLimit : null,
+          isThrottled: rateState.isThrottled,
+          remainingCooldownMs: BinanceRateLimiter.getRemainingCooldownMs()
+        },
+        // 7.1.1: instante do último registro TradFi bom (observabilidade do fail-closed).
+        tradfiRegistryAsOf: getTradfiRegistryAsOf()
       });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: 'Falha ao obter métricas', details: err?.message });
     }
   });
@@ -178,7 +197,7 @@ export function createSystemRouter(
           }
         }
       });
-    } catch (err: any) {
+    } catch (err) {
       res.status(500).json({ error: 'Falha ao obter health dos feeds', details: err?.message });
     }
   });
@@ -197,7 +216,7 @@ export function createSystemRouter(
         limits,
         portfolio: evaluatePortfolioRisk(openSignals, limits)
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to compute risk status:', err);
       res.status(500).json({ error: 'Falha ao calcular o status de risco', details: err?.message });
     }
@@ -220,7 +239,7 @@ export function createSystemRouter(
       await saveRiskLimitsToDb(database);
       await recordAuditLog('RISK_LIMITS_UPDATE', req.originalUrl, actor, updated);
       res.json({ success: true, limits: updated });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to update risk limits:', err);
       res.status(400).json({ error: err?.message || 'Falha ao atualizar limites de risco' });
     }
@@ -247,7 +266,7 @@ export function createSystemRouter(
       await saveKillSwitchToDb(database);
       await recordAuditLog('KILL_SWITCH', req.originalUrl, actor, { enabled, reason: reason || null });
       res.json({ success: true, killSwitch: state });
-    } catch (err: any) {
+    } catch (err) {
       res.status(400).json({ error: err?.message || 'Falha ao alterar o kill-switch' });
     }
   });
@@ -262,7 +281,7 @@ export function createSystemRouter(
         : `Alerta de teste disparado pelo operador (${actor})`;
       const results = await dispatchTestAlert(message);
       res.json({ ok: true, results });
-    } catch (err: any) {
+    } catch (err) {
       // 6.6.2: falha de alerta nunca derruba o processo — resposta honesta de erro.
       res.status(500).json({ ok: false, error: err?.message || 'Falha ao disparar alerta de teste' });
     }

@@ -305,7 +305,7 @@ export async function loadAppStateFromDb(db: Database): Promise<{
             activatedAt: parsed.activatedAt || null,
             activatedBy: parsed.activatedBy || null
           };
-        } catch (err: any) {
+        } catch (err) {
           // CA-4.2: Estado ilegivel em app_state faz o sistema iniciar suspenso (Fail-closed)
           killSwitch = {
             enabled: true,
@@ -328,7 +328,7 @@ export async function loadAppStateFromDb(db: Database): Promise<{
     }
 
     return { success: true, failClosedTriggered: false };
-  } catch (err: any) {
+  } catch (err) {
     // If table read fails altogether, fail-closed as safety measure
     killSwitch = {
       enabled: true,

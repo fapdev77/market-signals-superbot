@@ -55,7 +55,7 @@ export function initOrLoadSessionToken(opts?: SessionTokenOptions): string {
             /* ignore chmod error on platforms without posix perms */
           }
         }
-      } catch (err: any) {
+      } catch (err) {
         console.error('Falha ao gravar session-token em modo 0600:', err?.message || err);
       }
       // CA-4.6: Nenhum log de produção contém o token; o log mostra apenas o caminho

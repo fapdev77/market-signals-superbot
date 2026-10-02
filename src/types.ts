@@ -453,6 +453,26 @@ export interface BacktestConfig {
    * slice only. Used by the auto-tuner to keep out-of-sample data out of parameter selection.
    */
   isOnlyUntil?: number;
+  /**
+   * 7.2 (D3/D8) — braço "com confirmação": quando `true`, o preenchimento passa pelo ciclo
+   * PENDING_ENTRY usando as funções puras do live (`evaluatePendingEntry` + `confirmEntry`).
+   * Ausente/false preserva o comportamento atual (fill no open do candle seguinte).
+   */
+  entryConfirmation?: boolean;
+}
+
+/** 7.2 — estatísticas por sinal emitido para a decisão da confirmação de entrada. */
+export interface EntryConfirmationStats {
+  enabled: boolean;
+  signalsEmitted: number;
+  entriesFilled: number;
+  entriesNotFilled: number;
+  entriesInvalidated: number;
+  /** PnL em R por sinal emitido (0 para não preenchidos) — usado na expectativa/IC. */
+  rPerSignal: number[];
+  fillMinutesSum: number;
+  fillCount: number;
+  limitation?: string;
 }
 
 export interface EquityPoint {
@@ -509,6 +529,8 @@ export interface BacktestResult {
   config: BacktestConfig;
   createdAt: number;
   trades?: BacktestTrade[];
+  /** 7.2 — métricas do braço de confirmação de entrada (preenchido nos dois braços). */
+  entryConfirmation?: EntryConfirmationStats;
   sharpeRatio?: number;
   sortinoRatio?: number;
   makerTakerFeePct?: number;

@@ -41,7 +41,7 @@ export function createBacktestRouter(getBotState: () => BotState): Router {
         await ensureFundingCoverage(symbol, effectiveDays, {
           budgetPerMinute: defaultFundingBudgetPerMinute()
         });
-      } catch (fundErr: any) {
+      } catch (fundErr) {
         console.warn(`[backtest] Falha ao sincronizar funding para ${symbol} (seguindo com cobertura existente):`, fundErr?.message || fundErr);
       }
       const result = await BacktestEngine.runBacktest({

@@ -244,7 +244,7 @@ export async function generateContentWithModel(
         text: textOutput,
         modelUsed: `Gemini (${targetModel})`
       };
-    } catch (err: any) {
+    } catch (err) {
       const durationMs = Date.now() - startTime;
       addAILog({
         level: 'ERROR',
@@ -366,7 +366,7 @@ export async function generateContentWithModel(
         const errText = await res.text().catch(() => '');
         diagnosticSteps.push(`[Aviso /api/generate] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
-    } catch (e: any) {
+    } catch (e) {
       diagnosticSteps.push(`[Falha /api/generate]: ${e.message}`);
     }
 
@@ -434,7 +434,7 @@ export async function generateContentWithModel(
         const errText = await res.text().catch(() => '');
         diagnosticSteps.push(`[Aviso /api/chat] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
-    } catch (e: any) {
+    } catch (e) {
       diagnosticSteps.push(`[Falha /api/chat]: ${e.message}`);
     }
 
@@ -489,7 +489,7 @@ export async function generateContentWithModel(
         const errText = await res.text().catch(() => '');
         diagnosticSteps.push(`[Aviso OpenAI-compatible] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
-    } catch (e: any) {
+    } catch (e) {
       diagnosticSteps.push(`[Falha OpenAI-compatible]: ${e.message}`);
     }
 
@@ -634,7 +634,7 @@ export async function generateContentWithModel(
       });
 
       return { text: output, modelUsed: `${provider.toUpperCase()} (${modelConfig.modelId})` };
-    } catch (err: any) {
+    } catch (err) {
       const durationMs = Date.now() - startTime;
       addAILog({
         level: 'ERROR',
@@ -729,7 +729,7 @@ export async function generateContentWithModel(
       });
 
       return { text: output, modelUsed: `Anthropic (${modelConfig.modelId})` };
-    } catch (err: any) {
+    } catch (err) {
       const durationMs = Date.now() - startTime;
       addAILog({
         level: 'ERROR',
@@ -887,7 +887,7 @@ export async function reviewSignalWithAI(
         modelUsed: result.modelUsed,
         timestamp: Date.now()
       };
-    } catch (err: any) {
+    } catch (err) {
       lastErrorMsg = `${targetModelConfig.name}: ${err.message.slice(0, 80)}`;
       console.warn(`[reviewSignalWithAI] Falha no modelo '${targetModelConfig.name}'. Tentando próximo da cadeia... Erro:`, err.message);
     }
@@ -1000,7 +1000,7 @@ Instructions:
         suggestedWeightAdjustments: json.suggestedWeights || currentWeights,
         modelUsed: result.modelUsed
       };
-    } catch (err: any) {
+    } catch (err) {
       lastErrorMsg = `${targetModelConfig.name}: ${err.message.slice(0, 80)}`;
       console.warn(`[auditMarketWithAI] Falha no modelo '${targetModelConfig.name}'. Erro:`, err.message);
     }
@@ -1057,7 +1057,7 @@ export async function chatWithAITrader(
         reply: result.text?.trim() || 'Análise indisponível no momento.',
         modelUsed: result.modelUsed
       };
-    } catch (err: any) {
+    } catch (err) {
       lastErrorMsg = `${targetModelConfig.name}: ${err.message.slice(0, 80)}`;
       console.warn(`[chatWithAITrader] Falha no modelo '${targetModelConfig.name}'. Erro:`, err.message);
     }

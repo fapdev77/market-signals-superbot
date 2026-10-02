@@ -234,7 +234,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         setScheduleSuccessMsg('Agendamento diário automático salvo com sucesso!');
         setTimeout(() => setScheduleSuccessMsg(null), 4000);
       }
-    } catch (err: any) {
+    } catch (err) {
       setError('Erro ao salvar agendamento: ' + err.message);
     } finally {
       setScheduleSaving(false);
@@ -256,7 +256,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
       } else {
         setError(data.error || 'Falha ao executar backtest agendado');
       }
-    } catch (err: any) {
+    } catch (err) {
       setError('Erro ao disparar execução imediata: ' + err.message);
     } finally {
       setScheduleRunningNow(false);
@@ -343,7 +343,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
       } else {
         setError(data.error);
       }
-    } catch (err: any) {
+    } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
@@ -378,7 +378,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
       } else {
         setError(data.error);
       }
-    } catch (err: any) {
+    } catch (err) {
       setError(err.message);
     } finally {
       setTuningLoading(false);
@@ -397,7 +397,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         if (onApplyWeights) onApplyWeights(newWeights);
         setAppliedSuccessMsg('Novos pesos otimizados foram aplicados ao robô com sucesso!');
       }
-    } catch (err: any) {
+    } catch (err) {
       setError('Falha ao aplicar pesos otimizados: ' + err.message);
     }
   };

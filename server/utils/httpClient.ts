@@ -62,7 +62,7 @@ export function requestJson<T = any>(urlStr: string, options: HttpRequestOptions
           });
 
           res.on('error', (resErr) => {
-            try { req.destroy(); } catch (_) {}
+            try { req.destroy(); } catch (_) { /* socket já encerrado */ }
             rejectOnce(resErr);
           });
 
@@ -87,7 +87,7 @@ export function requestJson<T = any>(urlStr: string, options: HttpRequestOptions
 
       req.on('timeout', () => {
         const timeoutErr = new Error(`Timeout de requisição (${timeoutMs}ms)`);
-        try { req.destroy(timeoutErr); } catch (_) {}
+        try { req.destroy(timeoutErr); } catch (_) { /* socket já encerrado */ }
         rejectOnce(timeoutErr);
       });
 
@@ -125,7 +125,7 @@ export async function requestJsonLimited<T = any>(
     BinanceRateLimiter.updateFromHeaders(response.headers);
     BinanceRateLimiter.recordSuccess();
     return response;
-  } catch (err: any) {
+  } catch (err) {
     const status = err?.status || 0;
     if (status === 429 || status === 418) {
       BinanceRateLimiter.triggerBackoff(status);
