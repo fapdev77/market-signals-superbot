@@ -440,7 +440,7 @@ export const Header: React.FC<HeaderProps> = ({
                 position="bottom"
                 title={`${t.name || t.symbol} (${t.marketType === 'tradfi' ? 'TradFi' : 'Futures'})`}
                 badge={`${t.confluenceScore}% Confluência`}
-                content={`Preço: ${formatPrice(t.price, { currency: true })} • Variação 24h: ${formatPercent(t.priceChangePercent24h)} • CVD: ${t.cvdDirection} • Bias de Funding: ${t.fundingRateAnalysis.bias}`}
+                content={`Preço: ${formatPrice(t.price, { currency: true })} • Variação 24h: ${formatPercent(t.priceChangePercent24h)} • CVD: ${t.cvdDirection} • Bias de Funding: ${t.fundingRateAnalysis?.bias ?? '—'}`}
               >
                 <div className="flex items-center gap-1.5 cursor-pointer hover:text-white transition">
                   <span className="font-bold text-neutral-200">{t.symbol}</span>

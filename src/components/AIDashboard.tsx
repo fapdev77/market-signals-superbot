@@ -680,7 +680,7 @@ export const AIDashboard: React.FC = () => {
                 <Tooltip 
                   cursor={{ fill: '#ffffff0a' }}
                   contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #333', borderRadius: '8px', fontSize: '11px', color: '#fff' }}
-                  formatter={(value: number) => [`${value.toLocaleString()} tokens`, 'Tokens']}
+                  formatter={(value) => [`${Number(value).toLocaleString()} tokens`, 'Tokens']}
                 />
                 <Bar dataKey="tokens" fill="#06b6d4" radius={[4, 4, 0, 0]} maxBarSize={36} />
               </BarChart>

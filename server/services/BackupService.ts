@@ -10,6 +10,7 @@
  */
 
 import fs from 'fs';
+import { getErrorMessage } from '../utils/errors.js';
 import path from 'path';
 import initSqlJs, { Database } from 'sql.js';
 
@@ -91,7 +92,7 @@ export function checkDatabaseIntegrity(dbPath: string, sqlEngine?: any): Integri
 
     return { healthy: false, details: 'PRAGMA quick_check returned no result' };
   } catch (err) {
-    return { healthy: false, details: err?.message || String(err) };
+    return { healthy: false, details: getErrorMessage(err) };
   }
 }
 

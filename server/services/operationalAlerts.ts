@@ -16,6 +16,7 @@
  */
 
 import { AlertService, defaultAlertService, type AlertSink } from './AlertService.js';
+import { getErrorMessage } from '../utils/errors.js';
 
 export type OperationalAlertType =
   | 'FEED_DEGRADED'
@@ -31,6 +32,8 @@ export type OperationalAlertType =
   | 'DB_SAVE_SLOW'
   | 'CLOCK_DRIFT'
   | 'INTEGRITY_FAILURE'
+  // 8.3.1 — falha de execução do backtest agendado (guardas do BacktestScheduler).
+  | 'BACKTEST_SCHEDULE_FAILED'
   | 'OPERATIONAL_TEST';
 
 export const OPERATIONAL_ALERT_TYPES: readonly OperationalAlertType[] = [
@@ -47,6 +50,7 @@ export const OPERATIONAL_ALERT_TYPES: readonly OperationalAlertType[] = [
   'DB_SAVE_SLOW',
   'CLOCK_DRIFT',
   'INTEGRITY_FAILURE',
+  'BACKTEST_SCHEDULE_FAILED',
   'OPERATIONAL_TEST'
 ];
 
@@ -65,6 +69,7 @@ const DEFAULT_SEVERITY: Record<OperationalAlertType, 'LOW' | 'MEDIUM' | 'HIGH' |
   DB_SAVE_SLOW: 'MEDIUM',
   CLOCK_DRIFT: 'MEDIUM',
   INTEGRITY_FAILURE: 'CRITICAL',
+  BACKTEST_SCHEDULE_FAILED: 'HIGH',
   OPERATIONAL_TEST: 'LOW'
 };
 
@@ -123,7 +128,7 @@ export async function emitOperationalAlert(
   } catch (err) {
     // Última linha de defesa (CA-6.2): o serviço base já isola sinks, mas uma falha
     // inesperada aqui jamais derruba o loop de trading.
-    console.error(`[OperationalAlerts] falha inesperada ao emitir ${type}:`, err?.message || err);
+    console.error(`[OperationalAlerts] falha inesperada ao emitir ${type}:`, getErrorMessage(err));
     return false;
   }
 }
@@ -156,7 +161,7 @@ export async function dispatchTestAlert(
         const delivered = await sink.send(payload);
         return { sink: sink.name, delivered: delivered === true };
       } catch (err) {
-        return { sink: sink.name, delivered: false, error: String(err?.message || err) };
+        return { sink: sink.name, delivered: false, error: String(getErrorMessage(err)) };
       }
     })
   );

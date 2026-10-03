@@ -45,8 +45,8 @@ function makeFakeApi(allRows: Array<Record<string, any>>, pageSize: number) {
 function makeDeps(overrides: Partial<FundingSyncDeps> = {}): FundingSyncDeps & { inserted: any[] } {
   const inserted: any[] = [];
   return {
-    fetchPage: async () => ({ rows: [] }),
-    insertBatch: async rows => {
+    fetchPage: async (): Promise<{ rows: Array<Record<string, any>> }> => ({ rows: [] }),
+    insertBatch: async (rows: Parameters<FundingSyncDeps['insertBatch']>[0]) => {
       inserted.push(...rows);
     },
     maxPagesPerMinute: 100,

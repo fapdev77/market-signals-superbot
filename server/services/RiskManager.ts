@@ -1,4 +1,5 @@
 import type { TradeSignal, StrategyCategory } from '../../src/types.js';
+import { getErrorMessage } from '../utils/errors.js';
 import type { Database } from 'sql.js';
 import { dAdd, dDiv, dMul, dSub, dRound } from '../utils/decimal.js';
 import { emitOperationalAlert } from './operationalAlerts.js';
@@ -309,11 +310,11 @@ export async function loadAppStateFromDb(db: Database): Promise<{
           // CA-4.2: Estado ilegivel em app_state faz o sistema iniciar suspenso (Fail-closed)
           killSwitch = {
             enabled: true,
-            reason: `Fail-closed: Estado app_state corrompido ou ilegível no boot (${err?.message || err}).`,
+            reason: `Fail-closed: Estado app_state corrompido ou ilegível no boot (${getErrorMessage(err)}).`,
             activatedAt: Date.now(),
             activatedBy: 'SYSTEM_FAIL_CLOSED'
           };
-          return { success: false, failClosedTriggered: true, error: err?.message };
+          return { success: false, failClosedTriggered: true, error: getErrorMessage(err) };
         }
       } else if (key === 'risk_limits') {
         try {
@@ -332,11 +333,11 @@ export async function loadAppStateFromDb(db: Database): Promise<{
     // If table read fails altogether, fail-closed as safety measure
     killSwitch = {
       enabled: true,
-      reason: `Fail-closed: Erro crítico ao ler app_state do banco (${err?.message || err}).`,
+      reason: `Fail-closed: Erro crítico ao ler app_state do banco (${getErrorMessage(err)}).`,
       activatedAt: Date.now(),
       activatedBy: 'SYSTEM_FAIL_CLOSED'
     };
-    return { success: false, failClosedTriggered: true, error: err?.message };
+    return { success: false, failClosedTriggered: true, error: getErrorMessage(err) };
   }
 }
 

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getErrorMessage } from '../utils/errors.js';
 import { HistoricalDataService } from '../services/HistoricalDataService.js';
 import { BacktestEngine } from '../services/BacktestEngine.js';
 import { BotState } from '../../src/types.js';
@@ -42,7 +43,7 @@ export function createBacktestRouter(getBotState: () => BotState): Router {
           budgetPerMinute: defaultFundingBudgetPerMinute()
         });
       } catch (fundErr) {
-        console.warn(`[backtest] Falha ao sincronizar funding para ${symbol} (seguindo com cobertura existente):`, fundErr?.message || fundErr);
+        console.warn(`[backtest] Falha ao sincronizar funding para ${symbol} (seguindo com cobertura existente):`, getErrorMessage(fundErr));
       }
       const result = await BacktestEngine.runBacktest({
         symbol,

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { AlertTriangle, Trash2, Download, X, ShieldAlert, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useToast } from './Toast';
 import { apiFetch } from '../services/apiClient';
@@ -141,7 +142,7 @@ export const ResetConfirmModal: React.FC<ResetConfirmModalProps> = ({
       onSuccessReset();
     } catch (err) {
       console.error('Factory reset failed:', err);
-      showToast('error', 'Erro no Reset de Fábrica', err?.message || 'Falha ao redefinir o sistema.');
+      showToast('error', 'Erro no Reset de Fábrica', getErrorMessage(err) || 'Falha ao redefinir o sistema.');
       setIsResetting(false);
     }
   };

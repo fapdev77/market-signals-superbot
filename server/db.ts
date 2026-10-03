@@ -1743,7 +1743,7 @@ export const signalLedgerDao = {
         signal_id, event_type, price, timestamp, metadata
       ) VALUES (?, ?, ?, ?, ?)`,
       [
-        params.signalId,
+        params.signalId ?? '',
         params.eventType,
         params.price,
         params.timestamp || Date.now(),

@@ -220,7 +220,7 @@ function computeKeyChanges(current: IndicatorWeights, next: IndicatorWeights): s
   checkDelta('Suporte & Resistência', current.supportResistanceWeight, next.supportResistanceWeight);
   checkDelta('Range POC', current.rangePocWeight, next.rangePocWeight);
   checkDelta('Funding Rate', current.fundingRateWeight, next.fundingRateWeight);
-  checkDelta('RSI Divergências', current.rsiDivergenceWeight, next.rsiDivergenceWeight);
+  checkDelta('RSI Divergências', current.rsiDivergenceWeight ?? 0, next.rsiDivergenceWeight ?? 0);
 
   if (Math.abs(next.minRiskRewardRatio - current.minRiskRewardRatio) >= 0.2) {
     changes.push(`Ajustou Risco/Retorno Mínimo: ${current.minRiskRewardRatio}x ➔ ${next.minRiskRewardRatio}x`);

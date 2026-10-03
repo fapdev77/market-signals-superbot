@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getErrorMessage } from '../utils/errors.js';
 import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader, buildSignalReviewPrompt } from '../aiMotor.js';
 import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
 import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights, getSignalById, getSignalsByDateRange } from '../db.js';
@@ -188,7 +189,7 @@ export function createAIRouter(
       });
     } catch (err) {
       console.error('Error computing signal performance hit rate:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to compute hit rate' });
+      res.status(500).json({ success: false, error: getErrorMessage(err) || 'Failed to compute hit rate' });
     }
   });
 

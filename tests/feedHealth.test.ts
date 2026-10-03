@@ -82,7 +82,7 @@ describe('R-13 — registro de health por feed', () => {
     recordFeedFailure('funding', 'e3');
     expect(getFeedHealth().feeds.funding.status).toBe('DEGRADED');
 
-    const before = getFeedHealth().feeds.funding.lastSuccessAt;
+    const before = getFeedHealth().feeds.funding.lastSuccessAt ?? 0;
     recordFeedSuccess('funding', 40);
 
     const feed = getFeedHealth().feeds.funding;

@@ -1,0 +1,19 @@
+{
+  "entryConfirmationEnabled": false,
+  "provisional": false,
+  "rule": "v2",
+  "generatedAt": "2026-10-03",
+  "engineVersion": "4566b37",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "AAVEUSDT",
+    "PEPEUSDT"
+  ],
+  "symbol": "BTCUSDT",
+  "days": 30,
+  "seed": 42,
+  "dataOrigin": "LIVE — klines reais da Binance (origin=LIVE; ALLOW_SYNTHETIC_DATA=false)",
+  "sample": "universo de 5 símbolos reais (BTCUSDT, ETHUSDT, SOLUSDT, AAVEUSDT, PEPEUSDT) — 8.2.3"
+}

@@ -1,4 +1,5 @@
 import { historicalKlinesDao, type HistoricalKlineRow } from '../backtest_db/index.js';
+import { getErrorMessage } from '../utils/errors.js';
 import { requestJsonLimited } from '../utils/httpClient.js';
 import { BinanceRateLimiter } from '../utils/binanceRateLimiter.js';
 // R-2: a geração de candles fabricados foi movida para server/demo/.
@@ -134,7 +135,7 @@ export class HistoricalDataService {
       syncStates[symbol] = { symbol, progress: 100, status: 'DONE' };
     } catch (err) {
       console.error(`Sync error for ${symbol}:`, err);
-      syncStates[symbol] = { symbol, progress: syncStates[symbol].progress, status: 'ERROR', error: err.message };
+      syncStates[symbol] = { symbol, progress: syncStates[symbol].progress, status: 'ERROR', error: getErrorMessage(err) };
     }
   }
 

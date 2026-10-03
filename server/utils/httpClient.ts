@@ -1,4 +1,5 @@
 import https from 'node:https';
+import { getHttpStatus, getErrorHeaders } from './errors.js';
 import http from 'node:http';
 import { URL } from 'node:url';
 import { BinanceRateLimiter } from './binanceRateLimiter.js';
@@ -126,10 +127,10 @@ export async function requestJsonLimited<T = any>(
     BinanceRateLimiter.recordSuccess();
     return response;
   } catch (err) {
-    const status = err?.status || 0;
+    const status = getHttpStatus(err);
     if (status === 429 || status === 418) {
       BinanceRateLimiter.triggerBackoff(status);
-      BinanceRateLimiter.updateFromHeaders(err?.headers || {});
+      BinanceRateLimiter.updateFromHeaders(getErrorHeaders(err));
     }
     throw err;
   }

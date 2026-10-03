@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { ShieldAlert, ShieldCheck, RefreshCw } from 'lucide-react';
 import { apiClient } from '../services/apiClient';
 import { useToast } from './Toast';
@@ -79,7 +80,7 @@ export const KillSwitchPanel: React.FC = () => {
       );
       load();
     } catch (err) {
-      showToast('error', 'Falha no kill-switch', err?.message || 'Tente novamente.');
+      showToast('error', 'Falha no kill-switch', getErrorMessage(err) || 'Tente novamente.');
     } finally {
       setBusy(false);
     }

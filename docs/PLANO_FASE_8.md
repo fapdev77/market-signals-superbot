@@ -59,4 +59,13 @@ Cada onda é um PR pequeno e reversível. Após cada uma: `tsc --noEmit`, `vites
 | 0 | `src/components` | `noImplicitAny` ligado |
 | 1 | global | zero `catch (e: any)` explícito ✅ (anotação removida na Fase 7; narrowing real após `noImplicitAny`) |
 | 2 | global | `any` ≤ meta 7.6.4 ✅ (`explicitAny: 167`) |
-| 4 | por diretório | `strictNullChecks` → `strict: true` |
+| 4 | por diretório | `strictNullChecks` → `strict: true` ✅ |
+
+## Conclusão (2026-10-02)
+
+`strict: true` habilitado em `tsconfig.json`. `tsc --noEmit` limpo, suíte 649/649
+verde, baseline de qualidade inalterada (`any=161`, `catchVazios=8`) e `npm run build`
+OK. Nenhum `@ts-ignore`/`as any` novo (CA-7.1). O narrowing de erros foi centralizado
+em `server/utils/errors.ts` (+ espelho `src/utils/errors.ts`). Nenhum arquivo do motor
+de sinais (`signalEngine`, `TickProcessor`, `BacktestEngine`, `positionResolution`) foi
+tocado — 8.7.3 respeitada durante a janela de evidência.

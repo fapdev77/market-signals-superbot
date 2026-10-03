@@ -10,7 +10,7 @@ import { buildScreenerCandidates, type ScreenerFetchDeps } from '../server/servi
 function makeDeps(overrides: Partial<ScreenerFetchDeps> = {}): ScreenerFetchDeps & { calls: string[] } {
   const calls: string[] = [];
   return {
-    fetchTickers: async url => {
+    fetchTickers: async (url: string) => {
       calls.push(url);
       throw new Error('fapi indisponível (simulado)');
     },
@@ -52,7 +52,7 @@ describe('6.4.3 / CA-4.2 — screener sem fallback spot', () => {
 
   it('fapi ok: tickers do fapi, sem degradação', async () => {
     const deps = makeDeps({
-      fetchTickers: async url => {
+      fetchTickers: async (url: string) => {
         if (url.includes('/fapi/')) {
           return [
             { symbol: 'BTCUSDT', lastPrice: '50000', priceChangePercent: '1.0', volume: '10', quoteVolume: '500000000', highPrice: '51000', lowPrice: '49000' }

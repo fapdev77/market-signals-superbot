@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { TickerData, IndicatorWeights, TradingProfile, BacktestResult, AutoTuneResult, BacktestTrade } from '../types';
 import { PROFILE_PRESETS } from '../constants';
 import { 
@@ -235,7 +236,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         setTimeout(() => setScheduleSuccessMsg(null), 4000);
       }
     } catch (err) {
-      setError('Erro ao salvar agendamento: ' + err.message);
+      setError('Erro ao salvar agendamento: ' + getErrorMessage(err));
     } finally {
       setScheduleSaving(false);
     }
@@ -257,7 +258,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         setError(data.error || 'Falha ao executar backtest agendado');
       }
     } catch (err) {
-      setError('Erro ao disparar execução imediata: ' + err.message);
+      setError('Erro ao disparar execução imediata: ' + getErrorMessage(err));
     } finally {
       setScheduleRunningNow(false);
     }
@@ -344,7 +345,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         setError(data.error);
       }
     } catch (err) {
-      setError(err.message);
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -379,7 +380,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         setError(data.error);
       }
     } catch (err) {
-      setError(err.message);
+      setError(getErrorMessage(err));
     } finally {
       setTuningLoading(false);
     }
@@ -398,7 +399,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
         setAppliedSuccessMsg('Novos pesos otimizados foram aplicados ao robô com sucesso!');
       }
     } catch (err) {
-      setError('Falha ao aplicar pesos otimizados: ' + err.message);
+      setError('Falha ao aplicar pesos otimizados: ' + getErrorMessage(err));
     }
   };
 

@@ -10,6 +10,8 @@
  * pontuais de rede são toleráveis).
  */
 
+import { getErrorMessage } from '../utils/errors.js';
+
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
 export const HEARTBEAT_INTERVAL_MS = DEFAULT_INTERVAL_MS;
@@ -29,7 +31,7 @@ async function ping(url: string): Promise<void> {
       signal: AbortSignal.timeout(5000)
     });
   } catch (err) {
-    console.warn('[Heartbeat] ping falhou (tentará novamente no próximo intervalo):', err?.message || err);
+    console.warn('[Heartbeat] ping falhou (tentará novamente no próximo intervalo):', getErrorMessage(err));
   }
 }
 

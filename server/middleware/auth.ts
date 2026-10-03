@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { getErrorMessage } from '../utils/errors.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -56,7 +57,7 @@ export function initOrLoadSessionToken(opts?: SessionTokenOptions): string {
           }
         }
       } catch (err) {
-        console.error('Falha ao gravar session-token em modo 0600:', err?.message || err);
+        console.error('Falha ao gravar session-token em modo 0600:', getErrorMessage(err));
       }
       // CA-4.6: Nenhum log de produção contém o token; o log mostra apenas o caminho
       console.log('\n======================================================');

@@ -1,4 +1,5 @@
 import https from 'node:https';
+import { getErrorMessage } from './errors.js';
 import http from 'node:http';
 import { URL } from 'node:url';
 
@@ -102,7 +103,7 @@ export function safeFetch(input: string | URL | any, init: any = {}): Promise<an
                 try {
                   return JSON.parse(textContent);
                 } catch (e) {
-                  throw new Error(`JSON parse failed for ${urlStr}: ${e.message}. Body: ${textContent.slice(0, 100)}`);
+                  throw new Error(`JSON parse failed for ${urlStr}: ${getErrorMessage(e)}. Body: ${textContent.slice(0, 100)}`);
                 }
               },
               text: async () => textContent,

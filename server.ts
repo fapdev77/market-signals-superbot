@@ -1,5 +1,6 @@
 import './server/utils/bootstrap.js';
 import express from 'express';
+import { getErrorMessage } from './server/utils/errors.js';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import {
@@ -155,10 +156,10 @@ async function startServer() {
     await ensureSqlInstance();
     initOrRestoreDatabase(dbPath, backupDir);
   } catch (err) {
-    console.error('❌ [FATAL DATABASE INTEGRITY ERROR]:', err?.message || err);
+    console.error('❌ [FATAL DATABASE INTEGRITY ERROR]:', getErrorMessage(err));
     // 6.6: INTEGRITY_FAILURE do catálogo (best-effort; o processo sai em seguida — o
     // heartbeat externo é quem percebe a ausência se o processo morrer).
-    void emitOperationalAlert('INTEGRITY_FAILURE', 'CRITICAL', `Integridade do banco FATAL: ${err?.message || err}`, {
+    void emitOperationalAlert('INTEGRITY_FAILURE', 'CRITICAL', `Integridade do banco FATAL: ${getErrorMessage(err)}`, {
       dbPath,
       backupDir
     });
@@ -170,7 +171,7 @@ async function startServer() {
     const database = await getDb();
     await loadAppStateFromDb(database);
   } catch (err) {
-    console.warn('⚠️ Falha ao inicializar banco para app_state:', err?.message || err);
+    console.warn('⚠️ Falha ao inicializar banco para app_state:', getErrorMessage(err));
   }
 
   // 6.2.4: Reconciliação ledger × sinais no boot — cria eventos terminais
@@ -178,7 +179,7 @@ async function startServer() {
   try {
     await reconcileLedgerWithSignals();
   } catch (err) {
-    console.warn('⚠️ Falha na reconciliação do ledger no boot:', err?.message || err);
+    console.warn('⚠️ Falha na reconciliação do ledger no boot:', getErrorMessage(err));
   }
 
   // 7.3.2: reconciliação periódica (default 15 min). Cada passada emite
@@ -190,7 +191,7 @@ async function startServer() {
       : 15 * 60 * 1000;
   const ledgerReconcileTimer = setInterval(() => {
     reconcileLedgerWithSignals().catch(err =>
-      console.warn('⚠️ Falha na reconciliação periódica do ledger:', err?.message || err)
+      console.warn('⚠️ Falha na reconciliação periódica do ledger:', getErrorMessage(err))
     );
   }, ledgerReconcileIntervalMs);
   ledgerReconcileTimer.unref();
@@ -218,7 +219,7 @@ async function startServer() {
       createScheduledBackup(dbPath, backupDir);
     } catch (err) {
       console.error('Falha ao executar backup agendado:', err);
-      void emitOperationalAlert('BACKUP_FAILED', 'CRITICAL', `Backup agendado do banco falhou: ${err?.message || err}`, {
+      void emitOperationalAlert('BACKUP_FAILED', 'CRITICAL', `Backup agendado do banco falhou: ${getErrorMessage(err)}`, {
         dbPath,
         backupDir
       });
@@ -554,7 +555,7 @@ async function startServer() {
                       }
                     }
                   } catch (pendingErr) {
-                    console.warn(`[pending-entry] Falha ao avaliar pendentes de ${symbol} (segue no próximo tick):`, pendingErr?.message || pendingErr);
+                    console.warn(`[pending-entry] Falha ao avaliar pendentes de ${symbol} (segue no próximo tick):`, getErrorMessage(pendingErr));
                   }
                   }
                 if (activeOnlyForCategory.length > 0 && activeTradeGate.allow) {
@@ -578,7 +579,7 @@ async function startServer() {
                         eventType: 'TARGET2',
                         price: processed.price,
                         timestamp: Date.now()
-                      }).catch(e => console.error('Ledger event TARGET2 error:', e?.message || e));
+                      }).catch(e => console.error('Ledger event TARGET2 error:', getErrorMessage(e)));
                     } else if (action.type === 'STOPPED_OUT') {
                       await updateSignalStatus(action.signalId, 'STOPPED_OUT', action.reason);
                       console.log(`🛑 [STOPPED OUT] ${symbol} (${action.reason})`);
@@ -588,7 +589,7 @@ async function startServer() {
                         eventType: isBreakeven ? 'BREAKEVEN' : 'STOP',
                         price: processed.price,
                         timestamp: Date.now()
-                      }).catch(e => console.error('Ledger event STOP/BREAKEVEN error:', e?.message || e));
+                      }).catch(e => console.error('Ledger event STOP/BREAKEVEN error:', getErrorMessage(e)));
                     } else {
                       console.log(`🛡️ [BREAKEVEN ACTIVATED] ${symbol} stop moved to entry.`);
                       await updateSignal(action.signal);
@@ -597,7 +598,7 @@ async function startServer() {
                         eventType: 'PARTIAL',
                         price: processed.price,
                         timestamp: Date.now()
-                      }).catch(e => console.error('Ledger event PARTIAL error:', e?.message || e));
+                      }).catch(e => console.error('Ledger event PARTIAL error:', getErrorMessage(e)));
                     }
                   }
                   }

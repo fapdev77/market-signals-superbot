@@ -1,4 +1,5 @@
 import { URL } from 'url';
+import { getErrorMessage } from './errors.js';
 import dns from 'dns';
 
 const DEFAULT_ALLOWED_HOSTS = new Set([
@@ -127,7 +128,7 @@ export async function validateOutboundAIUrlWithDns(
   } catch (err) {
     return {
       isValid: false,
-      error: `Falha na resolução de DNS para o host: ${err?.message || 'Host inacessível'}`
+      error: `Falha na resolução de DNS para o host: ${getErrorMessage(err) || 'Host inacessível'}`
     };
   }
 

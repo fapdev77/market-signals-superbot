@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { getErrorMessage } from './utils/errors.js';
 import { LiquidationEvent, LiquidationSummary } from '../src/types.js';
 // R-2: simulação de liquidações isolada em server/demo/.
 import { simulateLiquidationSummary } from './demo/syntheticMarket.js';
@@ -328,12 +329,12 @@ export function initBinanceWebSocket() {
           );
         }
       } catch (err) {
-        addBinanceLog('WARN', 'WEBSOCKET', `Erro ao decodificar JSON do WebSocket: ${err.message}`);
+        addBinanceLog('WARN', 'WEBSOCKET', `Erro ao decodificar JSON do WebSocket: ${getErrorMessage(err)}`);
       }
     });
 
     wsInstance.on('error', (err: any) => {
-      wsStatus.lastError = err.message || 'Erro de rede desconhecido no WebSocket';
+      wsStatus.lastError = getErrorMessage(err) || 'Erro de rede desconhecido no WebSocket';
       recordFeedFailure('ws', wsStatus.lastError);
       addBinanceLog('ERROR', 'WEBSOCKET', `Erro na conexão WebSocket: ${wsStatus.lastError}`);
     });
@@ -363,10 +364,10 @@ export function initBinanceWebSocket() {
   } catch (err) {
     wsStatus.connected = false;
     wsStatus.connecting = false;
-    wsStatus.lastError = err.message;
+    wsStatus.lastError = getErrorMessage(err);
     wsStatus.reconnectCount++;
     const delayMs = calculateWsBackoff(wsStatus.reconnectCount, { baseMs: 2000, maxMs: 60000, jitter: 0.2 });
-    addBinanceLog('ERROR', 'WEBSOCKET', `Falha ao instanciar cliente WebSocket: ${err.message}`);
+    addBinanceLog('ERROR', 'WEBSOCKET', `Falha ao instanciar cliente WebSocket: ${getErrorMessage(err)}`);
     cleanupSocket();
 
     if (reconnectTimer) clearTimeout(reconnectTimer);

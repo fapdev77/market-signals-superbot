@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { TickerData, TradeSignal, AIModelConfig, AIReviewResponse } from '../types';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 import { 
@@ -91,7 +92,7 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
       }
     } catch (err) {
       console.error('Erro ao buscar preview do prompt:', err);
-      setErrorMsg(err.message || 'Falha ao conectar com o gerador de prompt.');
+      setErrorMsg(getErrorMessage(err) || 'Falha ao conectar com o gerador de prompt.');
     } finally {
       setLoadingPreview(false);
     }
@@ -165,7 +166,7 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
       onClose();
     } catch (err) {
       console.error('Falha ao executar auditoria com prompt:', err);
-      setErrorMsg(err.message || 'Falha ao processar a auditoria com a IA.');
+      setErrorMsg(getErrorMessage(err) || 'Falha ao processar a auditoria com a IA.');
     } finally {
       setLoadingSubmit(false);
     }

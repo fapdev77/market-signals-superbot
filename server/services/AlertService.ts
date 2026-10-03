@@ -9,6 +9,8 @@
  * - Deduplication window by alert key (default: 10 minutes)
  */
 
+import { getErrorMessage } from '../utils/errors.js';
+
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 export interface AlertPayload {
@@ -42,7 +44,7 @@ export class WebhookAlertSink implements AlertSink {
       });
       return res.ok;
     } catch (err) {
-      console.error(`[AlertService] Erro ao enviar webhook para ${this.url}:`, err?.message || err);
+      console.error(`[AlertService] Erro ao enviar webhook para ${this.url}:`, getErrorMessage(err));
       return false;
     }
   }
@@ -74,7 +76,7 @@ export class TelegramAlertSink implements AlertSink {
       });
       return res.ok;
     } catch (err) {
-      console.error('[AlertService] Erro ao enviar alerta Telegram:', err?.message || err);
+      console.error('[AlertService] Erro ao enviar alerta Telegram:', getErrorMessage(err));
       return false;
     }
   }

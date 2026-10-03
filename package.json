@@ -22,6 +22,7 @@
     "audit:universe": "tsx scripts/audit-universe.ts",
     "verify:lock": "tsx scripts/verify-lock.ts",
     "compare:entry": "tsx scripts/compare-entry.ts",
+    "diagnose:edge": "tsx scripts/diagnose-edge.ts",
     "ci": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {

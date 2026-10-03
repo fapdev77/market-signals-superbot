@@ -1,9 +1,9 @@
 {
   "_meta": {
-    "capturedAt": "2026-09-30T11:29:24.213Z",
+    "capturedAt": "2026-10-02T22:40:49.630Z",
     "endpoint": "/fapi/v1/fundingInfo",
     "query": "",
-    "serverTimeFromTimeEndpoint": 1790767762103
+    "serverTimeFromTimeEndpoint": 1790980848437
   },
   "data": [
     {
@@ -34,9 +34,9 @@
       "symbol": "ARKUSDT",
       "adjustedFundingRateCap": "0.02000000",
       "adjustedFundingRateFloor": "-0.02000000",
-      "fundingIntervalHours": 4,
+      "fundingIntervalHours": 1,
       "disclaimer": false,
-      "updateTime": 1789592460646
+      "updateTime": 1790798460854
     },
     {
       "symbol": "IMXUSDT",
@@ -250,9 +250,9 @@
       "symbol": "ONEUSDT",
       "adjustedFundingRateCap": "0.02000000",
       "adjustedFundingRateFloor": "-0.02000000",
-      "fundingIntervalHours": 1,
+      "fundingIntervalHours": 4,
       "disclaimer": false,
-      "updateTime": 1790294460768
+      "updateTime": 1790953260227
     },
     {
       "symbol": "MAGICUSDT",
@@ -4452,7 +4452,7 @@
       "adjustedFundingRateFloor": "-0.02000000",
       "fundingIntervalHours": 8,
       "disclaimer": false,
-      "updateTime": 1783297200378
+      "updateTime": 1790899380632
     },
     {
       "symbol": "SOXLUSDT",
@@ -5973,6 +5973,14 @@
       "fundingIntervalHours": 8,
       "disclaimer": false,
       "updateTime": 1790660314643
+    },
+    {
+      "symbol": "CTUSDT",
+      "adjustedFundingRateCap": "0.02000000",
+      "adjustedFundingRateFloor": "-0.02000000",
+      "fundingIntervalHours": 4,
+      "disclaimer": false,
+      "updateTime": 1790839469675
     },
     {
       "symbol": "BCHUSD_PERP",

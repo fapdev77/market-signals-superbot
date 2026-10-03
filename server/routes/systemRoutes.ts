@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getErrorMessage } from '../utils/errors.js';
 import { z } from 'zod';
 import {
   getDatabaseStats, 
@@ -28,6 +29,8 @@ import { getFeedHealth } from '../services/feedHealth.js';
 import { getMetrics } from '../utils/metrics.js';
 import { BinanceRateLimiter } from '../utils/binanceRateLimiter.js';
 import { getTradingScheduleStatus, getExchangeRequestWeightLimit, getTradfiRegistryAsOf } from '../binanceService.js';
+// 8.3.2 — instante da última sincronização diária de funding.
+import { getFundingSyncLastRunAt } from '../services/FundingCoverageTrigger.js';
 import { getWebSocketStatus } from '../binanceWebsocket.js';
 import { isClockDegraded, getClockDriftMs, getLastClockCheckTime } from '../services/ClockService.js';
 import { parseOriginFilter } from '../utils/dataOrigin.js';
@@ -52,7 +55,7 @@ export function createSystemRouter(
       res.json(stats);
     } catch (err) {
       console.error('Failed to get database stats:', err);
-      res.status(500).json({ error: 'Falha ao obter estatísticas do banco de dados', details: err?.message });
+      res.status(500).json({ error: 'Falha ao obter estatísticas do banco de dados', details: getErrorMessage(err) });
     }
   });
 
@@ -63,7 +66,7 @@ export function createSystemRouter(
       const logs = await getAuditLogs(limit);
       res.json(logs);
     } catch (err) {
-      res.status(500).json({ error: 'Falha ao buscar logs de auditoria', details: err?.message });
+      res.status(500).json({ error: 'Falha ao buscar logs de auditoria', details: getErrorMessage(err) });
     }
   });
 
@@ -75,7 +78,7 @@ export function createSystemRouter(
       res.json(result);
     } catch (err) {
       console.error('Failed to vacuum database:', err);
-      res.status(500).json({ error: 'Falha ao otimizar banco de dados', details: err?.message });
+      res.status(500).json({ error: 'Falha ao otimizar banco de dados', details: getErrorMessage(err) });
     }
   });
 
@@ -91,7 +94,7 @@ export function createSystemRouter(
       res.json(result);
     } catch (err) {
       console.error(`Failed to clear table ${table}:`, err);
-      res.status(400).json({ error: err?.message || 'Falha ao limpar tabela' });
+      res.status(400).json({ error: getErrorMessage(err) || 'Falha ao limpar tabela' });
     }
   });
 
@@ -109,7 +112,7 @@ export function createSystemRouter(
       res.json(data);
     } catch (err) {
       console.error('Failed to export database:', err);
-      res.status(500).json({ error: 'Falha ao exportar backup do banco de dados', details: err?.message });
+      res.status(500).json({ error: 'Falha ao exportar backup do banco de dados', details: getErrorMessage(err) });
     }
   });
 
@@ -141,7 +144,7 @@ export function createSystemRouter(
       });
     } catch (err) {
       console.error('Failed to perform global factory reset:', err);
-      res.status(500).json({ error: 'Falha ao executar reset de fábrica', details: err?.message });
+      res.status(500).json({ error: 'Falha ao executar reset de fábrica', details: getErrorMessage(err) });
     }
   });
 
@@ -170,10 +173,12 @@ export function createSystemRouter(
           remainingCooldownMs: BinanceRateLimiter.getRemainingCooldownMs()
         },
         // 7.1.1: instante do último registro TradFi bom (observabilidade do fail-closed).
-        tradfiRegistryAsOf: getTradfiRegistryAsOf()
+        tradfiRegistryAsOf: getTradfiRegistryAsOf(),
+        // 8.3.2: instante da última sincronização diária de funding.
+        fundingSyncLastRunAt: getFundingSyncLastRunAt()
       });
     } catch (err) {
-      res.status(500).json({ error: 'Falha ao obter métricas', details: err?.message });
+      res.status(500).json({ error: 'Falha ao obter métricas', details: getErrorMessage(err) });
     }
   });
 
@@ -198,7 +203,7 @@ export function createSystemRouter(
         }
       });
     } catch (err) {
-      res.status(500).json({ error: 'Falha ao obter health dos feeds', details: err?.message });
+      res.status(500).json({ error: 'Falha ao obter health dos feeds', details: getErrorMessage(err) });
     }
   });
 
@@ -218,7 +223,7 @@ export function createSystemRouter(
       });
     } catch (err) {
       console.error('Failed to compute risk status:', err);
-      res.status(500).json({ error: 'Falha ao calcular o status de risco', details: err?.message });
+      res.status(500).json({ error: 'Falha ao calcular o status de risco', details: getErrorMessage(err) });
     }
   });
 
@@ -241,7 +246,7 @@ export function createSystemRouter(
       res.json({ success: true, limits: updated });
     } catch (err) {
       console.error('Failed to update risk limits:', err);
-      res.status(400).json({ error: err?.message || 'Falha ao atualizar limites de risco' });
+      res.status(400).json({ error: getErrorMessage(err) || 'Falha ao atualizar limites de risco' });
     }
   });
 
@@ -267,7 +272,7 @@ export function createSystemRouter(
       await recordAuditLog('KILL_SWITCH', req.originalUrl, actor, { enabled, reason: reason || null });
       res.json({ success: true, killSwitch: state });
     } catch (err) {
-      res.status(400).json({ error: err?.message || 'Falha ao alterar o kill-switch' });
+      res.status(400).json({ error: getErrorMessage(err) || 'Falha ao alterar o kill-switch' });
     }
   });
 
@@ -283,7 +288,7 @@ export function createSystemRouter(
       res.json({ ok: true, results });
     } catch (err) {
       // 6.6.2: falha de alerta nunca derruba o processo — resposta honesta de erro.
-      res.status(500).json({ ok: false, error: err?.message || 'Falha ao disparar alerta de teste' });
+      res.status(500).json({ ok: false, error: getErrorMessage(err) || 'Falha ao disparar alerta de teste' });
     }
   });
 

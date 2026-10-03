@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { 
   Server, 
   Settings2, 
@@ -237,7 +238,7 @@ export const AIModelsConfigDashboard: React.FC<{
         modelId: model.id,
         loading: false,
         success: false,
-        message: `Falha na conexão: ${err.message || 'Erro de rede'}`
+        message: `Falha na conexão: ${getErrorMessage(err) || 'Erro de rede'}`
       });
     }
   };

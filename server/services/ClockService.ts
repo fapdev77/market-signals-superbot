@@ -8,6 +8,7 @@
  */
 
 import { AlertService, defaultAlertService } from './AlertService.js';
+import { getErrorMessage } from '../utils/errors.js';
 
 export const MAX_CLOCK_DRIFT_MS = 2000; // 2 seconds
 
@@ -94,7 +95,7 @@ export async function checkBinanceServerTimeDrift(
       alertService
     });
   } catch (err) {
-    console.warn('[ClockService] Falha ao consultar /fapi/v1/time:', err?.message || err);
+    console.warn('[ClockService] Falha ao consultar /fapi/v1/time:', getErrorMessage(err));
     return { driftMs: lastKnownDriftMs, degraded: clockDegraded };
   }
 }

@@ -1,4 +1,5 @@
 import { TickerData, TradeSignal, AIReviewResponse, AIAuditReport, IndicatorWeights, AIModelConfig } from '../src/types.js';
+import { getErrorMessage, getErrorStack } from './utils/errors.js';
 import { GoogleGenAI, Type } from '@google/genai';
 import { addAILog } from './aiLogger.js';
 import { getAIPersonaById } from '../src/constants/aiPersonas.js';
@@ -251,9 +252,9 @@ export async function generateContentWithModel(
         type: logType,
         provider: 'gemini',
         modelId: targetModel,
-        message: `Erro na execução Gemini (${targetModel}): ${err.message}`,
+        message: `Erro na execução Gemini (${targetModel}): ${getErrorMessage(err)}`,
         durationMs,
-        details: { errorStack: err.stack, promptSnippet: options.prompt.slice(0, 150) }
+        details: { errorStack: getErrorStack(err), promptSnippet: options.prompt.slice(0, 150) }
       });
       throw err;
     }
@@ -367,7 +368,7 @@ export async function generateContentWithModel(
         diagnosticSteps.push(`[Aviso /api/generate] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
     } catch (e) {
-      diagnosticSteps.push(`[Falha /api/generate]: ${e.message}`);
+      diagnosticSteps.push(`[Falha /api/generate]: ${getErrorMessage(e)}`);
     }
 
     // 2. Native Ollama /api/chat endpoint
@@ -435,7 +436,7 @@ export async function generateContentWithModel(
         diagnosticSteps.push(`[Aviso /api/chat] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
     } catch (e) {
-      diagnosticSteps.push(`[Falha /api/chat]: ${e.message}`);
+      diagnosticSteps.push(`[Falha /api/chat]: ${getErrorMessage(e)}`);
     }
 
     // 3. OpenAI-compatible endpoint
@@ -490,7 +491,7 @@ export async function generateContentWithModel(
         diagnosticSteps.push(`[Aviso OpenAI-compatible] Retornou HTTP ${res.status}: ${errText.slice(0, 150)}`);
       }
     } catch (e) {
-      diagnosticSteps.push(`[Falha OpenAI-compatible]: ${e.message}`);
+      diagnosticSteps.push(`[Falha OpenAI-compatible]: ${getErrorMessage(e)}`);
     }
 
     // If all attempts failed:
@@ -641,7 +642,7 @@ export async function generateContentWithModel(
         type: logType,
         provider,
         modelId: modelConfig.modelId,
-        message: `Exceção em ${provider.toUpperCase()}: ${err.message}`,
+        message: `Exceção em ${provider.toUpperCase()}: ${getErrorMessage(err)}`,
         durationMs
       });
       throw err;
@@ -736,7 +737,7 @@ export async function generateContentWithModel(
         type: logType,
         provider: 'anthropic',
         modelId: modelConfig.modelId,
-        message: `Exceção Anthropic: ${err.message}`,
+        message: `Exceção Anthropic: ${getErrorMessage(err)}`,
         durationMs
       });
       throw err;
@@ -888,8 +889,8 @@ export async function reviewSignalWithAI(
         timestamp: Date.now()
       };
     } catch (err) {
-      lastErrorMsg = `${targetModelConfig.name}: ${err.message.slice(0, 80)}`;
-      console.warn(`[reviewSignalWithAI] Falha no modelo '${targetModelConfig.name}'. Tentando próximo da cadeia... Erro:`, err.message);
+      lastErrorMsg = `${targetModelConfig.name}: ${getErrorMessage(err).slice(0, 80)}`;
+      console.warn(`[reviewSignalWithAI] Falha no modelo '${targetModelConfig.name}'. Tentando próximo da cadeia... Erro:`, getErrorMessage(err));
     }
   }
 
@@ -1001,8 +1002,8 @@ Instructions:
         modelUsed: result.modelUsed
       };
     } catch (err) {
-      lastErrorMsg = `${targetModelConfig.name}: ${err.message.slice(0, 80)}`;
-      console.warn(`[auditMarketWithAI] Falha no modelo '${targetModelConfig.name}'. Erro:`, err.message);
+      lastErrorMsg = `${targetModelConfig.name}: ${getErrorMessage(err).slice(0, 80)}`;
+      console.warn(`[auditMarketWithAI] Falha no modelo '${targetModelConfig.name}'. Erro:`, getErrorMessage(err));
     }
   }
 
@@ -1058,8 +1059,8 @@ export async function chatWithAITrader(
         modelUsed: result.modelUsed
       };
     } catch (err) {
-      lastErrorMsg = `${targetModelConfig.name}: ${err.message.slice(0, 80)}`;
-      console.warn(`[chatWithAITrader] Falha no modelo '${targetModelConfig.name}'. Erro:`, err.message);
+      lastErrorMsg = `${targetModelConfig.name}: ${getErrorMessage(err).slice(0, 80)}`;
+      console.warn(`[chatWithAITrader] Falha no modelo '${targetModelConfig.name}'. Erro:`, getErrorMessage(err));
     }
   }
 

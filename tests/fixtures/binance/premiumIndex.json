@@ -1,30 +1,30 @@
 {
   "_meta": {
-    "capturedAt": "2026-09-30T11:29:24.870Z",
+    "capturedAt": "2026-10-02T22:40:50.276Z",
     "endpoint": "/fapi/v1/premiumIndex",
     "query": "symbol=BTCUSDT,XAUUSDT",
-    "serverTimeFromTimeEndpoint": 1790767762103
+    "serverTimeFromTimeEndpoint": 1790980848437
   },
   "samples": {
     "BTCUSDT": {
       "symbol": "BTCUSDT",
-      "markPrice": "83829.80000000",
-      "indexPrice": "83844.93847826",
-      "estimatedSettlePrice": "83791.57678285",
-      "lastFundingRate": "0.00004558",
+      "markPrice": "84451.89176912",
+      "indexPrice": "84498.79043478",
+      "estimatedSettlePrice": "84529.97502959",
+      "lastFundingRate": "0.00006650",
       "interestRate": "0.00010000",
-      "nextFundingTime": 1790784000000,
-      "time": 1790767764002
+      "nextFundingTime": 1790985600000,
+      "time": 1790980850000
     },
     "XAUUSDT": {
       "symbol": "XAUUSDT",
-      "markPrice": "4187.85000000",
-      "indexPrice": "4185.66627452",
-      "estimatedSettlePrice": "4183.45601434",
-      "lastFundingRate": "0.00004820",
+      "markPrice": "4148.00000000",
+      "indexPrice": "4148.81741896",
+      "estimatedSettlePrice": "4148.57084668",
+      "lastFundingRate": "0.00002659",
       "interestRate": "0.00000000",
-      "nextFundingTime": 1790769600000,
-      "time": 1790767763307
+      "nextFundingTime": 1790985600000,
+      "time": 1790980849306
     }
   }
 }

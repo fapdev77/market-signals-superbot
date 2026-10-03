@@ -9,6 +9,16 @@ import { resolvePosition, type PositionState } from './positionResolution.js';
 // 7.6.3: a aritmética de PnL e custos do backtest também usa decimal (dAdd/dSub/dMul/dDiv),
 // fechando exato a soma das pernas antes das taxas/funding.
 import { dAdd, dSub, dMul, dDiv, dRound } from '../utils/decimal.js';
+// 8.0 / J-01, J-02: contabilidade por POSIÇÃO (legs, positionsClosed) e decomposição de R.
+import {
+  createPositionAccounting,
+  applyResolution,
+  positionNetPct,
+  rDecomposition,
+  positionCostR,
+  legGrossPct,
+  type PositionAccounting
+} from './backtestAccounting.js';
 import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './FundingService.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
@@ -176,6 +186,30 @@ export function resolveBacktestPosition(
       stopLoss: res.nextPositionState.stopLoss
     }
   };
+}
+
+
+// ============================================================================
+// 8.1 — Regime proxy for edge diagnosis (deterministic, no look-ahead)
+// ============================================================================
+
+/**
+ * Classifica a janela que gerou o sinal em tendência (alta/baixa) ou lateral, a
+ * partir da variação líquida do primeiro `open` ao último `close`. Proxy simples
+ * e determinístico: NÃO usa candle futuro e não exige indicador extra, servindo
+ * apenas para AGRUPAR o diagnóstico (8.1.2), nunca para decidir entrada.
+ */
+export function classifyRegime(
+  windowSlice: Array<{ open: number; close: number }>
+): 'TREND_UP' | 'TREND_DOWN' | 'RANGE' {
+  if (windowSlice.length === 0) return 'RANGE';
+  const first = windowSlice[0].open;
+  const last = windowSlice[windowSlice.length - 1].close;
+  if (!(first > 0)) return 'RANGE';
+  const changePct = ((last - first) / first) * 100;
+  if (changePct >= 0.5) return 'TREND_UP';
+  if (changePct <= -0.5) return 'TREND_DOWN';
+  return 'RANGE';
 }
 
 
@@ -457,6 +491,21 @@ export class BacktestEngine {
     let totalWinPctSum = 0;
     let totalLossPctSum = 0;
     let totalDurationSum = 0;
+
+    // 8.0 / J-01, J-02 — contadores por POSIÇÃO (não por perna).
+    let totalLegs = 0;
+    let legWins = 0;
+    let legLosses = 0;
+    let totalFeesPaidValue = 0;
+    let rSumGross = 0;
+    let rSumFees = 0;
+    let rSumSlippage = 0;
+    let rSumFunding = 0;
+    let rSumNet = 0;
+    let rCostSum = 0;
+    let rCount = 0;
+    let positionAcc: PositionAccounting = createPositionAccounting();
+    let lastSpecialFundingCostPct = 0;
     
     let inPosition = false;
     let posDirection: 'LONG' | 'SHORT' = 'LONG';
@@ -500,11 +549,11 @@ export class BacktestEngine {
     let fundingFallbackEventsTotal = 0;
 
     // Phase 2.5.4: entry is deferred to the next candle's open to remove lookahead bias.
-    let pendingEntry: { direction: 'LONG' | 'SHORT'; stopLoss: number; target1: number; target2: number; rIndex: number; createdAt: number } | null = null;
+    let pendingEntry: { direction: 'LONG' | 'SHORT'; stopLoss: number; target1: number; target2: number; rIndex: number; createdAt: number; confluenceScore: number; regime: 'TREND_UP' | 'TREND_DOWN' | 'RANGE' } | null = null;
 
     // 7.2.1 — braço "com confirmação": o pendente é governado pelas funções puras do live.
     let pendingConfirmation: {
-      signal: { direction: 'LONG' | 'SHORT'; entryZone: [number, number]; stopLoss: number; target1: number; target2: number; strategyCategory?: string; confluenceScore?: number; createdAt: number };
+      signal: { direction: 'LONG' | 'SHORT'; entryZone: [number, number]; stopLoss: number; target1: number; target2: number; strategyCategory?: string; confluenceScore?: number; regime: 'TREND_UP' | 'TREND_DOWN' | 'RANGE'; createdAt: number };
       startIndex: number;
       rIndex: number;
     } | null = null;
@@ -517,6 +566,8 @@ export class BacktestEngine {
       entriesNotFilled: 0,
       entriesInvalidated: 0,
       rPerSignal: [] as number[],
+      // 8.2.1 — chave determinística por sinal (mesmo sinal nos dois braços).
+      signalKeys: [] as string[],
       fillMinutesSum: 0,
       fillCount: 0,
       limitation: (config.entryConfirmation === true
@@ -525,6 +576,9 @@ export class BacktestEngine {
     };
     let activeSignalRIndex = -1;
     let activeRiskPct = 0;
+    // 8.1 — metadados do sinal ativo, usados no diagnóstico do edge.
+    let activeConfluenceScore = 0;
+    let activeRegime: 'TREND_UP' | 'TREND_DOWN' | 'RANGE' = 'RANGE';
 
     // Track active position state
     let isBreakevenActive = false;
@@ -604,7 +658,10 @@ export class BacktestEngine {
           takeProfit1 = pc.signal.target1;
           takeProfit2 = pc.signal.target2;
           activeSignalRIndex = pc.rIndex;
+          activeConfluenceScore = pc.signal.confluenceScore ?? 0;
+          activeRegime = pc.signal.regime;
           activeRiskPct = entryPrice > 0 ? dMul(dDiv(Math.abs(dSub(entryPrice, stopLoss)), entryPrice), 100) : 0;
+          positionAcc = createPositionAccounting(); // 8.0: nova posição, contadores zerados
           ecStats.entriesFilled++;
           ecStats.fillCount++;
           ecStats.fillMinutesSum += Math.max(0, (candle.timestamp - pc.signal.createdAt) / 60000);
@@ -632,6 +689,8 @@ export class BacktestEngine {
         takeProfit1 = pendingEntry.target1;
         takeProfit2 = pendingEntry.target2;
         activeSignalRIndex = pendingEntry.rIndex;
+        activeConfluenceScore = pendingEntry.confluenceScore;
+        activeRegime = pendingEntry.regime;
         activeRiskPct = entryPrice > 0 ? dMul(dDiv(Math.abs(dSub(entryPrice, stopLoss)), entryPrice), 100) : 0;
         ecStats.entriesFilled++;
         ecStats.fillCount++;
@@ -680,6 +739,10 @@ export class BacktestEngine {
           if (signal && signal.validationStatus !== 'REJECTED_SPIKE') {
             const rIndex = ecStats.rPerSignal.length;
             ecStats.rPerSignal.push(0);
+            // 8.2.1 — a mesma vela/direção/zona gera a MESMA chave nos dois braços.
+            ecStats.signalKeys.push(
+              `${candle.timestamp}|${signal.direction}|${signal.entryZone[0]}|${signal.entryZone[1]}`
+            );
             ecStats.signalsEmitted++;
 
             if (config.entryConfirmation === true) {
@@ -693,6 +756,7 @@ export class BacktestEngine {
                   target2: signal.target2,
                   strategyCategory: signal.strategyCategory,
                   confluenceScore: signal.confluenceScore,
+                  regime: classifyRegime(windowSlice),
                   createdAt: candle.timestamp
                 },
                 startIndex: i,
@@ -707,6 +771,8 @@ export class BacktestEngine {
                 target1: signal.target1,
                 target2: signal.target2,
                 rIndex,
+                confluenceScore: signal.confluenceScore,
+                regime: classifyRegime(windowSlice),
                 createdAt: candle.timestamp
               };
             }
@@ -753,25 +819,33 @@ export class BacktestEngine {
           fundingCoverageCoveredTotal += fundingResult.coveredEvents;
           fundingFallbackEventsTotal += Math.max(0, fundingResult.expectedEvents - fundingResult.coveredEvents);
 
-          // Net trade PnL = Gross % (this candle's legs) - fees on closed size - funding on closed size.
-          // 7.6.3: tudo em decimal — grossPnlPct já é a soma decimal das pernas.
+          // PnL líquido DESTE candle = bruto das pernas − taxas do tamanho fechado − funding.
           const feeCostPct = dMul(roundtripFee, closedSize);
           const fundingCostPct = fundingResult.totalFundingCostPct;
           const tradePnlPct = dSub(dSub(resolution.grossPnlPct, feeCostPct), fundingCostPct);
+          const balanceBefore = balance;
           const profit = dMul(dDiv(tradePnlPct, 100), balance);
           balance = dAdd(balance, profit);
+          totalFeesPaidValue = dAdd(totalFeesPaidValue, dMul(dDiv(feeCostPct, 100), balanceBefore));
 
-          // R-10: the in/out-of-sample split is aggregated from the recorded
-          // trades after the loop (see aggregateWalkForward), so it stays in one
-          // place and follows the rolling windows.
-          if (tradePnlPct > 0) {
-            wins++;
-            totalProfit = dAdd(totalProfit, Math.max(0, profit));
-            totalWinPctSum = dAdd(totalWinPctSum, Math.abs(tradePnlPct));
-          } else {
-            losses++;
-            totalLoss = dAdd(totalLoss, Math.abs(profit));
-            totalLossPctSum = dAdd(totalLossPctSum, Math.abs(tradePnlPct));
+          // 8.0 — acumula a POSIÇÃO (pernas, taxas, funding, slippage) e a decompõe em R.
+          // O bruto sem slippage é recuperado invertendo `slipFill`.
+          applyResolution(positionAcc, {
+            direction: posDirection,
+            entryPrice,
+            exitLegs: closedLegs.map(l => ({ leg: l.leg, price: l.price, size: l.size })),
+            hasClosedFull: positionFullyClosed,
+            slippagePct: slipPct,
+            roundtripFeePct: roundtripFee,
+            fundingPct: fundingCostPct,
+            profitValue: profit
+          });
+          lastSpecialFundingCostPct = fundingResult.specialFundingCostPct;
+
+          // 8.0.1 — win rate por PERNA, rotulado à parte do win rate por posição.
+          for (const leg of closedLegs) {
+            const legPct = legGrossPct(leg.price, entryPrice, leg.size, posDirection);
+            if (legPct > 0) legWins++; else legLosses++;
           }
 
           if (balance > peakBalance) {
@@ -787,55 +861,113 @@ export class BacktestEngine {
             drawdown: dRound(maxDrawdown, 2)
           });
 
-          trades.push({
-            id: crypto.randomUUID(),
-            symbol: config.symbol,
-            direction: posDirection,
-            entryPrice: dRound(entryPrice, 4),
-            exitPrice: dRound(resolution.exitPrice, 4),
-            entryTime,
-            exitTime: candle.timestamp,
-            pnlPct: dRound(tradePnlPct, 2),
-            pnlValue: dRound(profit, 2),
-            stopLoss: dRound(stopLoss, 4),
-            takeProfit1: dRound(takeProfit1, 4),
-            takeProfit2: dRound(takeProfit2, 4),
-            isWin: tradePnlPct > 0,
-            isBreakeven: isBreakevenActive,
-            partialClosed: closedLegs.some(l => l.leg === 'PARTIAL'),
-            closedSize: dRound(closedSize, 2),
-            durationMinutes: durationMin,
-            fundingCostPct: dRound(fundingCostPct, 4),
-            specialFundingCostPct: dRound(fundingResult.specialFundingCostPct, 4)
-          });
-
-          // Only the full close (TP2 or final stop) frees the engine for the
-          // next signal; a partial keeps the position open with the runner.
+          // 8.0 / J-01 — só o fechamento TOTAL registra a POSIÇÃO: 1 fill = 1 trade.
+          // Antes, cada candle de resolução (parcial inclusive) virava um "trade",
+          // então parcial+runner contava 2 para 1 preenchimento ("fechados > preenchidos").
           if (positionFullyClosed) {
+            const netPct = positionNetPct(positionAcc);
+            const r = rDecomposition(positionAcc, activeRiskPct);
+            totalLegs += positionAcc.legs; // 8.0.1 — uma posição TP1+TP2 soma 2 pernas
+
+            if (netPct > 0) {
+              wins++;
+              totalProfit = dAdd(totalProfit, Math.max(0, positionAcc.profitValue));
+              totalWinPctSum = dAdd(totalWinPctSum, Math.abs(netPct));
+            } else {
+              losses++;
+              totalLoss = dAdd(totalLoss, Math.abs(positionAcc.profitValue));
+              totalLossPctSum = dAdd(totalLossPctSum, Math.abs(netPct));
+            }
+            totalDurationSum += durationMin;
+
+            rSumGross = dAdd(rSumGross, r.rGross);
+            rSumFees = dAdd(rSumFees, r.rFees);
+            rSumSlippage = dAdd(rSumSlippage, r.rSlippage);
+            rSumFunding = dAdd(rSumFunding, r.rFunding);
+            rSumNet = dAdd(rSumNet, r.rNet);
+            rCostSum = dAdd(rCostSum, positionCostR(positionAcc, activeRiskPct));
+            rCount += 1;
+
+            trades.push({
+              id: crypto.randomUUID(),
+              symbol: config.symbol,
+              direction: posDirection,
+              entryPrice: dRound(entryPrice, 4),
+              exitPrice: dRound(resolution.exitPrice, 4),
+              entryTime,
+              exitTime: candle.timestamp,
+              pnlPct: dRound(netPct, 2),
+              pnlValue: dRound(positionAcc.profitValue, 2),
+              stopLoss: dRound(stopLoss, 4),
+              takeProfit1: dRound(takeProfit1, 4),
+              takeProfit2: dRound(takeProfit2, 4),
+              isWin: netPct > 0,
+              isBreakeven: isBreakevenActive,
+              partialClosed: positionAcc.hadPartial,
+              closedSize: dRound(positionAcc.closedSize, 2),
+              durationMinutes: durationMin,
+              fundingCostPct: dRound(positionAcc.fundingPct, 4),
+              specialFundingCostPct: dRound(lastSpecialFundingCostPct, 4),
+              legs: positionAcc.legs,
+              rGross: r.rGross,
+              rFees: r.rFees,
+              rSlippage: r.rSlippage,
+              rFunding: r.rFunding,
+              rNet: r.rNet,
+              confluenceScore: activeConfluenceScore,
+              regime: activeRegime
+            });
+
+            // 7.2 — R do sinal emitido que gerou esta posição (liq., já decomposto).
+            if (activeSignalRIndex >= 0) {
+              ecStats.rPerSignal[activeSignalRIndex] = r.rNet;
+              activeSignalRIndex = -1;
+            }
+
+            // Only the full close (TP2 or final stop) frees the engine for the
+            // next signal; a partial keeps the position open with the runner.
             inPosition = false;
             partialTaken = false;
             isBreakevenActive = false;
-            // 7.2 — R do sinal emitido que gerou este trade (risco original do sinal).
-            if (activeSignalRIndex >= 0) {
-              ecStats.rPerSignal[activeSignalRIndex] = activeRiskPct > 0 ? dRound(tradePnlPct / activeRiskPct, 4) : 0;
-              activeSignalRIndex = -1;
-            }
+            positionAcc = createPositionAccounting();
           }
         }
       }
     }
 
-    const totalTrades = wins + losses;
-    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+    // 8.0.1 — `totalTrades` é sinônimo explícito de posições FECHADAS (wins+losses).
+    const positionsClosed = wins + losses;
+    const totalTrades = positionsClosed;
+    const positionsFilled = ecStats.entriesFilled;
+    const winRate = positionsClosed > 0 ? (wins / positionsClosed) * 100 : 0;
+    const winRatePerLeg = legWins + legLosses > 0 ? (legWins / (legWins + legLosses)) * 100 : 0;
     const profitFactor = totalLoss > 0 ? dDiv(totalProfit, totalLoss) : totalProfit > 0 ? 9.9 : 0;
     const netProfitPct = dMul(dDiv(dSub(balance, initialBalance), initialBalance), 100);
     const avgWinPct = wins > 0 ? totalWinPctSum / wins : 0;
     const avgLossPct = losses > 0 ? totalLossPctSum / losses : 0;
     const avgRiskReward = avgLossPct > 0 ? avgWinPct / avgLossPct : preset.targetRiskRatio;
-    const avgDurationMinutes = totalTrades > 0 ? Math.round(totalDurationSum / totalTrades) : 0;
+    const avgDurationMinutes = positionsClosed > 0 ? Math.round(totalDurationSum / positionsClosed) : 0;
+    // 8.0.3 — invariante: positionsClosed ≤ positionsFilled ≤ signalsEmitted.
+    const openPositionsAtEnd = inPosition ? 1 : 0;
+    if (openPositionsAtEnd > 0) {
+      assumptions.push(
+        '1 posição ainda ABERTA no fim da janela — marcada a mercado, fica fora do win rate (posições fechadas).'
+      );
+    }
+
+    // 8.0.2 — médias da decomposição de R por posição fechada + custo médio em R.
+    const rDecompositionAvg = {
+      rGross: rCount > 0 ? dRound(rSumGross / rCount, 4) : 0,
+      rFees: rCount > 0 ? dRound(rSumFees / rCount, 4) : 0,
+      rSlippage: rCount > 0 ? dRound(rSumSlippage / rCount, 4) : 0,
+      rFunding: rCount > 0 ? dRound(rSumFunding / rCount, 4) : 0,
+      rNet: rCount > 0 ? dRound(rSumNet / rCount, 4) : 0,
+      costAvgR: rCount > 0 ? dRound(rCostSum / rCount, 4) : 0,
+      positions: rCount
+    };
 
     // Advanced Institutional Metrics (Sharpe, Sortino, Slippage, Fees) - Phase 2.3
-    const totalFeesPaid = dRound(trades.length * initialBalance * (roundtripFee / 100), 2);
+    const totalFeesPaid = dRound(totalFeesPaidValue, 2);
     const netReturns = trades.map(t => t.pnlPct);
     const meanReturn = netReturns.length > 0 ? netReturns.reduce((a, b) => a + b, 0) / netReturns.length : 0;
     const variance = netReturns.length > 0 ? netReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / netReturns.length : 0;
@@ -903,6 +1035,12 @@ export class BacktestEngine {
       totalCandlesTested: klines.length,
       entryConfirmation: ecStats,
       totalTrades,
+      legs: totalLegs,
+      positionsClosed,
+      positionsFilled,
+      winRatePerLeg: dRound(winRatePerLeg, 2),
+      openPositionsAtEnd,
+      rDecomposition: rDecompositionAvg,
       winningTrades: wins,
       losingTrades: losses,
       winRate: dRound(winRate, 2),

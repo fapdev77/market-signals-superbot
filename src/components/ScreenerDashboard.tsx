@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { 
   Radar, Star, Flame, ArrowUpRight, ArrowDownRight, RefreshCw, Sliders, 
   Search, ShieldAlert, BarChart3, TrendingUp, Zap, Sparkles, Activity, 
@@ -68,7 +69,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       setSummary(assetsRes.summary || null);
       setSettings(settingsRes);
     } catch (err) {
-      showToast('error', 'Falha ao carregar Screener', err?.message || 'Erro ao sincronizar dados');
+      showToast('error', 'Falha ao carregar Screener', getErrorMessage(err) || 'Erro ao sincronizar dados');
     } finally {
       setLoading(false);
     }
@@ -92,7 +93,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       const updated = await apiClient.getScreenerAssets();
       setSummary(updated.summary);
     } catch (err) {
-      showToast('error', 'Erro ao alterar favorito', err?.message);
+      showToast('error', 'Erro ao alterar favorito', getErrorMessage(err));
     }
   };
 
@@ -136,7 +137,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
           : `${normalized} foi removido da lista de exclusão e reabilitado para análise.`
       );
     } catch (err) {
-      showToast('error', 'Erro ao atualizar lista de exclusão', err?.message);
+      showToast('error', 'Erro ao atualizar lista de exclusão', getErrorMessage(err));
     } finally {
       setIsExcludingLoading(false);
     }
@@ -162,7 +163,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       await loadData();
       showToast('success', 'Lista Redefinida', 'Pares estáveis padrão (USDT/USDC, USDG/USDT, PYUSD, etc.) restaurados.');
     } catch (err) {
-      showToast('error', 'Erro ao redefinir lista', err?.message);
+      showToast('error', 'Erro ao redefinir lista', getErrorMessage(err));
     } finally {
       setIsExcludingLoading(false);
     }
@@ -175,7 +176,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       showToast('success', 'Varredura Concluída', `Radar reavaliado: ${res.monitoredCount} ativos ativos no universo de execução.`);
       await loadData();
     } catch (err) {
-      showToast('error', 'Erro na varredura', err?.message);
+      showToast('error', 'Erro na varredura', getErrorMessage(err));
     } finally {
       setIsScanning(false);
     }
@@ -191,7 +192,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
       setIsSettingsOpen(false);
       await loadData();
     } catch (err) {
-      showToast('error', 'Erro ao salvar configurações', err?.message);
+      showToast('error', 'Erro ao salvar configurações', getErrorMessage(err));
     } finally {
       setSavingSettings(false);
     }

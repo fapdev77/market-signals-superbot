@@ -129,7 +129,7 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
         tickerState.confluenceScore = 80;
         const signal = buildTradeSignal(tickerState, spikeCandles, 2.0, 'DAY_TRADE');
         expect(signal?.validationStatus).toBe('REJECTED_SPIKE');
-        expect(signal?.validationDetails.spikeDetected).toBe(true);
+        expect(signal?.validationDetails?.spikeDetected).toBe(true);
       }
     });
 

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getErrorMessage } from '../utils/errors.js';
 import { signalLedgerDao, resetSignalLedger, recordAuditLog } from '../db.js';
 import { parseOriginFilter } from '../utils/dataOrigin.js';
 import {
@@ -31,7 +32,7 @@ export function createEvidenceRouter(): Router {
       });
     } catch (err) {
       console.error('Failed to generate evidence summary:', err);
-      res.status(500).json({ error: 'Falha ao gerar resumo de evidência operacional', details: err?.message });
+      res.status(500).json({ error: 'Falha ao gerar resumo de evidência operacional', details: getErrorMessage(err) });
     }
   });
 
@@ -87,7 +88,7 @@ export function createEvidenceRouter(): Router {
       });
     } catch (err) {
       console.error('Failed to evaluate go/no-go:', err);
-      res.status(500).json({ error: 'Falha ao avaliar critérios go/no-go', details: err?.message });
+      res.status(500).json({ error: 'Falha ao avaliar critérios go/no-go', details: getErrorMessage(err) });
     }
   });
 
@@ -111,7 +112,7 @@ export function createEvidenceRouter(): Router {
       res.json(result);
     } catch (err) {
       console.error('Failed to reset signal ledger:', err);
-      res.status(400).json({ error: err?.message || 'Falha ao resetar signal ledger' });
+      res.status(400).json({ error: getErrorMessage(err) || 'Falha ao resetar signal ledger' });
     }
   });
 
@@ -213,7 +214,7 @@ export function createEvidenceRouter(): Router {
       });
     } catch (err) {
       console.error('Failed to generate burnin report:', err);
-      res.status(500).json({ error: 'Falha ao gerar relatório consolidado de burn-in', details: err?.message });
+      res.status(500).json({ error: 'Falha ao gerar relatório consolidado de burn-in', details: getErrorMessage(err) });
     }
   });
 

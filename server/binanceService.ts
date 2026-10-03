@@ -3,6 +3,7 @@ import { addBinanceLog, getLiveWSTickers, getLiquidationsSummary } from './binan
 import { requestJson, requestJsonLimited } from './utils/httpClient.js';
 import { extractSymbolFilters, type SymbolFilters } from './services/exchangeFilters.js';
 import { BinanceRateLimiter } from './utils/binanceRateLimiter.js';
+import { getErrorMessage, getHttpStatus, getErrorHeaders } from './utils/errors.js';
 // R-13: health por feed — todo caminho de fetch grava sucesso/falha no registro central.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
 import { incrementMetric } from './utils/metrics.js';
@@ -325,15 +326,15 @@ export async function refreshTradfiRegistry(): Promise<TradfiAsset[]> {
       keepLastGood ? 'WARN' : 'ERROR',
       'REST_API',
       keepLastGood
-        ? `exchangeInfo indisponível (${err?.message}). Mantendo o último registro TradFi bom (${Math.round(staleAge / 60000)} min atrás).`
-        : `exchangeInfo indisponível (${err?.message}) e sem registro TradFi bom recente. Registro vazio: nenhum sinal TradFi novo será emitido.`
+        ? `exchangeInfo indisponível (${getErrorMessage(err)}). Mantendo o último registro TradFi bom (${Math.round(staleAge / 60000)} min atrás).`
+        : `exchangeInfo indisponível (${getErrorMessage(err)}) e sem registro TradFi bom recente. Registro vazio: nenhum sinal TradFi novo será emitido.`
     );
     void import('./services/operationalAlerts.js')
       .then(({ emitOperationalAlert }) => emitOperationalAlert(
         'TRADFI_REGISTRY_UNAVAILABLE',
         'HIGH',
-        `Registro TradFi indisponível: exchangeInfo falhou (${err?.message || err}). ${keepLastGood ? 'Mantendo o último resultado bom (≤24 h).' : 'Registro vazio (fail-closed).'}`,
-        { error: err?.message || String(err), staleAgeMs: Number.isFinite(staleAge) ? staleAge : null }
+        `Registro TradFi indisponível: exchangeInfo falhou (${getErrorMessage(err)}). ${keepLastGood ? 'Mantendo o último resultado bom (≤24 h).' : 'Registro vazio (fail-closed).'}`,
+        { error: getErrorMessage(err), staleAgeMs: Number.isFinite(staleAge) ? staleAge : null }
       ))
       .catch(() => { /* best-effort: nunca interfere no tick */ });
     tradfiRegistryRefreshedAt = now;
@@ -533,8 +534,8 @@ export async function refreshTradingSchedule(force: boolean = false): Promise<bo
     recordFeedSuccess('tradingSchedule');
     return true;
   } catch (err) {
-    recordFeedFailure('tradingSchedule', err?.message || String(err));
-    tradingScheduleLastError = err?.message || String(err);
+    recordFeedFailure('tradingSchedule', getErrorMessage(err));
+    tradingScheduleLastError = getErrorMessage(err);
     // Um calendário anterior ainda dentro de 2× TTL continua utilizável (aviso sem derrubar o gate).
     const usable = tradingScheduleCache !== null && now < tradingScheduleFetchedAt + TRADING_SCHEDULE_TTL_MS * 2;
     if (!usable) {
@@ -816,12 +817,12 @@ async function fetchWithFallback(getPath: (ep: typeof REST_ENDPOINTS[0]) => stri
 
     } catch (err) {
       const latency = Date.now() - startTime;
-      const status = err?.status || 0;
-      const errMsg = err?.message || 'Falha de conexão com a API';
+      const status = getHttpStatus(err);
+      const errMsg = getErrorMessage(err) || 'Falha de conexão com a API';
 
       if (status === 429 || status === 418) {
         BinanceRateLimiter.triggerBackoff(status);
-        BinanceRateLimiter.updateFromHeaders(err?.headers || {});
+        BinanceRateLimiter.updateFromHeaders(getErrorHeaders(err));
       }
 
       addBinanceLog(
@@ -879,7 +880,7 @@ export async function fetchBinanceFuturesTickers(symbolsToFilter?: string[]): Pr
     recordFeedFailure('ticker', 'resposta de tickers vazia/malformada');
     return [];
   } catch (err) {
-    recordFeedFailure('ticker', err?.message || 'tickers REST inacessível');
+    recordFeedFailure('ticker', getErrorMessage(err) || 'tickers REST inacessível');
     const now = Date.now();
     if (now - lastFallbackNoticeLogged > 30000) {
       addBinanceLog(
@@ -1109,7 +1110,7 @@ export async function fetchFundingRate(symbol: string): Promise<{
         }
       }
     } catch (err) {
-      recordFeedFailure('funding', err?.message || 'premiumIndex falhou para ' + symbol);
+      recordFeedFailure('funding', getErrorMessage(err) || 'premiumIndex falhou para ' + symbol);
       // Fall through to the cached value below (and report isDegraded)
     }
   }
@@ -1447,8 +1448,8 @@ export async function fetchKlines(
       return candles;
     }
   } catch (err) {
-    recordFeedFailure('klines', err?.message || 'klines falhou para ' + symbol);
-    addBinanceLog('WARN', 'REST_API', `Falha ao obter klines para ${symbol} (${interval}): ${err?.message || err}`);
+    recordFeedFailure('klines', getErrorMessage(err) || 'klines falhou para ' + symbol);
+    addBinanceLog('WARN', 'REST_API', `Falha ao obter klines para ${symbol} (${interval}): ${getErrorMessage(err)}`);
   }
 
   // If cached candles exist from earlier real fetches, reuse them

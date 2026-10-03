@@ -470,6 +470,12 @@ export interface EntryConfirmationStats {
   entriesInvalidated: number;
   /** PnL em R por sinal emitido (0 para não preenchidos) — usado na expectativa/IC. */
   rPerSignal: number[];
+  /**
+   * 8.2.1 — chave DETERMINÍSTICA de cada sinal emitido, na mesma ordem de
+   * `rPerSignal`. Permite parear os braços pelo MESMO sinal (mesmo `signalId`)
+   * mesmo quando o conjunto de sinais diverge entre controle e confirmação.
+   */
+  signalKeys?: string[];
   fillMinutesSum: number;
   fillCount: number;
   limitation?: string;
@@ -503,6 +509,18 @@ export interface BacktestTrade {
   takeProfit2: number;
   isWin: boolean;
   durationMinutes: number;
+  /** 8.0.1 — pernas (eventos de saída) desta posição: parcial+runner = 2. */
+  legs?: number;
+  /** 8.0.2 — decomposição de R da posição (bruto, taxas, slippage, funding, líq.). */
+  rGross?: number;
+  rFees?: number;
+  rSlippage?: number;
+  rFunding?: number;
+  rNet?: number;
+  /** 8.1 — score de confluência do sinal que abriu a posição (faixas do diagnóstico). */
+  confluenceScore?: number;
+  /** 8.1 — regime predominante na vela de emissão (tendência/lateral). */
+  regime?: 'TREND_UP' | 'TREND_DOWN' | 'RANGE';
 }
 
 export interface BacktestResult {
@@ -513,7 +531,29 @@ export interface BacktestResult {
   startTime: number;
   endTime: number;
   totalCandlesTested: number;
+  /** 8.0.1 — posições FECHADAS. Sinônimo explícito de `positionsClosed`. */
   totalTrades: number;
+  /** 8.0.1 — eventos de saída (pernas) acumulados em todas as posições. */
+  legs?: number;
+  /** 8.0.1 — posições fechadas (win+loss). */
+  positionsClosed?: number;
+  /** 8.0.1 — entradas preenchidas (≤ sinais emitidos). */
+  positionsFilled?: number;
+  /** 8.0.1 — win rate por PERNA, rotulado à parte do win rate por posição. */
+  winRatePerLeg?: number;
+  /** 8.0.3 — posições ainda abertas no fim da janela (marca a mercado declarada). */
+  openPositionsAtEnd?: number;
+  /** 8.0.2 — médias da decomposição de R por posição fechada. */
+  rDecomposition?: {
+    rGross: number;
+    rFees: number;
+    rSlippage: number;
+    rFunding: number;
+    rNet: number;
+    /** Custo médio (taxas+slippage+funding) em R por posição. */
+    costAvgR: number;
+    positions: number;
+  };
   winningTrades: number;
   losingTrades: number;
   winRate: number;

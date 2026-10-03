@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { 
   Database, HardDrive, RefreshCw, Sparkles, Trash2, Download, 
   ShieldCheck, AlertTriangle, Cpu, Layers, CheckCircle2, ChevronDown, 
@@ -128,7 +129,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       }
     } catch (err) {
       console.error('Vacuum error:', err);
-      showToast('error', 'Erro na Otimização', err.message || 'Falha ao compactar o banco de dados.');
+      showToast('error', 'Erro na Otimização', getErrorMessage(err) || 'Falha ao compactar o banco de dados.');
     } finally {
       setIsVacuuming(false);
     }
@@ -156,7 +157,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       }
     } catch (err) {
       console.error('Export error:', err);
-      showToast('error', 'Falha na Exportação', err.message || 'Não foi possível baixar o backup.');
+      showToast('error', 'Falha na Exportação', getErrorMessage(err) || 'Não foi possível baixar o backup.');
     } finally {
       setIsExporting(false);
     }
@@ -184,7 +185,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       }
     } catch (err) {
       console.error('Burnin export error:', err);
-      showToast('error', 'Falha no Relatório', err.message || 'Não foi possível baixar o relatório de auditoria.');
+      showToast('error', 'Falha no Relatório', getErrorMessage(err) || 'Não foi possível baixar o relatório de auditoria.');
     } finally {
       setIsExportingBurnIn(false);
     }
@@ -212,7 +213,7 @@ export const SystemDatabaseSettings: React.FC<SystemDatabaseSettingsProps> = ({
       }
     } catch (err) {
       console.error('Clear table error:', err);
-      showToast('error', 'Erro ao Limpar Tabela', err.message || 'Falha na exclusão dos dados.');
+      showToast('error', 'Erro ao Limpar Tabela', getErrorMessage(err) || 'Falha na exclusão dos dados.');
     } finally {
       setClearingTableName(null);
     }

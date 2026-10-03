@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getErrorMessage, getErrorName } from '../utils/errors';
 import { TickerData } from '../types';
 import { getStoredAuthToken } from '../services/apiClient';
 
@@ -155,7 +156,7 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
               applyTickers(list);
             }
           } catch (err) {
-            addLog('WARN', `Erro ao processar pacote do stream: ${err?.message || err}`);
+            addLog('WARN', `Erro ao processar pacote do stream: ${getErrorMessage(err) || err}`);
           }
         };
 
@@ -174,8 +175,8 @@ export function useBinanceWebSocket(initialTickers: TickerData[], onTickersUpdat
         // Servidor encerrou o stream — reconectar com backoff.
         addLog('WARN', 'Stream encerrado pelo servidor. Reconectando...');
       } catch (err) {
-        if (err?.name === 'AbortError') return; // desmontagem deliberada
-        const errorMsg = err?.message || 'Falha de rede no stream do servidor';
+        if (getErrorName(err) === 'AbortError') return; // desmontagem deliberada
+        const errorMsg = getErrorMessage(err) || 'Falha de rede no stream do servidor';
         setStatus(prev => ({ ...prev, connected: false, connecting: false, lastError: errorMsg }));
         addLog('ERROR', `Erro no stream do servidor: ${errorMsg}`);
       } finally {

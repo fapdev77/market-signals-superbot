@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getErrorMessage } from '../utils/errors';
 import { Lock, Key, ShieldCheck, AlertTriangle, Eye, EyeOff, CheckCircle } from 'lucide-react';
 import { getStoredAuthToken, setStoredAuthToken, clearStoredAuthToken, apiFetch } from '../services/apiClient';
 
@@ -55,7 +56,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         setError('Token de autenticação inválido. Verifique o valor no terminal ou nas variáveis de ambiente.');
       }
     } catch (err) {
-      setError(`Erro ao validar token: ${err.message || 'Falha de conexão'}`);
+      setError(`Erro ao validar token: ${getErrorMessage(err) || 'Falha de conexão'}`);
     } finally {
       setIsLoading(false);
     }

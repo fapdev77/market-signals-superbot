@@ -1,12 +1,78 @@
 import { backtestScheduleDao, BacktestScheduleRow } from '../backtest_db/index.js';
+import { getErrorMessage } from '../utils/errors.js';
 import { BacktestEngine } from './BacktestEngine.js';
-import { ensureFundingCoverage, defaultFundingBudgetPerMinute } from './FundingCoverageTrigger.js';
+import { ensureFundingCoverage, defaultFundingBudgetPerMinute, capFundingSymbols, maxFundingSymbolsPerRun } from './FundingCoverageTrigger.js';
 import { BotState, TradingProfile } from '../../src/types.js';
 import { addBinanceLog } from '../binanceWebsocket.js';
 import { getKillSwitch } from './RiskManager.js';
+// 8.3.1 — guardas: rate limiter, feed degradado, teto de símbolos, alerta de falha.
+import { BinanceRateLimiter } from '../utils/binanceRateLimiter.js';
+import { getFeedHealth, type FeedName } from './feedHealth.js';
+import { emitOperationalAlert } from './operationalAlerts.js';
 
 let schedulerInterval: NodeJS.Timeout | null = null;
 let isExecuting = false;
+
+/** Feeds cujo estado DEGRADED impede a execução agendada. */
+export const SCHEDULER_CRITICAL_FEEDS: FeedName[] = ['ticker', 'klines'];
+
+/** 8.3.1 — teto de símbolos por execução (env `SCHEDULER_MAX_SYMBOLS_PER_RUN`). */
+export function maxSchedulerSymbolsPerRun(): number {
+  const parsed = Number(process.env.SCHEDULER_MAX_SYMBOLS_PER_RUN);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 10;
+}
+
+/** 8.3.1 — aplica o teto de símbolos por execução (exportado para teste). */
+export function capSchedulerSymbols(
+  symbols: string[],
+  max: number = maxSchedulerSymbolsPerRun()
+): string[] {
+  return capFundingSymbols(symbols, Math.max(1, max));
+}
+
+export interface SchedulerGuardDeps {
+  /** Injeção para teste; default: `BinanceRateLimiter.isAllowed`. */
+  isRateLimiterAllowed?: () => boolean;
+  /** Injeção para teste; default: `getFeedHealth`. */
+  getFeedHealthSnapshot?: (now?: number) => ReturnType<typeof getFeedHealth>;
+  now?: () => number;
+}
+
+export interface SchedulerGuardResult {
+  allowed: boolean;
+  code: 'OK' | 'RATE_LIMITED' | 'FEED_DEGRADED';
+  reason: string;
+}
+
+/**
+ * 8.3.1 — guardas puras de execução: não roda com a API em cooldown nem com feed
+ * crítico DEGRADED. Retorna o motivo (para log e para o status da agenda).
+ */
+export function checkSchedulerGuards(deps: SchedulerGuardDeps = {}): SchedulerGuardResult {
+  const allowedNow = (deps.isRateLimiterAllowed ?? (() => BinanceRateLimiter.isAllowed()))();
+  if (!allowedNow) {
+    return {
+      allowed: false,
+      code: 'RATE_LIMITED',
+      reason: 'API da Binance em cooldown preventivo (429/418); execução agendada adiada.'
+    };
+  }
+
+  const now = (deps.now ?? Date.now)();
+  const snapshot = (deps.getFeedHealthSnapshot ?? getFeedHealth)(now);
+  const degraded = SCHEDULER_CRITICAL_FEEDS.filter(
+    feed => snapshot.feeds[feed]?.status === 'DEGRADED'
+  );
+  if (degraded.length > 0) {
+    return {
+      allowed: false,
+      code: 'FEED_DEGRADED',
+      reason: `Feed(s) crítico(s) DEGRADED: ${degraded.join(', ')}.`
+    };
+  }
+
+  return { allowed: true, code: 'OK', reason: 'OK' };
+}
 
 export interface ScheduleRunResult {
   success: boolean;
@@ -103,9 +169,16 @@ export function isScheduleDue(schedule: BacktestScheduleRow, nowMs: number = Dat
   return true;
 }
 
+export interface SchedulerRunDeps extends SchedulerGuardDeps {
+  runBacktest?: typeof BacktestEngine.runBacktest;
+  ensureFunding?: typeof ensureFundingCoverage;
+  updateLastRun?: (id: string, status: string, resultId?: string) => Promise<void>;
+}
+
 export async function executeScheduledBacktest(
   schedule: BacktestScheduleRow,
-  botState: BotState
+  botState: BotState,
+  deps: SchedulerRunDeps = {}
 ): Promise<ScheduleRunResult> {
   if (isExecuting) {
     return { success: false, message: 'Execução de backtest já em andamento' };
@@ -115,6 +188,19 @@ export async function executeScheduledBacktest(
   const symbol = schedule.symbol || 'BTCUSDT';
   const days = schedule.days || 30;
   const profile = (schedule.profile || 'daytrade') as TradingProfile;
+  const updateLastRun =
+    deps.updateLastRun ??
+    ((id: string, status: string, resultId?: string) =>
+      backtestScheduleDao.updateLastRun(id, status, resultId));
+
+  // 8.3.1 — guardas antes de qualquer chamada de rede.
+  const guard = checkSchedulerGuards(deps);
+  if (!guard.allowed) {
+    isExecuting = false;
+    addBinanceLog('WARN', 'REST_API', `Backtest agendado (${symbol}) pulado pela guarda: ${guard.reason}`);
+    await updateLastRun(schedule.id, `SKIPPED_${guard.code}`);
+    return { success: false, message: `Pulado: ${guard.reason}` };
+  }
 
   addBinanceLog(
     'INFO',
@@ -123,18 +209,22 @@ export async function executeScheduledBacktest(
   );
 
   try {
+    const runBacktest = deps.runBacktest ?? BacktestEngine.runBacktest;
+    const ensureFunding = deps.ensureFunding ?? ensureFundingCoverage;
+
     // 1. Ensure funding coverage before running
     try {
-      await ensureFundingCoverage(symbol, days, {
+      await ensureFunding(symbol, days, {
         budgetPerMinute: defaultFundingBudgetPerMinute()
       });
     } catch (fundErr) {
-      console.warn(`[scheduler] Aviso ao sincronizar funding para ${symbol}:`, fundErr?.message || fundErr);
+      console.warn(`[scheduler] Aviso ao sincronizar funding para ${symbol}:`, getErrorMessage(fundErr));
     }
 
     // 2. Run backtest with current bot indicator weights
+    // 8.3.1 — o scheduler NÃO aplica pesos sozinho: só lê `botState.weights`.
     const weights = botState.weights;
-    const result = await BacktestEngine.runBacktest({
+    const result = await runBacktest({
       symbol,
       days,
       profile,
@@ -142,7 +232,7 @@ export async function executeScheduledBacktest(
     }, false); // fresh run, no stale cache
 
     // 3. Update database record
-    await backtestScheduleDao.updateLastRun(schedule.id, 'SUCCESS', result.id);
+    await updateLastRun(schedule.id, 'SUCCESS', result.id);
 
     addBinanceLog(
       'SUCCESS',
@@ -164,12 +254,20 @@ export async function executeScheduledBacktest(
     };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    await backtestScheduleDao.updateLastRun(schedule.id, `FAILED: ${errorMsg}`);
+    await updateLastRun(schedule.id, `FAILED: ${errorMsg}`);
 
     addBinanceLog(
       'ERROR',
       'REST_API',
       `Falha na execução do backtest diário agendado para ${symbol}: ${errorMsg}`
+    );
+
+    // 8.3.1 — falha dispara alerta operacional.
+    void emitOperationalAlert(
+      'BACKTEST_SCHEDULE_FAILED',
+      'HIGH',
+      `Backtest agendado (${symbol}) falhou: ${errorMsg}`,
+      { symbol, scheduleId: schedule.id }
     );
 
     return { success: false, message: errorMsg };

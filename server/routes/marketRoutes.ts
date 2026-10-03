@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { getErrorMessage } from '../utils/errors.js';
 import { getBinanceLogs } from '../binanceWebsocket.js';
 import { fetchKlines, fetchOrderBookDepth } from '../binanceService.js';
 import { getRecentSignals, saveIndicatorWeights, saveAIModels, expireActiveSignalsByCategory, expireAllActiveSignals, recordAuditLog } from '../db.js';
@@ -141,7 +142,7 @@ export function createMarketRouter(
       const depthData = await fetchOrderBookDepth(symbol, ticker?.price, limit);
       res.json(depthData);
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to fetch depth data' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to fetch depth data' });
     }
   });
 
@@ -269,7 +270,7 @@ export function createMarketRouter(
 
       res.json({ assets, summary, monitoredSymbols: marketScreener.getMonitoredSymbols() });
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to fetch screener assets' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to fetch screener assets' });
     }
   });
 
@@ -297,7 +298,7 @@ export function createMarketRouter(
 
       res.json({ success: true, symbol: symbol.toUpperCase(), isFavorite: updatedStatus });
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to toggle favorite' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to toggle favorite' });
     }
   });
 
@@ -308,7 +309,7 @@ export function createMarketRouter(
       const settings = await getScreenerSettings();
       res.json(settings);
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to fetch screener settings' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to fetch screener settings' });
     }
   });
 
@@ -327,7 +328,7 @@ export function createMarketRouter(
 
       res.json({ success: true, settings: req.body, summary: scanResult.summary });
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to save screener settings' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to save screener settings' });
     }
   });
 
@@ -343,7 +344,7 @@ export function createMarketRouter(
 
       res.json({ success: true, summary: scanResult.summary, monitoredCount: scanResult.assets.filter(a => a.isMonitored).length });
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to run screener scan' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to run screener scan' });
     }
   });
 
@@ -368,7 +369,7 @@ export function createMarketRouter(
 
       res.json({ success: true, symbol: symbol.toUpperCase(), excludedSymbols: updatedList, summary: scanResult.summary });
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to toggle exclusion' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to toggle exclusion' });
     }
   });
 
@@ -387,7 +388,7 @@ export function createMarketRouter(
 
       res.json({ success: true, excludedSymbols: defaultList, summary: scanResult.summary });
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to reset exclusions' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to reset exclusions' });
     }
   });
 
@@ -421,7 +422,7 @@ export function createMarketRouter(
 
       res.json(items);
     } catch (err) {
-      res.status(500).json({ error: err?.message || 'Failed to load TradFi assets' });
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to load TradFi assets' });
     }
   });
 

@@ -134,7 +134,7 @@ describe('7.3.1 / CA-3.1 — retry do EXPIRED e alerta único', () => {
       writeCalls++;
       db.run(
         `INSERT INTO signal_events (signal_id, event_type, price, timestamp, metadata) VALUES (?, ?, ?, ?, ?)`,
-        [event.signalId, event.eventType, event.price, event.timestamp, JSON.stringify(event.metadata ?? {})]
+        [event.signalId ?? '', event.eventType, event.price, event.timestamp, JSON.stringify(event.metadata ?? {})]
       );
     });
 

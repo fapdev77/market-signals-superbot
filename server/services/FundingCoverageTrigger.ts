@@ -13,6 +13,7 @@
  */
 
 import { syncFundingForSymbol, createDefaultFundingSyncDeps, type FundingSyncDeps } from './FundingSyncService.js';
+import { getErrorMessage } from '../utils/errors.js';
 import { historicalFundingDao } from '../backtest_db/index.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -87,8 +88,41 @@ interface DailyTriggerState {
 
 const dailyTrigger: DailyTriggerState = { lastRunDay: null, timer: null };
 
+/** 8.3.2 — instante da ÚLTIMA sincronização diária de funding (métrica observável). */
+let fundingSyncLastRunAt: number | null = null;
+
+export function getFundingSyncLastRunAt(): number | null {
+  return fundingSyncLastRunAt;
+}
+
 function dayKey(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
+}
+
+/** 8.3.1 — teto de símbolos por execução (evita rajada de peso REST). */
+export function maxFundingSymbolsPerRun(): number {
+  const parsed = Number(process.env.FUNDING_SYNC_MAX_SYMBOLS ?? process.env.TRADFI_MAX_MONITORED);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 10;
+}
+
+/** 8.3.1 — aplica o teto de símbolos por execução (exportado para teste). */
+export function capFundingSymbols(symbols: string[], max: number = maxFundingSymbolsPerRun()): string[] {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const s of symbols) {
+    const sym = String(s || '').trim().toUpperCase();
+    if (!sym || seen.has(sym)) continue;
+    seen.add(sym);
+    unique.push(sym);
+    if (unique.length >= max) break;
+  }
+  return unique;
+}
+
+/** Test-only: zera o marcador do gatilho diário. */
+export function __resetDailyFundingSyncForTests(): void {
+  dailyTrigger.lastRunDay = null;
+  fundingSyncLastRunAt = null;
 }
 
 /**
@@ -101,14 +135,17 @@ export async function runDailyFundingSync(
 ): Promise<Array<{ symbol: string; status: string; recordsSynced: number }>> {
   const now = (options.now ?? Date.now)();
   dailyTrigger.lastRunDay = dayKey(now);
+  fundingSyncLastRunAt = now;
+  // 8.3.1 — teto de símbolos por execução.
+  const cappedSymbols = capFundingSymbols(symbols);
 
   const budgetPerSymbol = Math.max(
     1,
-    Math.floor((options.budgetPerMinute ?? defaultFundingBudgetPerMinute()) / Math.max(1, symbols.length))
+    Math.floor((options.budgetPerMinute ?? defaultFundingBudgetPerMinute()) / Math.max(1, cappedSymbols.length))
   );
 
   const results: Array<{ symbol: string; status: string; recordsSynced: number }> = [];
-  for (const symbol of symbols) {
+  for (const symbol of cappedSymbols) {
     try {
       const coverage = await ensureFundingCoverage(symbol, 2, {
         budgetPerMinute: budgetPerSymbol,
@@ -117,7 +154,7 @@ export async function runDailyFundingSync(
       });
       results.push({ symbol, status: coverage.synced ? 'SYNCED' : 'UPTODATE', recordsSynced: coverage.records });
     } catch (err) {
-      console.warn(`[FundingSync] Falha no gatilho diário para ${symbol}:`, err?.message || err);
+      console.warn(`[FundingSync] Falha no gatilho diário para ${symbol}:`, getErrorMessage(err));
       results.push({ symbol, status: 'ERROR', recordsSynced: 0 });
     }
   }
@@ -145,7 +182,7 @@ export function scheduleDailyFundingSync(
     runDailyFundingSync(symbols, {
       budgetPerMinute: options.budgetPerMinute,
       deps: options.deps
-    }).catch(err => console.warn('[FundingSync] Gatilho diário falhou:', err?.message || err));
+    }).catch(err => console.warn('[FundingSync] Gatilho diário falhou:', getErrorMessage(err)));
   }, intervalMs);
   if (typeof dailyTrigger.timer.unref === 'function') dailyTrigger.timer.unref();
 }

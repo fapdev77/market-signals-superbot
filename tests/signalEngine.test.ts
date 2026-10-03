@@ -36,7 +36,7 @@ describe('Signal Engine & Multi-Timeframe Validation Suite', () => {
       quoteVolume: '450000000'
     };
 
-    const processed = processTickerState(rawTicker, sampleKlines, 500000, 0.0001, defaultWeights);
+    const processed = processTickerState(rawTicker, sampleKlines, 500000, 0.0001, defaultWeights)!;
 
     expect(processed.symbol).toBe('BTCUSDT');
     expect(processed.price).toBe(91500);
@@ -218,7 +218,7 @@ describe('Signal Engine & Multi-Timeframe Validation Suite', () => {
       volumeProfileTimeframe: '15m'
     };
 
-    const processed = processTickerState(rawTicker, sampleKlines, 500000, 0.0001, weightsWithRsi);
+    const processed = processTickerState(rawTicker, sampleKlines, 500000, 0.0001, weightsWithRsi)!;
     expect(processed.symbol).toBe('SOLUSDT');
     expect(processed.confluenceScore).toBeGreaterThan(0);
     expect(Array.isArray(processed.confluenceFactors)).toBe(true);
