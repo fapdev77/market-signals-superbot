@@ -20,6 +20,9 @@ import {
   type PositionAccounting
 } from './backtestAccounting.js';
 import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './FundingService.js';
+// CRÍTICO-1: o dimensionamento por risco é a MESMA primitiva do live. Importar em vez de
+// reimplementar mantém backtest e live literalmente sobre o mesmo código de risco.
+import { computePositionSize, DEFAULT_RISK_LIMITS } from './RiskManager.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
 import { calculateFitnessExpectancy, evaluateAutoTuneHoldout } from './autoTuneOptimizer.js';
@@ -479,6 +482,10 @@ export class BacktestEngine {
     let balance = 10000;
     const initialBalance = balance;
     let peakBalance = balance;
+    // CRÍTICO-1: o capital realmente COMMITADO pela posição aberta (notional).
+    // Antes o motor assumia 100% do saldo em cada trade, enquanto o live arrisca
+    // `riskPerTradePct` do equity e deriva o notional da distância do stop.
+    let activeNotional = 0;
     let maxDrawdown = 0;
     
     let wins = 0;
@@ -521,6 +528,31 @@ export class BacktestEngine {
     // Phase 2.5.4: slippage is already applied to the fill prices below. Adding it here as well
     // charged it twice (once in the price, once in the fee).
     const roundtripFee = feePct * 2;
+    // CRÍTICO-1 — dimensionamento por RISCO, o mesmo do live.
+    //
+    // O motor antigo assumia 100% do saldo em cada trade (`PnL% × balance`). O live
+    // dimensiona com `computePositionSize`: arrisca `riskPerTradePct` do equity e deriva
+    // o notional da distância do stop. Com stops reais de 1,2%–4% o notional fica em
+    // 83%–25% do equity, então o backtest superdimensionava o PnL em 1,2×–4× — e por
+    // contaminar o saldo, todas as métricas derivadas (`netProfit`, `equityCurve`,
+    // `maxDrawdown`, `profitFactor`, `sharpeRatio`) e o auto-tuner saíam junto.
+    const riskPerTradePct = (config as any).riskPerTradePct ?? DEFAULT_RISK_LIMITS.riskPerTradePct;
+
+    /**
+     * Notional que a posição aberta deve comprometer, pela MESMA primitiva do live.
+     * Retorna `balance` (100%) só quando o tamanho não é computável — nesse caso não
+     * há medida de risco disponível e o comportamento antigo é o fallback conservador
+     * em termos de não subdimensionar.
+     */
+    const computeNotionalForStop = (entry: number, stop: number, equity: number): number => {
+      const size = computePositionSize({
+        entryPrice: entry,
+        stopLossPrice: stop,
+        equity,
+        riskPerTradePct
+      });
+      return size.valid && size.notional > 0 ? size.notional : equity;
+    };
     const fundingRatePer8h = 0.0001; // Standard 0.01% baseline funding per 8h
     const fundingIntervalHours = 8;
 
@@ -632,6 +664,27 @@ export class BacktestEngine {
       // M2.3: standard lookback window slice matching live engine
       const windowSlice = candleObjects.slice(Math.max(0, i - (SIGNAL_LOOKBACK_CANDLES - 1)), i + 1);
 
+      // N6: cursor monotônico da série de 5m, avançado UMA vez por candle, no topo do
+      // loop. Antes ele só avançava dentro do bloco de emissão de sinal, então o ramo
+      // PENDING_ENTRY (que resolve o sinal de um candle ANTERIOR) lia um cursor defasado
+      // — ou ainda em -1, quando o sinal fills no mesmo candle em que foi emitido.
+      //
+      // E o `klines5m` do PENDING_ENTRY não pode ser derivado do recorte pós-sinal
+      // (`slice(startIndex + 1, i + 1)`): a janela de espera
+      // (`entryWaitCandlesFor('DAY_TRADE')` = 3 velas de 1m) limita a menos de 5 velas,
+      // `aggregateToTimeframe` só emite bucket COMPLETO de 5 e devolve `[]`. O R4 é
+      // fail-closed sem vela de 5m => `confirmed: false` sempre => fill 0 sempre. No
+      // live (`server.ts`) a vela de 5m vem da exchange; aqui ela tem de vir da mesma
+      // série agregada usada na emissão, recortada até o instante corrente.
+      while (
+        mtf5mCursor + 1 < aggregated5mForValidation.length &&
+        aggregated5mForValidation[mtf5mCursor + 1].timestamp <= candle.timestamp
+      ) {
+        mtf5mCursor++;
+      }
+      const mtf5mSlice =
+        mtf5mCursor >= 0 ? aggregated5mForValidation.slice(Math.max(0, mtf5mCursor - 1), mtf5mCursor + 1) : [];
+
       // Phase 2.5.4: fill a signal raised on the PREVIOUS candle at this candle's open.
       // R-9: the fill candle registers the position but cannot resolve it.
       let openedThisCandle = false;
@@ -655,7 +708,7 @@ export class BacktestEngine {
           // Mesmo wrapper do live (server.ts): o score cai para o do pendente quando ausente.
           confirm: (p) => confirmEntry({ ...p, confluenceScore: p.confluenceScore ?? pc.signal.confluenceScore ?? 0 }),
           confluenceScore: pc.signal.confluenceScore,
-          klines5m: aggregateToTimeframe(candles1m, MTF_VALIDATION_TIMEFRAME_MINUTES)
+          klines5m: mtf5mSlice
         });
 
         if (evaluation.transition === 'ACTIVATED') {
@@ -664,10 +717,11 @@ export class BacktestEngine {
           partialTaken = false;
           openedThisCandle = true;
           posDirection = pc.signal.direction;
-          const rawFill = evaluation.entryPrice ?? candle.close;
-          entryPrice = posDirection === 'LONG'
-            ? dMul(rawFill, dAdd(1, dDiv(slipPct, 100)))
-            : dMul(rawFill, dSub(1, dDiv(slipPct, 100)));
+          // CRÍTICO-2: sem slippage na entrada. O live (`positionResolution.slipFill`)
+          // só aplica slippage na SAÍDA; aplicar nas duas pernas cobrava o custo duas
+          // vezes e contaminava `grossPctNoSlip` (documentado como "bruto antes do
+          // slippage"). A identidade de R fechava por compensação, escondendo o erro.
+          entryPrice = evaluation.entryPrice ?? candle.close;
           entryTime = candle.timestamp;
           stopLoss = pc.signal.stopLoss;
           takeProfit1 = pc.signal.target1;
@@ -676,6 +730,7 @@ export class BacktestEngine {
           activeConfluenceScore = pc.signal.confluenceScore ?? 0;
           activeRegime = pc.signal.regime;
           activeRiskPct = entryPrice > 0 ? dMul(dDiv(Math.abs(dSub(entryPrice, stopLoss)), entryPrice), 100) : 0;
+          activeNotional = computeNotionalForStop(entryPrice, stopLoss, balance);
           positionAcc = createPositionAccounting(); // 8.0: nova posição, contadores zerados
           ecStats.entriesFilled++;
           ecStats.fillCount++;
@@ -696,9 +751,9 @@ export class BacktestEngine {
         partialTaken = false;
         openedThisCandle = true;
         posDirection = pendingEntry.direction;
-        entryPrice = pendingEntry.direction === 'LONG'
-          ? dMul(candle.open, dAdd(1, dDiv(slipPct, 100)))
-          : dMul(candle.open, dSub(1, dDiv(slipPct, 100)));
+        // CRÍTICO-2: mesma razão do ramo PENDING_ENTRY — a entrada é o preço-limite,
+        // e o slippage é aplicado uma única vez, na saída, pelo resolver.
+        entryPrice = candle.open;
         entryTime = candle.timestamp;
         stopLoss = pendingEntry.stopLoss;
         takeProfit1 = pendingEntry.target1;
@@ -707,6 +762,8 @@ export class BacktestEngine {
         activeConfluenceScore = pendingEntry.confluenceScore;
         activeRegime = pendingEntry.regime;
         activeRiskPct = entryPrice > 0 ? dMul(dDiv(Math.abs(dSub(entryPrice, stopLoss)), entryPrice), 100) : 0;
+        activeNotional = computeNotionalForStop(entryPrice, stopLoss, balance);
+        positionAcc = createPositionAccounting();
         ecStats.entriesFilled++;
         ecStats.fillCount++;
         ecStats.fillMinutesSum += Math.max(0, (candle.timestamp - pendingEntry.createdAt) / 60000);
@@ -755,16 +812,6 @@ export class BacktestEngine {
         );
 
         if (tickerState && tickerState.signalType !== 'NEUTRAL' && tickerState.confluenceScore >= preset.minConfluence) {
-          // Avança o cursor até a última vela de 5m com timestamp <= o candle corrente.
-          while (
-            mtf5mCursor + 1 < aggregated5mForValidation.length &&
-            aggregated5mForValidation[mtf5mCursor + 1].timestamp <= candle.timestamp
-          ) {
-            mtf5mCursor++;
-          }
-          const mtf5mSlice =
-            mtf5mCursor >= 0 ? aggregated5mForValidation.slice(Math.max(0, mtf5mCursor - 1), mtf5mCursor + 1) : [];
-
           // CRÍTICO-2: `windowSlice` já é a série real de 1m do histórico (BacktestEngine
           // carrega '1m'), então ela serve como klines1m; o 5m vem da agregação acima.
           const signal = buildTradeSignal(
@@ -874,9 +921,13 @@ export class BacktestEngine {
           const fundingCostPct = fundingResult.totalFundingCostPct;
           const tradePnlPct = dSub(dSub(resolution.grossPnlPct, feeCostPct), fundingCostPct);
           const balanceBefore = balance;
-          const profit = dMul(dDiv(tradePnlPct, 100), balance);
+          // CRÍTICO-1: o PnL da posição incide sobre o NOTIONAL comprometido, não sobre
+          // o saldo inteiro. `tradePnlPct` é uma variação de PREÇO (%), que só vira
+          // variação de saldo depois de multiplicada pelo capital realmente arriscado.
+          const capitalAtRisk = activeNotional > 0 ? activeNotional : balance;
+          const profit = dMul(dDiv(tradePnlPct, 100), capitalAtRisk);
           balance = dAdd(balance, profit);
-          totalFeesPaidValue = dAdd(totalFeesPaidValue, dMul(dDiv(feeCostPct, 100), balanceBefore));
+          totalFeesPaidValue = dAdd(totalFeesPaidValue, dMul(dDiv(feeCostPct, 100), capitalAtRisk));
 
           // 8.0 — acumula a POSIÇÃO (pernas, taxas, funding, slippage) e a decompõe em R.
           // O bruto sem slippage é recuperado invertendo `slipFill`.

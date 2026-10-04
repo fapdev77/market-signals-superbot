@@ -163,12 +163,15 @@ export function createMarketRouter(
     res.json(botState.weights);
   });
 
-  router.post('/settings/weights', async (req: Request, res: Response) => {
+  // HIGH-3: sem o schema, o payload ia para o merge de `botState.weights` cru — com isso
+  // `maxStopLossAtrMultiple: -999` desligava o teto de stop por ATR e pesos fora de faixa
+  // anulavam a confluência. O envelope normalizado (`req.body` vira sempre
+  // `{ weights, scope, resetCategory, activeStrategy }`) mantém os dois formatos aceitos.
+  router.post('/settings/weights', validateBody(weightsUpdateSchema), async (req: Request, res: Response) => {
     const botState = getBotState();
     const payload = req.body || {};
-    
-    // Support either direct weights or { weights, scope, activeStrategy }
-    const newWeights = payload.weights ? payload.weights : payload;
+
+    const newWeights = payload.weights ?? {};
     const scope = payload.scope || 'ALL_FUTURE'; // 'ALL_FUTURE' | 'RESET_AND_RESCAN'
     const activeStrategy = payload.activeStrategy || newWeights.activeStrategy || botState.weights.activeStrategy || 'intraday';
 

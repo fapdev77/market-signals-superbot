@@ -8,11 +8,18 @@
  * win/loss.
  *
  * Também decompõe o R do resultado (J-02). O slippage é embutido nos preços de
- * execução pelo `positionResolution`; esta camada RECUPERA o preço-limite sem
- * slippage (invertendo `slipFill`, que é uniforme para stop e alvo) para separar
+ * execução de SAÍDA pelo `positionResolution`; esta camada RECUPERA o preço-limite
+ * sem slippage (invertendo `slipFill`, que é uniforme para stop e alvo) para separar
  * `rGross` de `rSlippage`, valendo a identidade exata:
  *
  *     rNet = rGross − rFees − rSlippage − rFunding
+ *
+ * CRÍTICO-2 (auditoria 2026-10-04): a recuperação só é exata se `entryPrice` for o
+ * preço-LIMITE de entrada. O motor aplicava slippage também na entrada, o que
+ * contaminava `grossPctNoSlip` (rotulado "antes do slippage") e escondia a perna de
+ * entrada de `rSlippage` — a identidade fechava por compensação. O slippage é
+ * aplicado uma vez por perna: entrada no preço-limite, saída com `slipFill`, igual ao
+ * live.
  *
  * Tudo em aritmética decimal (`server/utils/decimal.ts`).
  */

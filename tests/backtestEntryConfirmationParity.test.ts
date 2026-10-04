@@ -76,6 +76,50 @@ describe('7.2 — confirmação de entrada no backtest (paridade e código compa
     );
   }, 60000);
 
+  /**
+   * ACHADO N6 — o braço B PREENCHE.
+   *
+   * As asserções da CA-2.1/CA-2.2 acima são todas `toBeLessThanOrEqual`, e
+   * `entriesFilled === 0` satisfaz todas: elas provam que o motor não INVENTA
+   * preenchimento, nunca que ele CONSEGUE preencher. Por isso o N6 passou por 742
+   * testes verdes — o braço com confirmação preenchia 0 de 76 sinais e o teste
+   * ficava feliz.
+   *
+   * Causa-raiz do N6: o `klines5m` do R4 era montado a partir do recorte pós-sinal
+   * (`slice(startIndex + 1, i + 1)`), que a janela de espera
+   * (`entryWaitCandlesFor('DAY_TRADE')` = 3 velas de 1m) limita a MENOS de 5 velas.
+   * `aggregateToTimeframe` só emite bucket COMPLETO de 5 e devolve `[]`; `confirmEntry`
+   * R4 é fail-closed sem vela de 5m => `confirmed: false` sempre => fill 0 sempre.
+   *
+   * A segunda asserção (de fonte) fixa a FORMA da correção, porque a primeira — o
+   * comportamento — só falharia de novo se alguém voltar a derivar a série de 5m do
+   * recorte curto. É o mesmo espírito do guard CA-2.2 logo abaixo, que já lê o
+   * fonte para garantir que as regras puras do live não sejam reimplementadas.
+   *
+   * Nota: NÃO se afirma `waitCandles >= MTF_VALIDATION_TIMEFRAME_MINUTES`. A correção
+   * não muda a janela de espera — muda de onde a série de 5m vem. Afirmar a constante
+   * faria o teste falhar mesmo com o código correto.
+   */
+  it('N6 — o braço com confirmação preenche, e o R4 não depende do recorte pós-sinal', async () => {
+    const withConf = await BacktestEngine.runBacktest({ ...base, entryConfirmation: true }, false);
+    const ec = withConf.entryConfirmation!;
+    expect(ec.signalsEmitted).toBeGreaterThan(0);
+    // O sinal que fica de fora por expirar conta 0 R (D4), mas ALGUM tem de preencher:
+    // um braço que nunca preenche não é uma estratégia, é um bug fail-closed.
+    expect(ec.entriesFilled).toBeGreaterThan(0);
+    expect(ec.entriesFilled + ec.entriesNotFilled + ec.entriesInvalidated).toBeGreaterThan(0);
+
+    const src = fs.readFileSync(
+      path.join(process.cwd(), 'server', 'services', 'BacktestEngine.ts'),
+      'utf8'
+    );
+    // O R4 precisa da vela de 5m REAL (no live, `server.ts` busca a 5m da exchange).
+    // Derivá-la do recorte pós-sinal é o N6: o recorte nunca tem 5 velas completas.
+    expect(src).not.toMatch(
+      /klines5m:\s*aggregateToTimeframe\(\s*candles1m\s*,/
+    );
+  }, 60000);
+
   it('CA-2.2 — o motor importa as funções puras do live, sem reimplementá-las', () => {
     const src = fs.readFileSync(
       path.join(process.cwd(), 'server', 'services', 'BacktestEngine.ts'),

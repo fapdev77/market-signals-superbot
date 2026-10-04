@@ -45,7 +45,7 @@ import { TickerData, BotState, IndicatorWeights, LongShortRatioData } from './sr
 import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
 import { canGenerateSignals, canEvaluateActiveTrades } from './server/services/DataGate.js';
 import { resolveRawTicker, resolveMarketInputs, evaluatePositionManagement } from './server/services/TickProcessor.js';
-import { DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, isTradingHalted, loadAppStateFromDb, getRiskLimits } from './server/services/RiskManager.js';
+import { evaluatePortfolioRisk, isTradingHalted, loadAppStateFromDb, getRiskLimits } from './server/services/RiskManager.js';
 // 6.5.3: slippage estimado pela profundidade do book (limite default 0,15%).
 import { estimateDepthSlippagePct, isSlippageAboveLimit, getMaxEstimatedSlippagePct } from './server/services/depthSlippage.js';
 // 6.6: fachada de alertas operacionais + heartbeat externo opcional.
@@ -400,7 +400,10 @@ async function startServer() {
                 const isTradfiAllowed = tradfiGate.allow;
 
                 // Phase 3.4: the kill-switch and the portfolio limits gate emission.
-                const risk = evaluatePortfolioRisk(openSignals, DEFAULT_RISK_LIMITS, { category: targetCategory });
+                // HIGH-2: os limites em vigor sao os configurados pelo operador. Passar
+                // DEFAULT_RISK_LIMITS aqui ignorava `POST /api/system/risk-limits`, enquanto
+                // `/api/system/risk-status` reportava os limites customizados.
+                const risk = evaluatePortfolioRisk(openSignals, getRiskLimits(), { category: targetCategory });
                 if (tradingHalted && processed.confluenceScore >= minScore) {
                   // R-15 (critério 2): bloqueios do kill-switch viram métrica.
                   incrementMetric(METRIC_NAMES.signalsSuppressedKillswitch);

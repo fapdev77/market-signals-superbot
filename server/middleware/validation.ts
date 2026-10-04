@@ -6,24 +6,83 @@ export const symbolParamSchema = z.object({
   symbol: z.string().regex(/^[A-Z0-9_]{2,20}$/, 'Símbolo inválido. Deve conter de 2 a 20 caracteres alfanuméricos.')
 });
 
-export const weightsUpdateSchema = z.object({
-  activeStrategy: z.enum(['scalp', 'daytrade', 'intraday', 'swing', 'position']).optional(),
-  strategyLabel: z.string().optional(),
+const STRATEGY_KEY = z.enum(['scalp', 'daytrade', 'intraday', 'swing', 'position', 'counter', 'custom']);
+
+/**
+ * HIGH-3 (auditoria 2026-10-04) — schema do POST /api/settings/weights.
+ *
+ * Antes este schema era importado mas NUNCA aplicado, e o que ele descrevia nem
+ * batia com `IndicatorWeights`: validava `cvdWeight`/`goldenPocketWeight`/`fvgWeight`/
+ * `orderBlockWeight`/`vwapWeight`/`rsiWeight`/`macdWeight`/`emaWeight`, campos que não
+ * existem no tipo, enquanto os campos reais passavam por `.passthrough()` sem limite
+ * nenhum. O merge cego da rota escrevia o payload direto em `botState.weights`.
+ *
+ * Consequências concretas que este schema fecha:
+ *  - `maxStopLossAtrMultiple` negativo => `signalEngine` só aplica o cap ATR quando
+ *    `capMultiple > 0`, ou seja, o teto de risco de stop era DESLIGADO;
+ *  - `volumeProfileRange: 0` e afins => divisão por zero / perfil degenerado;
+ *  - pesos fora de [0,100] anulando a confluência inteira sem nenhum sinal de erro.
+ *
+ * `.passthrough()` é mantido de propósito: `strategyConfigs` e `signalTtlSettings` são
+ * objetos estruturados que o merge precisa preservar. O que muda é que TODO campo
+ * escalar de risco agora tem faixa explícita.
+ */
+export const indicatorWeightsSchema = z.object({
+  activeStrategy: STRATEGY_KEY.optional(),
+  strategyLabel: z.string().max(120).optional(),
   multiStrategyMode: z.boolean().optional(),
-  enabledStrategies: z.array(z.enum(['scalp', 'daytrade', 'intraday', 'swing', 'position'])).optional(),
+  enabledStrategies: z.array(STRATEGY_KEY).optional(),
+  strategyConfigs: z.record(STRATEGY_KEY, z.object({}).passthrough()).optional(),
+  signalTtlSettings: z.object({}).passthrough().optional(),
+
+  // Pesos de confluência: [0, 100] — fora disso o score perde meaning e o sinal
+  // passa a ser decidido por um peso degenerado.
   volumeSurgeWeight: z.number().min(0).max(100).optional(),
   openInterestWeight: z.number().min(0).max(100).optional(),
   fundingRateWeight: z.number().min(0).max(100).optional(),
-  cvdWeight: z.number().min(0).max(100).optional(),
-  goldenPocketWeight: z.number().min(0).max(100).optional(),
-  fvgWeight: z.number().min(0).max(100).optional(),
-  orderBlockWeight: z.number().min(0).max(100).optional(),
-  vwapWeight: z.number().min(0).max(100).optional(),
-  rsiWeight: z.number().min(0).max(100).optional(),
-  macdWeight: z.number().min(0).max(100).optional(),
-  emaWeight: z.number().min(0).max(100).optional(),
-  minConfluenceScore: z.number().min(0).max(100).optional()
+  cvdImbalanceWeight: z.number().min(0).max(100).optional(),
+  fibonacciZoneWeight: z.number().min(0).max(100).optional(),
+  rangePocWeight: z.number().min(0).max(100).optional(),
+  supportResistanceWeight: z.number().min(0).max(100).optional(),
+  trappedTradersWeight: z.number().min(0).max(100).optional(),
+  rsiDivergenceWeight: z.number().min(0).max(100).optional(),
+
+  minConfluenceScore: z.number().min(0).max(100).optional(),
+  // RR tem de ser > 0 e finito: é o denominador do dimensionamento de risco.
+  minRiskRewardRatio: z.number().min(0.1).max(100).optional(),
+  // Resolução do volume profile: inteira e >= 1 (0 => divisão degenerada).
+  volumeProfileRange: z.number().int().min(1).max(1000).optional(),
+  // Cap do stop em múltiplos do ATR. PRECISA ser > 0: `signalEngine` só aplica o
+  // teto quando `capMultiple > 0`, então <= 0 desliga o teto de risco silenciosamente.
+  maxStopLossAtrMultiple: z.number().positive().max(100).optional(),
+  volumeProfileTimeframe: z.enum(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d']).optional(),
+  volumeProfileCandles: z.number().int().min(1).max(2000).optional()
 }).passthrough();
+
+/** Envelope aceito pela rota: `{ weights, scope, resetCategory, activeStrategy }`. */
+const weightsEnvelopeSchema = z.object({
+  weights: indicatorWeightsSchema.optional(),
+  scope: z.enum(['ALL_FUTURE', 'RESET_AND_RESCAN']).optional(),
+  resetCategory: z.string().max(60).optional(),
+  activeStrategy: STRATEGY_KEY.optional()
+}).passthrough();
+
+/**
+ * A rota aceita dois formatos — objeto de pesos direto (usado pelo BacktestDashboard ao
+ * aplicar pesos auto-tunados) e envelope `{ weights, scope, ... }` (usado pelo App.tsx).
+ * Valida os dois sem ambiguidade: se `weights` existe e é objeto, é envelope; caso
+ * contrário o corpo inteiro é o objeto de pesos.
+ */
+export const weightsUpdateSchema = z.preprocess((value: unknown) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    if (obj.weights !== undefined && obj.weights !== null && typeof obj.weights === 'object' && !Array.isArray(obj.weights)) {
+      return obj;
+    }
+    return { weights: obj };
+  }
+  return value;
+}, weightsEnvelopeSchema);
 
 export const aiModelConfigItemSchema = z.object({
   id: z.string().min(1),
