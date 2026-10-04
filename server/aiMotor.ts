@@ -5,6 +5,7 @@ import { addAILog } from './aiLogger.js';
 import { getAIPersonaById } from '../src/constants/aiPersonas.js';
 import { safeFetch } from './utils/safeFetch.js';
 import { validateOutboundAIUrlWithDns } from './utils/outboundPolicy.js';
+import { AIRateLimitError, consumeAiRateLimit } from './services/aiRateLimiter.js';
 
 const getAiClient = (apiKeyOverride?: string) => {
   const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY;
@@ -139,6 +140,41 @@ export interface GenerateOptions {
   logType?: 'TEST_CONNECTION' | 'SIGNAL_REVIEW' | 'MARKET_AUDIT' | 'CHAT_AGENT' | 'MODEL_CONFIG';
 }
 
+/**
+ * HIGH-4 — contabilidade de falhas da cadeia de fallback.
+ *
+ * Failover entre modelos distintos continua legítimo: cada modelo declara o
+ * SEU orçamento, e `isFallback` existe exatamente para isso. O que não pode
+ * acontecer é mascarar "orçamento esgotado" como "os modelos de IA falharam" —
+ * o consumidor receberia um relatório de indisponibilidade quando o fato real é
+ * um controle de custo acionado, e o usuário não teria como agir sobre isso.
+ *
+ * Se TODOS os modelos da cadeia falharam por limite de taxa, o erro é
+ * repropriedado como `AIRateLimitError` para que a camada HTTP possa responder
+ * 429 com `Retry-After`. Falha mista (limite + provider) mantém o mascaramento
+ * histórico, porque aí existe uma falha real de provider a reportar.
+ */
+interface ChainFailureTally {
+  total: number;
+  rateLimited: number;
+  lastRateLimitError?: AIRateLimitError;
+}
+
+function tallyChainFailure(tally: ChainFailureTally, err: unknown): void {
+  tally.total += 1;
+  if (err instanceof AIRateLimitError) {
+    tally.rateLimited += 1;
+    tally.lastRateLimitError = err;
+  }
+}
+
+/** Rethrow quando a cadeia inteira esbarrou em limite de taxa (não em falha de provider). */
+function rethrowIfFullyRateLimited(tally: ChainFailureTally): void {
+  if (tally.total > 0 && tally.total === tally.rateLimited && tally.lastRateLimitError) {
+    throw tally.lastRateLimitError;
+  }
+}
+
 export async function generateContentWithModel(
   modelConfig: AIModelConfig,
   options: GenerateOptions
@@ -146,6 +182,14 @@ export async function generateContentWithModel(
   const provider = modelConfig.provider || 'gemini';
   const startTime = Date.now();
   const logType = options.logType || (options.responseMimeType === 'application/json' ? 'SIGNAL_REVIEW' : 'CHAT_AGENT');
+
+  // HIGH-4: o limite declarado por modelo (`rateLimit.maxReqPerMinute` /
+  // `maxReqPerDay`) era gravado e validado, mas NENHUM consumidor no runtime o
+  // lia — o único controle efetivo era o limiter de rota (45/min agregado),
+  // MAIS permissivo que os limites por modelo. A enforcement fica aqui, no
+  // dispatch, e ANTES de qualquer fetch: o limite é propriedade do modelo, e
+  // um limiter de rota não sabe qual modelo a cadeia de fallback resolveu.
+  await consumeAiRateLimit(modelConfig);
 
   if (provider === 'gemini') {
     // R-1: the Gemini SDK has no user-configurable baseUrl, but the outbound
@@ -817,6 +861,7 @@ export async function reviewSignalWithAI(
 
   const modelChain = getOrderedModelChain(requestedModel, availableModels);
   let lastErrorMsg = '';
+  const tally: ChainFailureTally = { total: 0, rateLimited: 0 };
 
   const prompt = (customPromptOverride && customPromptOverride.trim())
     ? customPromptOverride.trim()
@@ -889,11 +934,13 @@ export async function reviewSignalWithAI(
         timestamp: Date.now()
       };
     } catch (err) {
+      tallyChainFailure(tally, err);
       lastErrorMsg = `${targetModelConfig.name}: ${getErrorMessage(err).slice(0, 80)}`;
       console.warn(`[reviewSignalWithAI] Falha no modelo '${targetModelConfig.name}'. Tentando próximo da cadeia... Erro:`, getErrorMessage(err));
     }
   }
 
+  rethrowIfFullyRateLimited(tally);
   return getFallbackSignalReview(ticker, signal, `Falha nos modelos de IA (${lastErrorMsg})`);
 }
 
@@ -953,6 +1000,7 @@ export async function auditMarketWithAI(
 
   const modelChain = getOrderedModelChain(requestedModel, availableModels);
   let lastErrorMsg = '';
+  const tally: ChainFailureTally = { total: 0, rateLimited: 0 };
 
   const summaryData = tickers.map(t => ({
     symbol: t.symbol,
@@ -1002,11 +1050,13 @@ Instructions:
         modelUsed: result.modelUsed
       };
     } catch (err) {
+      tallyChainFailure(tally, err);
       lastErrorMsg = `${targetModelConfig.name}: ${getErrorMessage(err).slice(0, 80)}`;
       console.warn(`[auditMarketWithAI] Falha no modelo '${targetModelConfig.name}'. Erro:`, getErrorMessage(err));
     }
   }
 
+  rethrowIfFullyRateLimited(tally);
   return getFallbackMarketAudit(signals, currentWeights, `Falha nos modelos de IA (${lastErrorMsg})`);
 }
 
@@ -1039,6 +1089,7 @@ export async function chatWithAITrader(
   const persona = getAIPersonaById(personaId);
   const modelChain = getOrderedModelChain(requestedModel, availableModels);
   let lastErrorMsg = '';
+  const tally: ChainFailureTally = { total: 0, rateLimited: 0 };
 
   const context = ticker 
     ? `Current Ticker Context: ${ticker.symbol} Price: ${ticker.price}, 24h: ${ticker.priceChangePercent24h}%, OI: ${ticker.openInterest}, CVD: ${ticker.cvdDirection}, Fibo Golden Pocket: [${ticker.fibonacci.fib68} - ${ticker.fibonacci.fib618}]` 
@@ -1059,10 +1110,13 @@ export async function chatWithAITrader(
         modelUsed: result.modelUsed
       };
     } catch (err) {
+      tallyChainFailure(tally, err);
       lastErrorMsg = `${targetModelConfig.name}: ${getErrorMessage(err).slice(0, 80)}`;
       console.warn(`[chatWithAITrader] Falha no modelo '${targetModelConfig.name}'. Erro:`, getErrorMessage(err));
     }
   }
+
+  rethrowIfFullyRateLimited(tally);
 
   return {
     reply: `SuperBot AI (Falha nos modelos de IA):\n${lastErrorMsg}\n\n${ticker ? `Para ${ticker.symbol}, observe o perfil de volume (POC: ${ticker.rangeProfile.poc}) e a convergência com o Golden Pocket.` : 'Mantenha a cautela e observe a tendência macro.'}`,

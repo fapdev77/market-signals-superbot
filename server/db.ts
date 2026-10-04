@@ -256,6 +256,18 @@ export async function getDb(): Promise<Database> {
       updated_at INTEGER
     );
 
+    -- HIGH-4: contador de uso por modelo de IA, em janelas deslizantes de
+    -- minuto e de dia. Persistido (e não em memória) porque um contador que
+    -- reinicia com o processo é bypass trivial para um controle de custo.
+    CREATE TABLE IF NOT EXISTS ai_rate_usage (
+      model_id TEXT NOT NULL,
+      window_kind TEXT NOT NULL,
+      window_start INTEGER NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER,
+      PRIMARY KEY (model_id, window_kind, window_start)
+    );
+
     CREATE TABLE IF NOT EXISTS watched_symbols (
       symbol TEXT PRIMARY KEY,
       is_favorite INTEGER DEFAULT 0,
