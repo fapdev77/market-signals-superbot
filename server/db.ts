@@ -16,8 +16,8 @@ import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
 import { dRound } from './utils/decimal.js';
 import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/index.js';
-import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence } from './services/EvidenceService.js';
-import { calculateSignalOutcomeR } from './services/EvidenceService.js';
+import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence, CandleRangeRecord } from './services/EvidenceService.js';
+import { calculateSignalOutcomeR, calculateMfeMaeFromCandles } from './services/EvidenceService.js';
 // SDD Fase 9 / S2 — chave de tier com definicao unica (ver scoreCalibration.ts).
 import { tierKeyForScore } from './services/scoreCalibration.js';
 // SDD Fase 9 / S3 — definicao unica de vitoria (ver winDefinition.ts).
@@ -878,6 +878,46 @@ function entryPriceForEvidence(entryPrice: number, events: LedgerEventRecord[]):
     ev => ev.eventType === 'ENTRY' && ev.metadata?.fillSource === 'PENDING_ENTRY_ACTIVATED'
   );
   return fillEntry && Number.isFinite(fillEntry.price) && fillEntry.price > 0 ? fillEntry.price : entryPrice;
+}
+
+/** Intervalo de velas usado para MFE/MAE, com a mesma granularidade do backtest. */
+const MFE_MAE_KLINE_INTERVAL = '15m';
+
+/**
+ * M1 — carrega as velas atravessadas entre a emissão e o fechamento do sinal.
+ *
+ * Só high/low interessa para MFE/MAE (EvidenceService.CandleRangeRecord), então
+ * a projeção é deliberadamente estreita. Sem velas, devolve lista vazia e o
+ * chamador degrada para 0 em vez de estimar.
+ *
+ * `origin` NÃO é filtrado aqui: a evidência já foi filtrada por origem na
+ * consulta do ledger, e as velas são o MESMO mercado para as duas origens —
+ * filtrar-las por origem trocaria MFE por um número de outra série.
+ */
+function loadOpenWindowCandles(
+  database: Database,
+  symbol: string,
+  createdAt: number,
+  closedAt: number
+): CandleRangeRecord[] {
+  try {
+    const res = database.exec(
+      `SELECT high, low FROM historical_klines
+       WHERE symbol = ? AND interval = ? AND open_time >= ? AND open_time <= ?
+       ORDER BY open_time ASC`,
+      [symbol, MFE_MAE_KLINE_INTERVAL, createdAt, closedAt]
+    );
+    if (!res.length || !res[0].values) return [];
+    return res[0].values.map(row => ({
+      high: Number(row[0]),
+      low: Number(row[1])
+    }));
+  } catch (err) {
+    // Não derruba a leitura de evidência por falta de velas: o sinal continua
+    // fechado e com R apurado, apenas sem MFE/MAE.
+    console.warn(`[evidence] MFE/MAE indisponível para ${symbol}: ${errMessage(err)}`);
+    return [];
+  }
 }
 export async function updateSignal(signal: TradeSignal) {
   // same as saveSignal for INSERT OR REPLACE
@@ -1941,6 +1981,27 @@ export const signalLedgerDao = {
       if (finalOutcome.isClosed) {
         const closedAt = events.length > 0 ? events[events.length - 1].timestamp : createdAt;
         const lastEvent = events.length > 0 ? events[events.length - 1] : undefined;
+        // M1: MFE/MAE medidos a partir das velas realmente atravessadas enquanto
+        // o sinal esteve aberto. Antes eram gravados 0 literais e
+        // `calculateMfeMaeFromCandles` não tinha nenhum consumidor — o relatório
+        // de calibração reportava 0.0000 de follow-through e de drawdown como se
+        // fossem medição. Sem velas no intervalo o helper devolve 0 (fail-closed),
+        // então a ausência continua visível em vez de virar número inventado.
+        const { mfeR, maeR } = calculateMfeMaeFromCandles(
+          {
+            id,
+            symbol,
+            category,
+            direction,
+            entryPrice: effectiveEntryPrice,
+            stopLoss,
+            takeProfit1,
+            takeProfit2,
+            score,
+            origin: rowOrigin
+          },
+          loadOpenWindowCandles(database, symbol, createdAt, closedAt)
+        );
         signals.push({
           id,
           symbol,
@@ -1951,8 +2012,8 @@ export const signalLedgerDao = {
           tradfiSession,
           origin: rowOrigin,
           netR: finalOutcome.netR,
-          mfeR: 0,
-          maeR: 0,
+          mfeR,
+          maeR,
           isWin: isNetWin(finalOutcome.netR),
           closedAt,
           outcomeType: finalOutcome.outcomeType,

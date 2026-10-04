@@ -66,7 +66,10 @@ export function createEvidenceRouter(): Router {
           rExpectancy: summary.rExpectancy,
           avgMfe: summary.avgMfe,
           avgMae: summary.avgMae,
-          cumulativeR: 0,
+          // M2: `aggregateMetrics` já soma os netR (EvidenceService.ts:390). A
+          // rota descartava o resultado e escrevia 0, propagando uma métrica que
+          // parecia medida e não era.
+          cumulativeR: summary.cumulativeR,
           maxDrawdownR: summary.maxDrawdownR
         },
         byScoreTier: summary.byScoreTier

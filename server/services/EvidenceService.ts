@@ -110,6 +110,12 @@ export interface EvidenceSummary {
   rExpectancy: number;
   avgMfe: number;
   avgMae: number;
+  /**
+   * M2: soma dos netR de todos os sinais fechados. `aggregateMetrics` já
+   * calculava esse valor (`:390`), mas o summary o descartava ao achatar
+   * `overall` em escalares — e a rota de calibração escrevia 0 no lugar.
+   */
+  cumulativeR: number;
   maxDrawdownR: number;
   byScoreTier: Record<string, EvidenceGroupMetrics>;
   byCategory: Record<string, EvidenceGroupMetrics>;
@@ -462,6 +468,7 @@ export function generateEvidenceSummary(
     rExpectancy: overall.rExpectancy,
     avgMfe: overall.avgMfe,
     avgMae: overall.avgMae,
+    cumulativeR: overall.cumulativeR,
     maxDrawdownR: overall.maxDrawdownR,
     byScoreTier: aggregatedByScoreTier,
     byCategory: aggregatedByCategory,
