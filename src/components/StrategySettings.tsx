@@ -384,8 +384,6 @@ export const StrategySettings: React.FC<StrategySettingsProps> = ({
       {/* Strategy Auto-Tuning Utility (Sharpe Ratio Optimizer) */}
       <StrategyAutoTuner
         currentWeights={formWeights}
-        historicalSignals={signals}
-        tickers={tickers}
         onApplyWeights={(newWeights) => {
           setFormWeights(prev => ({
             ...prev,

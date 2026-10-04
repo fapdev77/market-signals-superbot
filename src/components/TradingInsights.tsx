@@ -1,4 +1,6 @@
 import React from 'react';
+// SDD Fase 9 / S4 — texto de divulgacao do modelo de custo.
+import { TRADE_COST_DISCLOSURE } from '../utils/tradeCosts';
 import { 
   Trophy, 
   TrendingUp, 
@@ -13,7 +15,8 @@ import {
   Activity,
   Zap,
   BarChart3,
-  Award
+  Award,
+  AlertTriangle
 } from 'lucide-react';
 import { TradingInsightsSummary } from '../utils/tradeMetrics';
 import { formatPercent, formatPrice } from '../utils/formatters';
@@ -50,6 +53,16 @@ export const TradingInsights: React.FC<TradingInsightsProps> = ({
           </div>
           <p className="text-xs text-neutral-400">
             Estatísticas consolidadas de execução algorítmica <span className="text-neutral-600">·</span> <span className="text-cyan-400/90 font-medium">{timeframeLabel}</span> <span className="text-neutral-600">·</span> {insights.totalTrades} sinais capturados ({insights.closedTrades} encerrados)
+          </p>
+          {/*
+            SDD Fase 9 / S4 — sem este aviso, uma ESTIMATIVA e lida como medicao.
+            Os numeros abaixo vem dos alvos e do stop do sinal, com taxas e slippage
+            do motor, mas SEM caminho de preco. O numero autoritativo de resultado e
+            o do evidence ledger, e e ele que o operador deve usar para decidir.
+          */}
+          <p className="text-[11px] text-amber-500/80 flex items-center gap-1.5">
+            <AlertTriangle className="w-3 h-3 shrink-0" />
+            {TRADE_COST_DISCLOSURE}
           </p>
         </div>
 

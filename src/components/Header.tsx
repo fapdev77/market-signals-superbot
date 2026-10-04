@@ -13,6 +13,9 @@ import { formatPrice, formatPercent } from '../utils/formatters';
 import { isAudioEnabled, setAudioEnabled, requestNotificationPermission, isNotificationEnabled, setNotificationEnabled, sendDesktopNotification, playSignalTone } from '../utils/soundAlerts';
 import { Tooltip } from './Tooltip';
 import { useToast } from './Toast';
+// SDD Fase 9 / S2 — o score deixa de ser exibido como probabilidade de acerto.
+import { useScoreCalibration } from '../hooks/useScoreCalibration';
+import { describeScore } from '../utils/scoreDisplay';
 
 interface HeaderProps {
   botState: BotState;
@@ -165,6 +168,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const topTickers = (tickers || []).slice(0, 6);
+  const calibrationFor = useScoreCalibration();
 
   // Categorized Navigation Structure (Option 1)
   const navCategories: NavCategory[] = [
@@ -439,7 +443,10 @@ export const Header: React.FC<HeaderProps> = ({
                 key={t.symbol}
                 position="bottom"
                 title={`${t.name || t.symbol} (${t.marketType === 'tradfi' ? 'TradFi' : 'Futures'})`}
-                badge={`${t.confluenceScore}% Confluência`}
+                badge={(() => {
+                  const d = describeScore(t.confluenceScore, calibrationFor(t.confluenceScore));
+                  return d.insufficientSample ? `${d.primary} · sem base rate` : d.primary;
+                })()}
                 content={`Preço: ${formatPrice(t.price, { currency: true })} • Variação 24h: ${formatPercent(t.priceChangePercent24h)} • CVD: ${t.cvdDirection} • Bias de Funding: ${t.fundingRateAnalysis?.bias ?? '—'}`}
               >
                 <div className="flex items-center gap-1.5 cursor-pointer hover:text-white transition">

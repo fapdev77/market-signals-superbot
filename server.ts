@@ -308,6 +308,17 @@ async function startServer() {
             // Fetch live Kline data (15m timeframe, standard lookback candles - M2.3)
             const klines = await fetchKlines(symbol, '15m', SIGNAL_LOOKBACK_CANDLES);
 
+            // CRÍTICO-2: velas REAIS de 1m e 5m só para a validação multi-timeframe.
+            // Antes `buildTradeSignal` derivava "1m" e "5m" do array de 15m acima — o
+            // filtro rotulado como 1m media 15m, e o live/backtest divergiam (o backtest
+            // carrega histórico 1m). Buscar os dois timeframes de verdade alinha live e
+            // backtest e faz cada checagem medir o timeframe que o rótulo declara.
+            // Falha aqui é fail-closed: sem velas, o sinal nasce PENDING_VALIDATION.
+            const [klines1mForValidation, klines5mForValidation] = await Promise.all([
+              fetchKlines(symbol, '1m', 6),
+              fetchKlines(symbol, '5m', 2)
+            ]);
+
             // Fetch live Open Interest with real change tracking (Phase 2.2)
             const oiData = await fetchOpenInterest(symbol);
 
@@ -416,7 +427,8 @@ async function startServer() {
                     weights.signalTtlSettings,
                     undefined, // weights: default do R-7 preservado (como antes do 6.5)
                     getSymbolFilters(symbol),
-                    { equity: riskLimits.accountEquity, riskPerTradePct: riskLimits.riskPerTradePct }
+                    { equity: riskLimits.accountEquity, riskPerTradePct: riskLimits.riskPerTradePct },
+                    { klines1m: klines1mForValidation, klines5m: klines5mForValidation }
                   );
                   if (newSignal) {
                     // 6.5.3: slippage estimado pela profundidade do book real (sob o limiter).

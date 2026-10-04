@@ -29,33 +29,16 @@ import { splitThreeWay } from './autoTuneSplit.js';
 // (`evaluatePendingEntry` + `confirmEntry`). Nada de reimplementação paralela.
 import { evaluatePendingEntry } from './pendingEntryLifecycle.js';
 import { confirmEntry } from './entryConfirmation.js';
+// SDD Fase 9 / S1 — paridade de timeframe: os indicadores do backtest usam o MESMO
+// timeframe do live (15m). Contrato e testes em `timeframeParity.ts`.
+import { aggregateToTimeframe, indicatorWindowAt, INDICATOR_TIMEFRAME_MINUTES, MTF_VALIDATION_TIMEFRAME_MINUTES } from './timeframeParity.js';
+// SDD Fase 9 / S3 — vitoria e R LIQUIDO, com definicao unica.
+import { isNetWin } from './winDefinition.js';
 
 // Deterministic Pseudo-Random Number Generator (Mulberry32) for reproducible backtests and mutations
 // (também usado pelo alinhamento de janela do runAutoTune)
 const BACKTEST_CANDLE_MS = 15 * 60 * 1000;
 
-/**
- * 7.2.1 — agrega candles de 1m em 5m para a regra R4 do `confirmEntry` no backtest.
- * LIMITAÇÃO declarada: o live usa a vela de 5m REAL da exchange; aqui a 5m é derivada
- * das 1m porque o histórico só tem 1m.
- */
-function aggregateTo5m(candles: KlineCandle[]): KlineCandle[] {
-  const out: KlineCandle[] = [];
-  for (let i = 0; i < candles.length; i += 5) {
-    const chunk = candles.slice(i, i + 5);
-    if (chunk.length === 0) continue;
-    out.push({
-      timestamp: chunk[0].timestamp,
-      open: chunk[0].open,
-      high: Math.max(...chunk.map(c => c.high)),
-      low: Math.min(...chunk.map(c => c.low)),
-      close: chunk[chunk.length - 1].close,
-      volume: chunk.reduce((a, c) => a + c.volume, 0),
-      takerBuyVolume: chunk.reduce((a, c) => a + c.takerBuyVolume, 0)
-    });
-  }
-  return out;
-}
 
 function createPRNG(seed: number = 42) {
   let s = Math.floor(seed) || 42;
@@ -128,9 +111,16 @@ export interface BacktestResolution {
   /** Fill price of the LAST leg of this candle (kept for legacy fields). */
   exitPrice: number;
   exitLegs: BacktestExitLeg[];
+  /** SDD Fase 9 / S3 — vitória LÍQUIDA (mesma definição do ledger: `isNetWin`). */
   isWin: boolean;
+  /** SDD Fase 9 / S3 — vitória BRUTA, mantida para auditoria explícita. */
+  isWinGross: boolean;
   /** Gross PnL in % of the position notional, BEFORE fees/funding. */
   grossPnlPct: number;
+  /** SDD Fase 9 / S3 — custos em % (taxa de ida e volta + funding). */
+  costsPct: number;
+  /** SDD Fase 9 / S3 — P&L líquido em %: bruto − custos. */
+  netPnlPct: number;
   /**
    * True when THIS candle's legs close the ENTIRE remaining position (final stop
    * or TP2). Mirrors `resolvePosition.hasClosedFull` and the live path
@@ -149,7 +139,9 @@ export function resolveBacktestPosition(
   candle: { high: number; low: number; close: number; timestamp?: number },
   pos: BacktestPositionState,
   flags: BacktestPositionFlags,
-  slipPct: number
+  slipPct: number,
+  /** SDD Fase 9 / S3 — custos para o `isWin` líquido. Opcional: sem eles, líquido == bruto. */
+  costs?: { roundtripFeePct?: number; fundingPct?: number }
 ): BacktestResolution | null {
   if (pos.openedThisCandle) return null;
 
@@ -167,7 +159,9 @@ export function resolveBacktestPosition(
     high: candle.high,
     low: candle.low,
     currentPrice: candle.close,
-    slippagePct: slipPct
+    slippagePct: slipPct,
+    roundtripFeePct: costs?.roundtripFeePct ?? 0,
+    fundingPct: costs?.fundingPct ?? 0
   });
 
   if (!res.hasClosedFull && !res.hasPartialClose) {
@@ -178,7 +172,10 @@ export function resolveBacktestPosition(
     exitPrice: res.exitLegs[res.exitLegs.length - 1].price,
     exitLegs: res.exitLegs,
     isWin: res.isWin,
+    isWinGross: res.isWinGross,
     grossPnlPct: res.grossPnlPct,
+    costsPct: res.costsPct,
+    netPnlPct: res.netPnlPct,
     hasClosedFull: res.hasClosedFull,
     nextState: {
       partialTaken: res.nextPositionState.partialTaken,
@@ -606,6 +603,24 @@ export class BacktestEngine {
       config.isOnlyUntil !== undefined ? Math.min(seriesEndRaw, config.isOnlyUntil) : seriesEndRaw;
     const walkForwardWindows = buildWalkForwardWindows(seriesStart, seriesEnd, config.walkForward, days);
 
+    // CRÍTICO-2: a série de 5m para a validação multi-timeframe é agregada das 1m
+    // (o histórico só tem 1m — ver a limitação declarada em `MTF_VALIDATION_TIMEFRAME_MINUTES`) uma vez,
+    // fora do loop. Dentro do loop, `mtf5mCursor` avança monotonicamente para achar a
+    // última vela de 5m já fechada no instante do candle corrente — O(n) no total.
+    const aggregated5mForValidation = aggregateToTimeframe(candleObjects, MTF_VALIDATION_TIMEFRAME_MINUTES);
+    let mtf5mCursor = -1;
+
+    // SDD Fase 9 / S1 — PARIDADE DE TIMEFRAME. `processTickerState` (volume profile,
+    // Fibonacci, FVG, estrutura, CVD, RSI divergence) precisa receber o MESMO timeframe
+    // do live, que é 15m. Até aqui recebia velas de 1m — o backtest nunca reproduziu o
+    // sistema de produção, e todo número de expectativa publicado descrevia outro sistema.
+    //
+    // A agregação é feita uma única vez, fora do loop; dentro dele, `indicatorWindowAt` recorta
+    // a janela até a última vela de 15m JÁ FECHADA no instante do candle 1m corrente.
+    // Sem esse cuidado haveria lookahead: o bucket k cobre as velas 1m [k*15 .. k*15+14] e
+    // só está completo em i = k*15+14.
+    const indicators15m = aggregateToTimeframe(candleObjects, INDICATOR_TIMEFRAME_MINUTES);
+
     // Rolling window evaluation (minimum candles required for indicators)
     for (let i = 25; i < candleObjects.length; i += step) {
       const candle = candleObjects[i];
@@ -640,7 +655,7 @@ export class BacktestEngine {
           // Mesmo wrapper do live (server.ts): o score cai para o do pendente quando ausente.
           confirm: (p) => confirmEntry({ ...p, confluenceScore: p.confluenceScore ?? pc.signal.confluenceScore ?? 0 }),
           confluenceScore: pc.signal.confluenceScore,
-          klines5m: aggregateTo5m(candles1m)
+          klines5m: aggregateToTimeframe(candles1m, MTF_VALIDATION_TIMEFRAME_MINUTES)
         });
 
         if (evaluation.transition === 'ACTIVATED') {
@@ -715,9 +730,20 @@ export class BacktestEngine {
           source: 'REST'
         };
 
+
+        // Janela de indicadores no timeframe do LIVE (15m), sem lookahead: só entram
+        // buckets JÁ FECHADOS no instante `i` (S1.4). `windowSlice` (1m) continua
+        // alimentando os indicadores de 24h do rawTicker e a validação MTF.
+        const indicatorWindow = indicatorWindowAt(
+          indicators15m,
+          i,
+          INDICATOR_TIMEFRAME_MINUTES,
+          SIGNAL_LOOKBACK_CANDLES
+        );
+
         const tickerState = processTickerState(
           rawTicker,
-          windowSlice,
+          indicatorWindow,
           0, // no historical OI available
           0, // no historical funding available for scoring
           weights,
@@ -729,11 +755,29 @@ export class BacktestEngine {
         );
 
         if (tickerState && tickerState.signalType !== 'NEUTRAL' && tickerState.confluenceScore >= preset.minConfluence) {
+          // Avança o cursor até a última vela de 5m com timestamp <= o candle corrente.
+          while (
+            mtf5mCursor + 1 < aggregated5mForValidation.length &&
+            aggregated5mForValidation[mtf5mCursor + 1].timestamp <= candle.timestamp
+          ) {
+            mtf5mCursor++;
+          }
+          const mtf5mSlice =
+            mtf5mCursor >= 0 ? aggregated5mForValidation.slice(Math.max(0, mtf5mCursor - 1), mtf5mCursor + 1) : [];
+
+          // CRÍTICO-2: `windowSlice` já é a série real de 1m do histórico (BacktestEngine
+          // carrega '1m'), então ela serve como klines1m; o 5m vem da agregação acima.
           const signal = buildTradeSignal(
             tickerState,
             windowSlice,
             preset.targetRiskRatio,
-            strategyCat
+            strategyCat,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { klines1m: windowSlice, klines5m: mtf5mSlice }
           );
 
           if (signal && signal.validationStatus !== 'REJECTED_SPIKE') {
@@ -785,7 +829,13 @@ export class BacktestEngine {
           candle,
           { direction: posDirection, entryPrice, entryTime, stopLoss, target1: takeProfit1, target2: takeProfit2, openedThisCandle: false },
           { partialTaken, isBreakevenActive, stopLoss },
-          slipPct
+          slipPct,
+          // SDD Fase 9 / S3 — taxa entra no `isWin` da resolucao. O funding NAO entra
+          // aqui por ordem: ele é calculado DEPOIS, a partir dos eventos que_this
+          // candle fechou (linhas seguintes), e usá-lo antes seria circular. O
+          // `isWin` autoritativo da posição é o de `trades.push`, derivado de
+          // `isNetWin(r.rNet)`, que já embute taxa, slippage e funding completos.
+          { roundtripFeePct: roundtripFee }
         );
 
         if (resolution) {
@@ -869,7 +919,11 @@ export class BacktestEngine {
             const r = rDecomposition(positionAcc, activeRiskPct);
             totalLegs += positionAcc.legs; // 8.0.1 — uma posição TP1+TP2 soma 2 pernas
 
-            if (netPct > 0) {
+            // SDD Fase 9 / S3 — contagem e registro usam o MESMO criterio (R líquido).
+            // Antes ambos usavam netPct > 0, que é uma medida diferente de rNet,
+            // arredondada em outra casa: o win rate e a decomposição de R podiam
+            // discordar sobre o mesmo trade.
+            if (isNetWin(r.rNet)) {
               wins++;
               totalProfit = dAdd(totalProfit, Math.max(0, positionAcc.profitValue));
               totalWinPctSum = dAdd(totalWinPctSum, Math.abs(netPct));
@@ -901,7 +955,7 @@ export class BacktestEngine {
               stopLoss: dRound(stopLoss, 4),
               takeProfit1: dRound(takeProfit1, 4),
               takeProfit2: dRound(takeProfit2, 4),
-              isWin: netPct > 0,
+              isWin: isNetWin(r.rNet),
               isBreakeven: isBreakevenActive,
               partialClosed: positionAcc.hadPartial,
               closedSize: dRound(positionAcc.closedSize, 2),

@@ -8,6 +8,10 @@
 
 import { dAdd, dSub, dMul, dDiv, dRound } from '../utils/decimal.js';
 import { calculateFundingCostWithCoverage, type HistoricalFundingRecord } from './FundingService.js';
+// SDD Fase 9 / S2 — a chave de tier passa a ter UMA definicao, compartilhada com a
+// calibracao do score. Duas copias da mesma formula fazem o ledger agrupar por um bucket
+// e a calibracao ler outro.
+import { tierKeyForScore } from './scoreCalibration.js';
 
 export interface LedgerSignalParams {
   id: string;
@@ -410,7 +414,7 @@ export function generateEvidenceSummary(
   const byTradFiSession: Record<string, ClosedSignalEvidence[]> = {};
 
   for (const s of filtered) {
-    const tier = s.scoreTier || `${Math.floor(s.score / 10) * 10}-${Math.floor(s.score / 10) * 10 + 9}`;
+    const tier = s.scoreTier || tierKeyForScore(s.score);
     byScoreTier[tier] = byScoreTier[tier] || [];
     byScoreTier[tier].push(s);
 

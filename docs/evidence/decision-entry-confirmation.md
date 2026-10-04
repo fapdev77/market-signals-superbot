@@ -3,31 +3,31 @@
 > **Status:** FINAL — gerada automaticamente por `npm run compare:entry -- --register`.
 > Números derivados do relatório pareado; NÃO editar à mão (regra 8.2.4).
 
-- **engineVersion:** 4566b37
-- **Símbolo:** BTCUSDT, ETHUSDT, SOLUSDT, AAVEUSDT, PEPEUSDT · **Período:** 30 dias · **Semente:** 42
+- **engineVersion:** 692ddb6
+- **Símbolo:** BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT · **Período:** 30 dias · **Semente:** 42
 - **Origem dos dados:** LIVE — klines reais da Binance (origin=LIVE; ALLOW_SYNTHETIC_DATA=false)
-- **Amostra:** universo de 5 símbolos reais (BTCUSDT, ETHUSDT, SOLUSDT, AAVEUSDT, PEPEUSDT) — 8.2.3
-- **Gerado em:** 2026-10-03T11:45:00.000Z
+- **Amostra:** universo de 5 símbolos reais (BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT) — 8.2.3
+- **Gerado em:** 2026-10-04T10:00:00.000Z
 - **Regra:** 8.2.2 (v2, pareada)
 
 ## Números do relatório
 
 | Métrica | Controle | Com confirmação |
 |---|---|---|
-| Posições preenchidas | 2148 | 1524 |
-| Posições fechadas | 2143 | 1519 |
-| Win rate (posição) | 30.52% | 39.10% |
-| Expectativa líquida (R/sinal pareado) | -0.4123 | -0.1659 |
-| Drawdown máximo | 58.48% | 27.30% |
+| Posições preenchidas | 625 | 0 |
+| Posições fechadas | 623 | 0 |
+| Win rate (posição) | 17.98% | 0.00% |
+| Expectativa líquida (R/sinal pareado) | -0.1111 | 0.0000 |
+| Drawdown máximo | 26.44% | 0.00% |
 
-- **Diferença pareada (B − A):** 0.2464 R — IC 95% [0.2073, 0.2853]
+- **Diferença pareada (B − A):** 0.1111 R — IC 95% [0.0832, 0.1375]
 
 ## Veredito
 
-- (a) preenchidos por braço 2148/1524 ≥ 30 e agregado 3672 ≥ 60 — OK.
-- (b) IC 95% pareado da diferença = [0.2073, 0.2853] R, limite inferior 0.2073 > 0 — OK.
-- (c) drawdown 27.30% ≤ 70.18% (controle 58.48% + 20%) — OK.
-- (d) expectativa absoluta = -0.1659 R < 0 e sem aceite do dono — barra.
+- (a) amostra insuficiente: controle 625, confirmação 0 (mínimo 30/braço e 60 no agregado) — barra.
+- (b) IC 95% pareado da diferença = [0.0832, 0.1375] R, limite inferior 0.0832 > 0 — OK.
+- (c) drawdown 0.00% ≤ 31.73% (limite = controle 26.44% + 20% RELATIVOS, ou seja ×1.20) — OK.
+- (d) expectativa líquida absoluta do braço com confirmação = 0.0000 R ≥ 0 — OK.
 - Veredito: MANTER a flag DESLIGADA (motivo registrado).
 
 **MANTER DESLIGADA a flag `ENTRY_CONFIRMATION_ENABLED`.**

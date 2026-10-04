@@ -458,7 +458,7 @@ export function convertSignalToPosition(
     takeProfit2: signal.target2,
     openedAt: signal.createdAt || Date.now(),
     isSyntheticFromSignal: true,
-    notes: `Gerado a partir do Sinal ${signal.signalType} (${signal.timeframe} · Confluência ${signal.confluenceScore}%)`
+    notes: `Gerado a partir do Sinal ${signal.signalType} (${signal.timeframe} · Confluência ${signal.confluenceScore}/100)`
   });
 }
 

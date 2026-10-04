@@ -1,4 +1,4 @@
-import { AIModelConfig, BacktestResult, TickerData, TradeSignal } from '../types';
+import { AIModelConfig, AutoTuneResult, BacktestResult, TickerData, TradeSignal, TradingProfile } from '../types';
 
 export interface ApiResponse<T = unknown> {
   success: boolean;
@@ -57,8 +57,13 @@ export interface BacktestRunParams {
 export interface BacktestTuneParams {
   symbol: string;
   days: number;
-  profile: string;
+  profile: TradingProfile;
   iterations?: number;
+}
+
+export interface BacktestAutoTuneResponse {
+  success: boolean;
+  tuneResult: AutoTuneResult;
 }
 
 class ApiError extends Error {
@@ -331,23 +336,21 @@ export const apiClient = {
     });
   },
 
-  tuneBacktest: (params: BacktestTuneParams): Promise<{
-    success: boolean;
-    bestWeights: Record<string, number>;
-    bestResult: BacktestResult;
-    baselineResult: BacktestResult;
-    history: Array<{ iteration: number; weights: Record<string, number>; winRate: number; profitFactor: number; totalPnl: number }>;
-  }> => {
-    return request('/api/backtest/tune', {
+  /**
+   * Otimização REAL de pesos — `BacktestEngine.runAutoTune` no servidor.
+   ** Este é o único caminho de auto-tuning suportado. A busca é ajustada sobre a fatia de
+   * treino (60% da série) via `isOnlyUntil`, a validação ocupa os 20% seguintes e o
+   * holdout (20% final) NÃO é visto por nenhum candidato. `tuneResult.holdoutValidation`
+   * traz o IC95% por bootstrap e `isRobust` (exige limite inferior > 0).
+   *
+   * Histórico: o cliente usava `POST /api/backtest/tune`, rota que nunca existiu — o
+   * número vinha de `src/utils/strategyAutoTuning.ts`, que sorteava vitória/derrota com
+   * `Math.sin`. Esse caminho foi removido; não reintroduza um atalho client-side.
+   */
+  autoTuneStrategy: (params: BacktestTuneParams): Promise<BacktestAutoTuneResponse> => {
+    return request<BacktestAutoTuneResponse>('/api/backtest/autotune', {
       method: 'POST',
       body: JSON.stringify(params),
-    });
-  },
-
-  applyBacktestWeights: (weights: Record<string, number>): Promise<{ success: boolean; weights: Record<string, number> }> => {
-    return request('/api/backtest/apply', {
-      method: 'POST',
-      body: JSON.stringify({ weights }),
     });
   },
 
@@ -398,6 +401,18 @@ export const apiClient = {
   resetExcludedSymbols: (): Promise<{ success: boolean; excludedSymbols: string[]; summary: import('../types').ScreenerScanSummary }> => {
     return request('/api/screener/exclude/reset', {
       method: 'POST',
+    });
+  },
+
+  /**
+   * SDD Fase 9 / S2 — expectativa calibrada por tier de score (R por sinal fechado).
+   *
+   * Complementa o `confluenceScore` (força de confluência, que NÃO é probabilidade)
+   * com a única medida de edge que o operador deveria usar para decidir.
+   */
+  getScoreCalibration: (): Promise<import('../utils/scoreDisplay').ScoreCalibrationResponse> => {
+    return request('/api/evidence/calibration', {
+      method: 'GET',
     });
   },
 };

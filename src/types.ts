@@ -995,50 +995,13 @@ export type TerminalLayoutMode =
   | 'quant_risk'        // Greeks exposure + VaR + Correlation + Heatmap
   | 'screener_pro';     // Smart Volume Screener + Radar Screener + Sinais
 
-export type AutoTuneTargetObjective = 
-  | 'MAX_SHARPE'        // Maximize Sharpe ratio with optimal risk-adjusted alpha
-  | 'MAX_WIN_RATE'      // Maximize % of winning trades
-  | 'MAX_PROFIT_FACTOR' // Maximize gross profit / gross loss
-  | 'MIN_DRAWDOWN';     // Minimize equity volatility & max drawdown
-
-export interface StrategyAutoTuneMetrics {
-  sharpeRatio: number;
-  sortinoRatio: number;
-  winRate: number;              // 0 to 100
-  profitFactor: number;
-  maxDrawdownPct: number;
-  expectedTrades24h: number;
-  averageRiskReward: number;
-  annualizedReturnPct: number;
-  calmarRatio: number;
-}
-
-export interface AutoTuneCandidate {
-  id: string;
-  name: string;
-  objective: AutoTuneTargetObjective;
-  description: string;
-  weights: IndicatorWeights;
-  metrics: StrategyAutoTuneMetrics;
-  improvementVsCurrent: {
-    sharpeDeltaPct: number;
-    winRateDelta: number;
-    drawdownReductionPct: number;
-    profitFactorDelta: number;
-  };
-  keyChanges: string[];
-}
-
-export interface AutoTuneRunResult {
-  currentMetrics: StrategyAutoTuneMetrics;
-  bestCandidate: AutoTuneCandidate;
-  candidates: AutoTuneCandidate[];
-  analyzedSignalsCount: number;
-  simulatedIterations: number;
-  optimizationDurationMs: number;
-  timestamp: number;
-  recommendations: string[];
-}
+// CRÍTICO-1 (auditoria): `AutoTuneTargetObjective`, `StrategyAutoTuneMetrics`,
+// `AutoTuneCandidate` e `AutoTuneRunResult` foram removidos. Eles descreviam o
+// auto-tuner client-side FABRICADO (`src/utils/strategyAutoTuning.ts`), que sorteava
+// vitória/derrota com `Math.sin` e tinha métricas com piso. O auto-tuning real é
+// server-authoritative e produz `AutoTuneResult` (acima), com fatia de treino,
+// validação fora-da-amostra, holdout intocado e IC95% por bootstrap.
+// Não reintroduza tipos "de otimizador" aqui: estenda `AutoTuneResult`.
 
 // ============================================
 // PAPER TRADING SANDBOX TYPES

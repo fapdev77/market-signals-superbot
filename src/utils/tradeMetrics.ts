@@ -1,5 +1,7 @@
 import { TradeSignal, TickerData } from '../types';
 import { formatPrice, formatPercent } from './formatters';
+// SDD Fase 9 / S4 — o painel desconta os mesmos custos do backtest.
+import { DEFAULT_TRADE_COSTS, applyTradeCosts, realizedR, type TradeCosts } from './tradeCosts';
 
 export interface ExecutedTrade {
   id: string;
@@ -21,9 +23,22 @@ export interface ExecutedTrade {
   status: 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED' | 'ACTIVE' | 'PENDING_ENTRY';
   isWin: boolean;
   isBreakeven: boolean;
+  /** SDD Fase 9 / S4 — P&L LÍQUIDO em % (é o que o painel mostra e o que soma). */
   pnlPct: number;
+  /** SDD Fase 9 / S4 — P&L BRUTO em %, antes de taxa, slippage e funding. */
+  pnlPctGross: number;
+  /** SDD Fase 9 / S4 — custos em % do notional (ida e volta + funding). */
+  costsPct: number;
   pnlUsd: number; // based on reference position $1,000
-  pnlR: number; // in R-multiples (e.g. +2.5R, -1.0R)
+  /** R LIQUIDO em múltiplos do risco (ver `tradeCosts.realizedR`). */
+  pnlR: number;
+  /** R BRUTO em múltiplos do risco, para auditoria. */
+  pnlRGross?: number;
+  /**
+   * SDD Fase 9 / S4 — `true` enquanto este número for derivado dos alvos do sinal,
+   * sem caminho de preço resolvido pelo ledger. A UI rotula como ESTIMATIVA.
+   */
+  isEstimated?: boolean
   entryTime: number;
   exitTime: number;
   durationMs: number;
@@ -94,7 +109,12 @@ export function formatTradeDuration(ms: number): string {
   return `${Math.max(1, minutes)}m`;
 }
 
-export function signalToExecutedTrade(signal: TradeSignal, livePrice?: number): ExecutedTrade {
+export function signalToExecutedTrade(
+  signal: TradeSignal,
+  livePrice?: number,
+  /** SDD Fase 9 / S4 — custos; default = o mesmo modelo do `BacktestEngine`. */
+  costs: TradeCosts = DEFAULT_TRADE_COSTS
+): ExecutedTrade {
   const isLong = signal.direction === 'LONG';
   
   // Authoritative entry price
@@ -106,28 +126,30 @@ export function signalToExecutedTrade(signal: TradeSignal, livePrice?: number): 
   let exitTime = signal.validatedAt || signal.createdAt || Date.now();
   
   let exitPrice = signal.currentPrice;
-  let isWin = false;
   let isBreakeven = false;
-  let pnlPct = 0;
-  let pnlR = 0;
+  let grossPct = 0;
   const initialRisk = Math.abs(entryPrice - signal.stopLoss);
+  // Risco como fração do preço de entrada: é a unidade em que o R é comparável entre
+  // trades de tamanho de posição diferente.
+  const riskPct = entryPrice > 0 ? (initialRisk / entryPrice) * 100 : 0;
 
   if (signal.status === 'TARGET_REACHED') {
     // 50% at Target 1, 50% at Target 2
     exitPrice = signal.target2;
     exitTime = signal.expiresAt || (entryTime + 1000 * 60 * (signal.ttlMinutes ? Math.floor(signal.ttlMinutes * 0.75) : 90));
-    isWin = true;
 
     if (isLong) {
       const pnl1 = (signal.target1 - entryPrice) / entryPrice;
       const pnl2 = (signal.target2 - entryPrice) / entryPrice;
-      pnlPct = (0.5 * pnl1 + 0.5 * pnl2) * 100;
+      grossPct = (0.5 * pnl1 + 0.5 * pnl2) * 100;
     } else {
       const pnl1 = (entryPrice - signal.target1) / entryPrice;
       const pnl2 = (entryPrice - signal.target2) / entryPrice;
-      pnlPct = (0.5 * pnl1 + 0.5 * pnl2) * 100;
+      grossPct = (0.5 * pnl1 + 0.5 * pnl2) * 100;
     }
-    pnlR = signal.riskRewardRatio || 2.5;
+    // SDD Fase 9 / S4 (achado N4): o R:R do sinal é o OBJETIVO, não o resultado.
+    // `pnlR` passa a ser calculado de `pnlPct` e do risco real — abaixo, no fim da
+    // função, para valer para todos os ramos.
 
   } else if (signal.status === 'STOPPED_OUT') {
     const isBe = signal.isBreakevenActive || signal.expirationReason?.toLowerCase().includes('breakeven');
@@ -135,27 +157,23 @@ export function signalToExecutedTrade(signal: TradeSignal, livePrice?: number): 
 
     if (isBe) {
       isBreakeven = true;
-      isWin = true; // Partial profit was taken at TP1
       exitPrice = entryPrice;
       
       if (isLong) {
         const pnl1 = (signal.target1 - entryPrice) / entryPrice;
-        pnlPct = (0.5 * pnl1) * 100;
+        grossPct = (0.5 * pnl1) * 100;
       } else {
         const pnl1 = (entryPrice - signal.target1) / entryPrice;
-        pnlPct = (0.5 * pnl1) * 100;
+        grossPct = (0.5 * pnl1) * 100;
       }
-      pnlR = initialRisk > 0 ? (0.5 * Math.abs(signal.target1 - entryPrice)) / initialRisk : 0.75;
     } else {
       exitPrice = signal.stopLoss;
-      isWin = false;
       
       if (isLong) {
-        pnlPct = ((signal.stopLoss - entryPrice) / entryPrice) * 100;
+        grossPct = ((signal.stopLoss - entryPrice) / entryPrice) * 100;
       } else {
-        pnlPct = ((entryPrice - signal.stopLoss) / entryPrice) * 100;
+        grossPct = ((entryPrice - signal.stopLoss) / entryPrice) * 100;
       }
-      pnlR = -1.0;
     }
 
   } else if (signal.status === 'EXPIRED') {
@@ -164,23 +182,19 @@ export function signalToExecutedTrade(signal: TradeSignal, livePrice?: number): 
     
     if (isBe) {
       isBreakeven = true;
-      isWin = true;
       exitPrice = entryPrice;
       if (isLong) {
-        pnlPct = (0.5 * ((signal.target1 - entryPrice) / entryPrice)) * 100;
+        grossPct = (0.5 * ((signal.target1 - entryPrice) / entryPrice)) * 100;
       } else {
-        pnlPct = (0.5 * ((entryPrice - signal.target1) / entryPrice)) * 100;
+        grossPct = (0.5 * ((entryPrice - signal.target1) / entryPrice)) * 100;
       }
-      pnlR = 0.5;
     } else {
       exitPrice = livePrice || signal.currentPrice;
       if (isLong) {
-        pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100;
+        grossPct = ((exitPrice - entryPrice) / entryPrice) * 100;
       } else {
-        pnlPct = ((entryPrice - exitPrice) / entryPrice) * 100;
+        grossPct = ((entryPrice - exitPrice) / entryPrice) * 100;
       }
-      isWin = pnlPct > 0;
-      pnlR = initialRisk > 0 ? (pnlPct / 100 * entryPrice) / initialRisk : (pnlPct > 0 ? 0.5 : -0.5);
     }
 
   } else {
@@ -188,13 +202,24 @@ export function signalToExecutedTrade(signal: TradeSignal, livePrice?: number): 
     exitTime = Date.now();
     exitPrice = livePrice || signal.currentPrice;
     if (isLong) {
-      pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100;
+      grossPct = ((exitPrice - entryPrice) / entryPrice) * 100;
     } else {
-      pnlPct = ((entryPrice - exitPrice) / entryPrice) * 100;
+      grossPct = ((entryPrice - exitPrice) / entryPrice) * 100;
     }
-    isWin = pnlPct > 0;
-    pnlR = initialRisk > 0 ? (pnlPct / 100 * entryPrice) / initialRisk : 0;
   }
+
+  // SDD Fase 9 / S4 — ponto único de verdade do resultado do trade:
+  //   bruto -> custos -> líquido -> R -> vitória.
+  // Tudo que vem depois (séries, insights, filtros) lê estes números, então corrigir
+  // o modelo aqui corrige o painel inteiro de uma vez.
+  const grossPctFinal = Number.isFinite(grossPct) ? grossPct : 0;
+  const netted = applyTradeCosts(grossPctFinal, costs);
+  const pnlPct = netted.netPct;
+  const pnlRGross = realizedR(grossPctFinal, riskPct);
+  const pnlR = realizedR(netted.netPct, riskPct);
+
+  // isWin passa a ser o LÍQUIDO — mesma definição do servidor (`isNetWin`).
+  const isWinNet = pnlPct > 0;
 
   const durationMs = Math.max(0, exitTime - entryTime);
   const REFERENCE_CAPITAL = 1000;
@@ -216,11 +241,15 @@ export function signalToExecutedTrade(signal: TradeSignal, livePrice?: number): 
     confluenceScore: signal.confluenceScore || 0,
     confluenceFactors: signal.confluenceFactors || [],
     status: signal.status,
-    isWin,
+    isWin: isWinNet,
     isBreakeven,
     pnlPct: parseFloat(pnlPct.toFixed(2)),
+    pnlPctGross: parseFloat(grossPctFinal.toFixed(4)),
+    costsPct: parseFloat(netted.costsPct.toFixed(4)),
     pnlUsd: parseFloat(pnlUsd.toFixed(2)),
     pnlR: parseFloat(pnlR.toFixed(2)),
+    pnlRGross: parseFloat(pnlRGross.toFixed(2)),
+    isEstimated: true,
     entryTime,
     exitTime,
     durationMs,

@@ -173,7 +173,7 @@ export default function App() {
             playSignalTone(latest.direction);
             sendDesktopNotification(
               `Novo Sinal SuperBot: ${latest.direction} em ${latest.symbol}`,
-              `Confluência ${latest.confluenceScore}% • Entrada: ${latest.entryZone[0]}-${latest.entryZone[1]}`
+              `Confluência ${latest.confluenceScore}/100 • Entrada: ${latest.entryZone[0]}-${latest.entryZone[1]}`
             );
           }
         }

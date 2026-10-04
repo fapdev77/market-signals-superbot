@@ -155,7 +155,7 @@ export const PaperTradingSandbox: React.FC<PaperTradingSandboxProps> = ({
         const avgEntry = (activeSignal.entryZone[0] + activeSignal.entryZone[1]) / 2;
         setLimitPrice(avgEntry);
       }
-      setNotes(`Executado via Bot Quant (${activeSignal.strategyCategory || 'SINAL'} - ${activeSignal.confluenceScore}%)`);
+      setNotes(`Executado via Bot Quant (${activeSignal.strategyCategory || 'SINAL'} - força ${activeSignal.confluenceScore}/100)`);
       showToast('success', 'Parâmetros sincronizados com o Sinal Quant!');
     }
   };

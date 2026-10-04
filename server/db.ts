@@ -18,6 +18,10 @@ import { dRound } from './utils/decimal.js';
 import { applyMigrations, MIGRATIONS, LEGACY_IMPORT_TABLES } from './migrations/index.js';
 import type { LedgerSignalParams, LedgerEventRecord, ClosedSignalEvidence } from './services/EvidenceService.js';
 import { calculateSignalOutcomeR } from './services/EvidenceService.js';
+// SDD Fase 9 / S2 — chave de tier com definicao unica (ver scoreCalibration.ts).
+import { tierKeyForScore } from './services/scoreCalibration.js';
+// SDD Fase 9 / S3 — definicao unica de vitoria (ver winDefinition.ts).
+import { isNetWin } from './services/winDefinition.js';
 import { defaultAlertService, AlertService } from './services/AlertService.js';
 import { emitOperationalAlert } from './services/operationalAlerts.js';
 import { incrementMetric, METRIC_NAMES } from './utils/metrics.js';
@@ -1931,13 +1935,13 @@ export const signalLedgerDao = {
           category,
           direction,
           score,
-          scoreTier: `${Math.floor(score / 10) * 10}-${Math.floor(score / 10) * 10 + 9}`,
+          scoreTier: tierKeyForScore(score),
           tradfiSession,
           origin: rowOrigin,
           netR: finalOutcome.netR,
           mfeR: 0,
           maeR: 0,
-          isWin: finalOutcome.netR > 0,
+          isWin: isNetWin(finalOutcome.netR),
           closedAt,
           outcomeType: finalOutcome.outcomeType,
           expiredReason:

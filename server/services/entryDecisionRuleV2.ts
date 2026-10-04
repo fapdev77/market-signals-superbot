@@ -88,10 +88,14 @@ export function evaluateEntryConfirmationDecisionV2(
   // (c) drawdown do braço com confirmação não passa de 120% do controle.
   const ddLimit = control.maxDrawdownPct * (1 + maxWorsePct / 100);
   const drawdownOk = withConfirmation.maxDrawdownPct <= ddLimit;
+  // ACHADO N2: a razao antiga escrevia "controle 58.48% + 20%", que lido como linguagem
+  // natural significa 58,48 + 20 PONTOS PERCENTUAIS = 78,48%. O codigo multiplica por
+  // 1,20 (limite 70,18%). Como esta linha e a evidencia que o revisor do documento de
+  // decisao le, ela tem que dizer o que o codigo faz — e em % absoluto.
   reasons.push(
     drawdownOk
-      ? `(c) drawdown ${withConfirmation.maxDrawdownPct.toFixed(2)}% ≤ ${ddLimit.toFixed(2)}% (controle ${control.maxDrawdownPct.toFixed(2)}% + ${maxWorsePct}%) — OK.`
-      : `(c) drawdown ${withConfirmation.maxDrawdownPct.toFixed(2)}% excede ${ddLimit.toFixed(2)}% (controle + ${maxWorsePct}%) — barra.`
+      ? `(c) drawdown ${withConfirmation.maxDrawdownPct.toFixed(2)}% ≤ ${ddLimit.toFixed(2)}% (limite = controle ${control.maxDrawdownPct.toFixed(2)}% + ${maxWorsePct}% RELATIVOS, ou seja ×${(1 + maxWorsePct / 100).toFixed(2)}) — OK.`
+      : `(c) drawdown ${withConfirmation.maxDrawdownPct.toFixed(2)}% excede ${ddLimit.toFixed(2)}% (limite = controle ${control.maxDrawdownPct.toFixed(2)}% + ${maxWorsePct}% RELATIVOS, ou seja ×${(1 + maxWorsePct / 100).toFixed(2)}) — barra.`
   );
 
   // (d) expectativa absoluta ≥ 0 OU aceite explícito do dono.

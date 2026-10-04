@@ -127,7 +127,13 @@ describe('Phase 2 Complete Test Suite (2.1 Ingestão, 2.2 Motor de Sinais, 2.3 B
       if (tickerState) {
         tickerState.signalType = 'STRONG_LONG';
         tickerState.confluenceScore = 80;
-        const signal = buildTradeSignal(tickerState, spikeCandles, 2.0, 'DAY_TRADE');
+        // CRÍTICO-2: a checagem de spike lê a vela de 1m REAL, não mais o array de
+        // análise. O pavio spike fica na última vela de 1m.
+        const spike1m = spikeCandles[spikeCandles.length - 1];
+        const signal = buildTradeSignal(tickerState, spikeCandles, 2.0, 'DAY_TRADE', undefined, undefined, undefined, undefined, undefined, {
+          klines1m: [spike1m],
+          klines5m: [{ ...spike1m }]
+        });
         expect(signal?.validationStatus).toBe('REJECTED_SPIKE');
         expect(signal?.validationDetails?.spikeDetected).toBe(true);
       }

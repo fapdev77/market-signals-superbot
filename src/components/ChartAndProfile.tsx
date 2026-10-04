@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TickerData, KlineCandle, TradeSignal, AIReviewResponse, AIModelConfig, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, formatPercent, formatCompactNumber, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
+// SDD Fase 9 / S2 — o score deixa de ser exibido como probabilidade de acerto.
+import { useScoreCalibration } from '../hooks/useScoreCalibration';
+import { describeScore } from '../utils/scoreDisplay';
+
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ReferenceArea, BarChart, Bar, CartesianGrid } from 'recharts';
 import { LineChart as ChartIcon, Flame, Activity, RefreshCw, Brain, Target, ShieldAlert, Crosshair, Zap, TrendingUp, TrendingDown, CheckCircle2, AlertTriangle, ArrowUpRight, Scale, Percent, Cpu, UserCheck, Hand, MoveHorizontal, Maximize2, Minimize2, Clock, Sliders, Layers, BarChart3, FileText } from 'lucide-react';
 import { PromptPreviewModal } from './PromptPreviewModal';
@@ -53,9 +57,15 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 }) => {
   const ticker = selectedTicker || allTickers[0];
   const [klines, setKlines] = useState<KlineCandle[]>([]);
+  const calibrationFor = useScoreCalibration();
+
   const [loading, setLoading] = useState(false);
   const [aiReview, setAiReview] = useState<AIReviewResponse | null>(null);
   const [loadingReview, setLoadingReview] = useState(false);
+  // ALTO-1: `/api/ai/review` responde 422 quando não há sinal emitido pelo motor
+  // (a rota não fabrica mais um sinal para revisar). Sem checar `res.ok` o corpo de erro
+  // seria tratado como se fosse uma AIReviewResponse e o painel abriria quebrado.
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [showPromptModal, setShowPromptModal] = useState<boolean>(false);
   const [timeframe, setTimeframe] = useState('15m');
   const [chartType, setChartType] = useState<'line' | 'candles'>('line');
@@ -195,6 +205,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   const handleRunAIReview = async () => {
     if (!ticker) return;
     setLoadingReview(true);
+    setReviewError(null);
     try {
       const model = selectedModel || activeModels.find(m => m.isActive)?.id || undefined;
       const res = await apiFetch('/api/ai/review', {
@@ -208,10 +219,18 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           personaId: selectedPersona
         })
       });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(
+          errorData.message || errorData.error || `Falha ao executar auditoria de IA (${res.status}).`
+        );
+      }
       const data: AIReviewResponse = await res.json();
       setAiReview(data);
     } catch (err) {
       console.error('Failed to run AI review:', err);
+      setAiReview(null);
+      setReviewError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoadingReview(false);
     }
@@ -229,6 +248,7 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
   useEffect(() => {
     setAiReview(null);
+    setReviewError(null);
   }, [ticker?.symbol, activeSignal?.id]);
 
   useEffect(() => {
@@ -1174,6 +1194,14 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
           </div>
         </div>
 
+        {/* ALTO-1: motivo da recusa da auditoria de IA (422 — nenhum sinal emitido) */}
+        {reviewError && (
+          <div className="mx-4 mb-3 px-3 py-2.5 rounded-lg bg-amber-950/30 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-px text-amber-400" />
+            <span className="leading-relaxed">{reviewError}</span>
+          </div>
+        )}
+
         {/* Modal for Prompt Preview & Customization before Sending */}
         {showPromptModal && ticker && (
           <PromptPreviewModal
@@ -1299,8 +1327,11 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                         <span>{isSigLong ? '🟢' : '🔴'}</span>
                         <span>{sig.strategyCategory || 'INTRADAY'} ({sig.timeframe || '30m'})</span>
                         <span className="opacity-90 uppercase font-black">{sig.direction}</span>
-                        <span className="text-[9px] px-1 rounded bg-black/50 text-orange-300 font-mono font-bold">
-                          {sig.confluenceScore}%
+                        <span
+                          title={describeScore(sig.confluenceScore, calibrationFor(sig.confluenceScore)).title}
+                          className="text-[9px] px-1 rounded bg-black/50 text-orange-300 font-mono font-bold"
+                        >
+                          {sig.confluenceScore}/100
                         </span>
                       </button>
                     );
@@ -1362,8 +1393,20 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
                 {/* Score & Confluence */}
                 <div className="bg-neutral-900/80 p-2.5 rounded border border-white/5 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-neutral-400 font-bold uppercase">Confluência Quant:</span>
-                    <span className="font-extrabold text-orange-400">{activeSignal.confluenceScore}%</span>
+                    <span className="text-neutral-400 font-bold uppercase">Força (0-100):</span>
+                    <span className="font-extrabold text-orange-400">
+                      {activeSignal.confluenceScore}/100
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-neutral-500">
+                    {(() => {
+                      const score = describeScore(activeSignal.confluenceScore, calibrationFor(activeSignal.confluenceScore));
+                      return (
+                        <span className={score.insufficientSample ? '' : score.tone === 'negative' ? 'text-rose-400' : 'text-emerald-400'}>
+                          {score.secondary}
+                        </span>
+                      );
+                    })()}
                   </div>
                   {activeSignal.backtestWinRate && (
                     <div className="flex items-center justify-between text-[10px] border-t border-white/5 pt-1">

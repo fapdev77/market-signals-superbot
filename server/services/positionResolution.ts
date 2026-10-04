@@ -9,12 +9,20 @@
  *  3. TP2: Runner closes the remaining 50% (or full size if no partial).
  *  4. Pure function: fully deterministic, testable, and reusable.
  *
+ * SDD Fase 9 / S3: `isWin` passou a ser o LÍQUIDO. Antes era `grossPnlPct > 0`, o que
+ * dava vitória a um alvo que não paga a própria taxa — e o `TickProcessor` logava
+ * "Alvo 2 atingido" para um trade que perdeu dinheiro. Agora `grossPnlPct` continua
+ * exposto para auditoria (`isWinGross`), e `isWin` desconta o que foi informado em
+ * `roundtripFeePct` e `fundingPct`. Sem esses parâmetros, líquido == bruto: quem não
+ * informa custo não pode alegar que desconta, e o comportamento histórico é preservado.
+ *
  * 6.5.1 (G-12): todo o caminho de PnL usa aritmética decimal exata (`server/utils/decimal.ts`).
  * Antes, pernas como 0.5*(0.1-0.090045)/0.1*100 davam 4.97750000000001 em IEEE-754; em
  * decimal fecham exatamente 4.9775 (CA-5.1). Sem `toFixed` aqui (CA-5.2).
  */
 
 import { dAdd, dDiv, dMul, dRound, dSub } from '../utils/decimal.js';
+import { isNetWin } from './winDefinition.js';
 
 export interface PositionState {
   direction: 'LONG' | 'SHORT';
@@ -32,6 +40,13 @@ export interface ResolvePositionParams {
   low: number;
   currentPrice?: number;
   slippagePct?: number;
+  /**
+   * SDD Fase 9 / S3 — taxa de ida e volta em % (mesma unidade de `slippagePct`).
+   * Opcional de propósito: quem não informa não pode afirmar que desconta.
+   */
+  roundtripFeePct?: number;
+  /** SDD Fase 9 / S3 — funding acumulado da posição, em % (o sinal já o carrega). */
+  fundingPct?: number;
 }
 
 export interface PositionExitLeg {
@@ -44,8 +59,19 @@ export interface PositionResolutionResult {
   hasClosedFull: boolean;
   hasPartialClose: boolean;
   exitLegs: PositionExitLeg[];
+  /**
+   * SDD Fase 9 / S3 — vitória LIQUIDA. Fonte única da verdade: `isNetWin(netR)`.
+   * Ver `winDefinition.ts` para por que R líquido e não porcentagem bruta.
+   */
   isWin: boolean;
+  /** Vitória BRUTA (sem taxa nem funding) — mantida para auditoria explícita. */
+  isWinGross: boolean;
+  /** P&L bruto em % (após slippage, antes de taxa e funding). */
   grossPnlPct: number;
+  /** Custos somados em %: taxa de ida e volta + funding. */
+  costsPct: number;
+  /** P&L líquido em %: bruto − custos. */
+  netPnlPct: number;
   nextPositionState: PositionState;
 }
 
@@ -62,7 +88,10 @@ function legPnlPct(fillPrice: number, entryPrice: number, size: number, isLong: 
 }
 
 export function resolvePosition(params: ResolvePositionParams): PositionResolutionResult {
-  const { position, high, low, slippagePct = 0 } = params;
+  const { position, high, low, slippagePct = 0, roundtripFeePct = 0, fundingPct = 0 } = params;
+  // SDD Fase 9 / S3 — liquid = bruto − (taxa de ida e volta + funding).
+  const costsPct = dAdd(roundtripFeePct, fundingPct);
+  const netOf = (gross: number): boolean => isNetWin(dSub(gross, costsPct));
   const isLong = position.direction === 'LONG';
   const currentStop = position.stopLoss;
   const partialTaken = position.partialTaken;
@@ -85,12 +114,18 @@ export function resolvePosition(params: ResolvePositionParams): PositionResoluti
 
     const pnlPct = legPnlPct(fillPrice, position.entryPrice, legSize, isLong);
 
+    // Partial taken + breakeven encerra em ~0% BRUTO. Com custos, esse ~0 é perda:
+    // foi o custo de operação que tirou o trade do zero. Antes isso era "vitória".
+    const stopGrossWin = partialTaken && pnlPct >= 0;
     return {
       hasClosedFull: true,
       hasPartialClose: false,
       exitLegs: [{ leg: legType, price: fillPrice, size: legSize }],
-      isWin: partialTaken && pnlPct >= 0, // Win if partial was taken with profit and breakeven
+      isWin: stopGrossWin && netOf(pnlPct),
+      isWinGross: stopGrossWin,
       grossPnlPct: pnlPct,
+      costsPct,
+      netPnlPct: dSub(pnlPct, costsPct),
       nextPositionState: {
         ...position,
         stopLoss: currentStop,
@@ -131,14 +166,17 @@ export function resolvePosition(params: ResolvePositionParams): PositionResoluti
     hasClosedFull = true;
   }
 
-  const isWin = grossPnlPct > 0;
+  const grossPnlPctRounded = dRound(grossPnlPct, 8);
 
   return {
     hasClosedFull,
     hasPartialClose,
     exitLegs,
-    isWin,
-    grossPnlPct: dRound(grossPnlPct, 8),
+    isWin: netOf(grossPnlPct),
+    isWinGross: grossPnlPct > 0,
+    grossPnlPct: grossPnlPctRounded,
+    costsPct,
+    netPnlPct: dSub(grossPnlPctRounded, costsPct),
     nextPositionState: {
       ...position,
       stopLoss: nextStop,

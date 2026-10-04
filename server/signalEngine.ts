@@ -1,7 +1,6 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData, SignalTtlSettings } from '../src/types.js';
 import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, getTradfiAsset, isTradfiMarketOpen, canGenerateSignalsForAsset } from './binanceService.js';
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
-import { getBenchmarkPrice } from '../src/utils/benchmarkPrices.js';
 import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
 // 6.5.1/CA-5.2: cálculo de preço/risco usa decimal exato; toFixed fica só na apresentação.
 import { dRound } from './utils/decimal.js';
@@ -486,8 +485,36 @@ export function processTickerState(
 }
 
 /**
+ * Velas usadas APENAS pela validação multi-timeframe (1m e 5m reais).
+ *
+ * CRÍTICO-2 (auditoria): antes these duas checagens eram derivadas do array `klines`, que é o
+ * mesmo dos indicadores — 15m no live (`server.ts`) e 1m no backtest (`BacktestEngine`).
+ * Isso significava que:
+ *   - no LIVE, "confirmação de 1m" media a última vela de 15m (e o limiar de pavio de 55%
+ *     disparava sobre a amplitude de 15m, não de 1m);
+ *   - no BACKTEST, media 1m — por acidente correto;
+ *   - logo, live e backtest NÃO eram comparáveis nesse filtro. O teste de paridade existente
+ *     não detectou isso porque alimenta as mesmas velas dos dois lados, o que mascara
+ *     justamente a diferença de timeframe;
+ *   - e "confirmação de 5m" era `open da vela de 5 barras atrás` — 75 minutos num feed de
+ *     15m, quase a mesma medição da "confirmação de 1m" (dupla contagem).
+ *
+ * Agora cada checagem mede o timeframe que o rótulo diz. Ausência de velas de 1m/5m NÃO
+ * faz o sinal ser confirmado: falha fechada em `PENDING_VALIDATION`.
+ */
+export interface ValidationKlines {
+  /** Últimas velas REAIS de 1m (exchange no live; histórico 1m no backtest). */
+  klines1m?: KlineCandle[];
+  /** Últimas velas REAIS de 5m. */
+  klines5m?: KlineCandle[];
+}
+
+/**
  * Builds an actionable TradeSignal object with Risk/Reward parameters
  * and performs 1m & 5m Multi-Timeframe Validation to prevent false spike entries.
+ *
+ * @param validationKlines velas de 1m e 5m para a validação multi-timeframe. Sem elas o sinal
+ *   nasce `PENDING_VALIDATION` (nunca `CONFIRMED`).
  */
 export function buildTradeSignal(
   ticker: TickerData,
@@ -501,7 +528,9 @@ export function buildTradeSignal(
   /** 6.5.2: filtros do exchange para arredondamento de preços e executabilidade. */
   filters?: SymbolFilters | null,
   /** 6.5.2: equity/risco para sugerir quantidade (defaults do RiskManager). */
-  riskParams?: { equity?: number; riskPerTradePct?: number }
+  riskParams?: { equity?: number; riskPerTradePct?: number },
+  /** CRÍTICO-2: velas REAIS de 1m/5m para a validação multi-timeframe. */
+  validationKlines?: ValidationKlines
 ): TradeSignal | null {
   if (ticker.signalType === 'NEUTRAL' || ticker.confluenceScore < 50) {
     return null;
@@ -694,7 +723,9 @@ export function buildTradeSignal(
     }
   }
 
-  // --- 1m & 5m MULTI-TIMEFRAME VALIDATION ENGINE ---
+  // --- 1m & 5m MULTI-TIMEFRAME VALIDATION ENGINE (CRÍTICO-2) ---
+  // Cada checagem usa velas do timeframe que o rótulo declara: a spike e a direção
+  // confirmam na vela real de 1m; a continuidade de tendência, na vela real de 5m.
   let candle1mConfirmed = false;
   let candle5mConfirmed = false;
   let spikeDetected = false;
@@ -702,19 +733,21 @@ export function buildTradeSignal(
   let validationStage = 'Aguardando validação de 1m...';
   let rejectionReason: string | undefined = undefined;
 
-  if (klines.length >= 5) {
-    const lastCandle = klines[klines.length - 1];
-    const prev5Candles = klines.slice(-5);
-    const open5m = prev5Candles[0].open;
-    const close5m = lastCandle.close;
+  const v1m = validationKlines?.klines1m;
+  const v5m = validationKlines?.klines5m;
+  const has1m = Array.isArray(v1m) && v1m.length >= 1;
+  const has5m = Array.isArray(v5m) && v5m.length >= 1;
 
-    // 1m Candle Wick Analysis for Spikes
-    const candle1mRange = Math.abs(lastCandle.high - lastCandle.low) || 1;
-    const body1m = Math.abs(lastCandle.close - lastCandle.open);
-    const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
-    const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+  if (has1m && has5m) {
+    const last1m = v1m![v1m!.length - 1];
+    const last5m = v5m![v5m!.length - 1];
 
-    // Spike Rejection Check: Upper wick > 55% of candle range on LONG = fake spike rejection
+    // Rejeição de spike — análise de pavio NA VELA DE 1m.
+    const candle1mRange = Math.abs(last1m.high - last1m.low) || 1;
+    const body1m = Math.abs(last1m.close - last1m.open);
+    const upperWick = last1m.high - Math.max(last1m.open, last1m.close);
+    const lowerWick = Math.min(last1m.open, last1m.close) - last1m.low;
+
     if (isLong && upperWick / candle1mRange > 0.55 && body1m < upperWick) {
       spikeDetected = true;
       rejectionReason = 'Rejeição de topo no 1m (pavio superior > 55% da vela - Spike falso)';
@@ -723,16 +756,17 @@ export function buildTradeSignal(
       rejectionReason = 'Rejeição de fundo no 1m (pavio inferior > 55% da vela - Dump falso)';
     }
 
-    // 1m Directional Confirmation
-    if (isLong && lastCandle.close >= lastCandle.open && ticker.takerBuyRatio >= 0.49) {
+    // Confirmação direcional na vela real de 1m
+    if (isLong && last1m.close >= last1m.open && ticker.takerBuyRatio >= 0.49) {
       candle1mConfirmed = true;
-    } else if (!isLong && lastCandle.close <= lastCandle.open && ticker.takerBuyRatio <= 0.51) {
+    } else if (!isLong && last1m.close <= last1m.open && ticker.takerBuyRatio <= 0.51) {
       candle1mConfirmed = true;
     }
 
-    // 5m Multi-Candle Trend Continuity Confirmation
-    const is5mLongTrend = close5m > open5m;
-    const is5mShortTrend = close5m < open5m;
+    // Continuidade de tendência NA VELA REAL DE 5m. Antes usava o `open` de 5 velas
+    // atrás do mesmo array — no live isso media 75 minutos e duplicava a checagem de 1m.
+    const is5mLongTrend = last5m.close > last5m.open;
+    const is5mShortTrend = last5m.close < last5m.open;
 
     if (isLong && is5mLongTrend) {
       candle5mConfirmed = true;
@@ -740,30 +774,30 @@ export function buildTradeSignal(
       candle5mConfirmed = true;
     }
 
-    // Determine Final Validation State
+    // Estado final
     if (spikeDetected) {
       validationStatus = 'REJECTED_SPIKE';
       validationStage = `REJEITADO: ${rejectionReason}`;
     } else if (candle1mConfirmed && candle5mConfirmed && ticker.confluenceScore >= 60) {
       validationStatus = 'CONFIRMED';
-      validationStage = 'VALIDADO: Sustentado em 1m + Tendência de 5m Confirmada';
+      validationStage = 'VALIDADO: vela de 1m sustenta a direção + tendência de 5m confirmada';
     } else if (candle1mConfirmed || candle5mConfirmed) {
       validationStatus = 'PENDING_VALIDATION';
-      validationStage = 'EM VALIDAÇÃO: Confirmando alinhamento de 1m e 5m';
+      validationStage = 'EM VALIDAÇÃO: alinhamento entre 1m e 5m parcial';
     } else {
       validationStatus = 'PENDING_VALIDATION';
-      validationStage = 'EM OBSERVAÇÃO: Aguardando fechamento do candle de 1m';
+      validationStage = 'EM OBSERVAÇÃO: 1m e 5m ainda sem alinhamento direcional';
     }
   } else {
-    // Phase 3.1: insufficient 1m/5m data means the setup is UNVALIDATED, not confirmed.
-    // This branch previously set both flags to true and marked the signal CONFIRMED
-    // ("Confluência Direct-Market"), which bypassed the entire multi-timeframe filter whenever the kline
-    // feed was still warming up. A caller that skips the DataGate would have emitted an unvalidated entry
-    // as a fully confirmed one.
+    // Phase 3.1 (preservado) + CRÍTICO-2: sem velas REAIS de 1m e 5m o setup é NÃO
+    // VALIDADO. Este ramo nunca marca CONFIRMED — sem o timeframe correto não há como
+    // afirmar confirmação multi-timeframe.
     candle1mConfirmed = false;
     candle5mConfirmed = false;
     validationStatus = 'PENDING_VALIDATION';
-    validationStage = 'EM OBSERVAÇÃO: candles insuficientes para validar 1m/5m (sinal NÃO confirmado)';
+    validationStage = has1m || has5m
+      ? 'EM OBSERVAÇÃO: falta um dos timeframes (1m/5m) para validar (sinal NÃO confirmado)'
+      : 'EM OBSERVAÇÃO: velas de 1m/5m indisponíveis para validação (sinal NÃO confirmado)';
   }
 
   const now = Date.now();

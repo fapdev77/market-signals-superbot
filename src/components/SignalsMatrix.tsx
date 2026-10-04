@@ -1,6 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { TradeSignal, TickerData, AIReviewResponse, MarketType, IndicatorWeights } from '../types';
 import { formatPrice, formatPriceRange, calculateTradeMetrics, formatDateTime, formatTimeAgo } from '../utils/formatters';
+// SDD Fase 9 / S2 — o score deixa de ser exibido como probabilidade de acerto.
+import { useScoreCalibration } from '../hooks/useScoreCalibration';
+import { describeScore, toneClass } from '../utils/scoreDisplay';
+
 import { calculateTtlProgress, formatTtlDuration, DEFAULT_SIGNAL_TTL_SETTINGS, REGIME_PRESETS } from '../utils/signalTtlUtils';
 import { 
   Zap, 
@@ -82,6 +86,8 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
 }) => {
   // Existing validation & direction filters
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
+  const calibrationFor = useScoreCalibration();
+
   const [validationFilter, setValidationFilter] = useState<'ALL' | 'CONFIRMED' | 'PENDING' | 'REJECTED'>('ALL');
   
   // Strategy Category & Lifecycle filters
@@ -1196,16 +1202,22 @@ export const SignalsMatrix: React.FC<SignalsMatrixProps> = ({
                         </span>
                       </Tooltip>
 
+                      {(() => {
+                        const score = describeScore(s.confluenceScore, calibrationFor(s.confluenceScore));
+                        return (
                       <Tooltip
                         position="top"
-                        title="Score de Confluência"
-                        badge={`${s.confluenceScore}%`}
-                        content="Ponderação percentual de confirmações técnicas (Volume Profile, CVD, Fib 0.68, POC e Order Blocks)."
+                        title={score.title}
+                        badge={`${s.confluenceScore}/100`}
+                        content={`${score.primary} — ${score.secondary}`}
                       >
-                        <span className="bg-neutral-900 text-orange-400 text-[10px] px-2 py-0.5 rounded border border-white/5 font-extrabold cursor-help">
-                          {s.confluenceScore}% CONFLUÊNCIA
+                        <span className={`bg-neutral-900 ${score.insufficientSample ? 'text-neutral-400' : score.tone === 'negative' ? 'text-rose-400' : 'text-orange-400'} text-[10px] px-2 py-0.5 rounded border border-white/5 font-extrabold cursor-help`}>
+                          {s.confluenceScore}/100 FORÇA
+                          <span className={`ml-1 font-bold ${toneClass(score.tone)}`}>{score.secondary}</span>
                         </span>
                       </Tooltip>
+                        );
+                      })()}
                     </div>
 
                     {/* Validation Status Badge */}

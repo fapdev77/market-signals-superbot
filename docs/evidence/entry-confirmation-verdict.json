@@ -2,18 +2,19 @@
   "entryConfirmationEnabled": false,
   "provisional": false,
   "rule": "v2",
-  "generatedAt": "2026-10-03",
-  "engineVersion": "4566b37",
+  "generatedAt": "2026-10-04",
+  "engineVersion": "692ddb6",
   "symbols": [
     "BTCUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "AAVEUSDT",
-    "PEPEUSDT"
+    "BNBUSDT",
+    "XRPUSDT"
   ],
   "symbol": "BTCUSDT",
   "days": 30,
   "seed": 42,
   "dataOrigin": "LIVE — klines reais da Binance (origin=LIVE; ALLOW_SYNTHETIC_DATA=false)",
-  "sample": "universo de 5 símbolos reais (BTCUSDT, ETHUSDT, SOLUSDT, AAVEUSDT, PEPEUSDT) — 8.2.3"
+  "sample": "universo de 5 símbolos reais (BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT) — 8.2.3",
+  "ownerAcceptance": null
 }

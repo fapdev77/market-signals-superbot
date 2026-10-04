@@ -1,5 +1,5 @@
 /**
- * 8.2 — `npm run compare:entry` — Experimento PAREADO da confirmação de entrada.
+***8.2 — `npm run compare:entry` — Expermmento PAREADO da confmrmação de entrada.
  *
  * Roda o MESMO cenário (símbolo, período, perfil, pesos, semente e `asOf`) duas
  * vezes pelo `BacktestEngine`, mudando apenas a flag `entryConfirmation`, e pareia
@@ -15,6 +15,8 @@
  *   npm run compare:entry                                  # BTCUSDT, 30d, seed 42
  *   npm run compare:entry -- --symbol ETHUSDT --days 14
  *   npm run compare:entry -- --register                    # recalcula e registra
+ *   npm run compare:entry -- --universe --register \
+ *     --accept-negative-expectancy --reason "edge pareado confirmado; aceito para observacao"
  */
 
 import fs from 'node:fs';
@@ -29,6 +31,7 @@ import {
 } from '../server/services/entryComparisonPaired.js';
 import { DEFAULT_SYMBOLS } from '../server/binanceService.js';
 import type { BacktestConfig, BacktestResult, IndicatorWeights, TradingProfile } from '../src/types.js';
+import type { OwnerAcceptance } from '../server/services/entryDecisionRuleV2.js';
 
 /** 8.2.3 — universo padrão do comparativo (mais de um símbolo, não só BTCUSDT). */
 export const DEFAULT_COMPARE_SYMBOLS = DEFAULT_SYMBOLS.slice(0, 5);
@@ -55,6 +58,13 @@ export interface EntryComparisonOptions {
   engineVersion?: string;
   /** Opcional: roda o universo inteiro e agrega (8.2.3). */
   symbols?: string[];
+  /**
+   * E1 (achado N1) — aceite explicito do dono para o criterio (d) da regra v2.
+   * Sem isto a valvula existe no codigo e nao existe na operacao: ninguem consegue
+   * registra-la, logo o caminho "expectativa negativa, mas o dono assumiu" e um
+   * estado inalcancavel. `undefined` = nenhum aceite.
+   */
+  ownerAcceptance?: OwnerAcceptance;
 }
 
 export interface UniverseEntryComparisonRun {
@@ -93,7 +103,8 @@ export async function runEntryComparison(opts: EntryComparisonOptions): Promise<
     control,
     withConfirmation,
     generatedAt: asOf,
-    iterations: opts.iterations
+    iterations: opts.iterations,
+    ownerAcceptance: opts.ownerAcceptance
   });
 
   return { report, control, withConfirmation, asOf };
@@ -130,7 +141,8 @@ export async function runUniverseEntryComparison(
     runs,
     generatedAt: asOf,
     iterations: opts.iterations,
-    dataOrigin: declaredDataOrigin()
+    dataOrigin: declaredDataOrigin(),
+    ownerAcceptance: opts.ownerAcceptance
   });
 
   return { report, runs, asOf };
@@ -148,6 +160,8 @@ export interface ParsedArgs {
   iterations?: number;
   outDir: string;
   register: boolean;
+  /** E1 — aceite do dono; so existe se `--accept-negative-expectancy true`. */
+  ownerAcceptance?: OwnerAcceptance;
 }
 
 function numArg(raw: string | undefined, fallback: number): number {
@@ -190,7 +204,14 @@ export function parseCompareEntryArgs(argv: string[]): ParsedArgs {
     asOf: args['as-of'] !== undefined ? numArg(args['as-of'], 0) : undefined,
     iterations: args.iterations !== undefined ? numArg(args.iterations, 5000) : undefined,
     outDir: args['out-dir'] || path.join('docs', 'evidence'),
-    register: args.register === 'true'
+    register: args.register === 'true',
+    // E1: aceite so existe quando a flag e passada. `--reason` sozinho nao
+    // habilita nada — aceite implicito seria exatamente o atalho que a regra v2
+    // existe para impedir.
+    ownerAcceptance:
+      args['accept-negative-expectancy'] === 'true'
+        ? { acceptedNegativeExpectancy: true, reason: args.reason || undefined }
+        : undefined
   };
 }
 
@@ -268,7 +289,10 @@ async function main(): Promise<void> {
           days: parsed.days,
           seed: parsed.seed,
           dataOrigin: declaredDataOrigin(),
-          sample
+          sample,
+          // E1: o veredito so pode dizer "MANTER desligada por negativa" de forma
+          // verificavel se tambem declarar se alguem aceitou. Ausente = ninguem aceitou.
+          ownerAcceptance: parsed.ownerAcceptance ?? null
         },
         null,
         2

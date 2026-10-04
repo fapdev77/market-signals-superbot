@@ -191,6 +191,13 @@ export function evaluatePositionManagement(
       partialTaken: !!signal.isBreakevenActive
     };
 
+    // SDD Fase 9 / S3 (LIMITE DECLARADO): este caminho live nao tem modelo de custo
+    // disponivel — `resolvePosition` so desconta taxa e funding quando eles sao
+    // informados, e aqui nao sao. Logo `isWin` neste ponto e BRUTO, e o texto
+    // "Alvo 2 atingido (+100% expansao de lucro)" descreve o bruto, nao o liquido.
+    // Corrigir exige a taxa de ida e volta e o funding acumulado no ciclo de vida
+    // do sinal, que ainda nao chegam ate aqui. O numero que o evidence ledger
+    // publica ja e liquido — a divergencia esta registrada, nao escondida.
     const resolution = resolvePosition({
       position: posState,
       high,

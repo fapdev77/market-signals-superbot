@@ -20,6 +20,10 @@ import {
   Check
 } from 'lucide-react';
 import { formatPrice, formatPercent, formatCompactNumber } from '../utils/formatters';
+// SDD Fase 9 / S2 — o score deixa de ser exibido como probabilidade de acerto.
+import { useScoreCalibration } from '../hooks/useScoreCalibration';
+import { describeScore, toneClass } from '../utils/scoreDisplay';
+
 import { GoldenPocketSparkline, GoldenPocketStats } from './GoldenPocketSparkline';
 import { Tooltip } from './Tooltip';
 
@@ -39,6 +43,7 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
   onUpdateConfluenceThreshold
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const calibrationFor = useScoreCalibration();
   const [showThresholdPicker, setShowThresholdPicker] = useState<boolean>(false);
 
   // Pre-set threshold levels for fast switching
@@ -103,9 +108,25 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
                 <GoldenPocketSparkline stats={stats} />
               )}
 
-              <span className="text-[10px] bg-amber-500/20 text-amber-300 font-extrabold px-2 py-0.5 rounded uppercase border border-amber-500/30">
-                {ticker.confluenceScore}% Confluência
-              </span>
+              {(() => {
+                const score = describeScore(ticker.confluenceScore, calibrationFor(ticker.confluenceScore));
+                return (
+                  <Tooltip
+                    position="top"
+                    title={score.title}
+                    badge={`${ticker.confluenceScore}/100`}
+                    content={`${score.primary} — ${score.secondary}`}
+                  >
+                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border ${
+                      score.insufficientSample
+                        ? 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                    }`}>
+                      {ticker.confluenceScore}/100 força · {score.secondary}
+                    </span>
+                  </Tooltip>
+                );
+              })()}
 
               {/* Threshold Override Quick Toggle Button */}
               <div className="relative inline-flex items-center">

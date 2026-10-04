@@ -103,7 +103,14 @@ describe('Trade History & Trading Insights Metrics Suite', () => {
       expect(trade.isWin).toBe(true);
       expect(trade.isBreakeven).toBe(false);
       expect(trade.pnlPct).toBeGreaterThan(0);
-      expect(trade.pnlR).toBe(2.0);
+      // SDD Fase 9 / S4 (achado N4): antes isto era `toBe(2.0)` — o `riskRewardRatio`
+      // do sinal, isto é, o OBJETIVO de R:R na emissão. O realizado é diferente:
+      // entrada 90 000, risco 1 500 (1,667%), TP1 = +1,0R e TP2 = +2,0R com 50/50
+      // dão 1,5R BRUTO, e 0,12% de custo de ida e volta sobre 1,667% de risco
+      // descontam 0,072R — logo 1,43R líquido. O número antigo era otimista em 40%.
+      expect(trade.pnlRGross).toBeCloseTo(1.5, 2);
+      expect(trade.pnlR).toBeCloseTo(1.43, 2);
+      expect(trade.pnlR).toBeLessThan(trade.pnlRGross!);
       expect(trade.durationMs).toBeGreaterThan(0);
     });
 
@@ -115,7 +122,11 @@ describe('Trade History & Trading Insights Metrics Suite', () => {
       expect(trade.exitPrice).toBe(3060);
       expect(trade.isWin).toBe(false);
       expect(trade.pnlPct).toBeLessThan(0);
-      expect(trade.pnlR).toBe(-1.0);
+      // SDD Fase 9 / S4: parar no stop custa exatamente −1,0R de mercado MAIS o custo
+      // de operação. Ignorar a taxa faz o stop "barato" e o win rateflationado.
+      expect(trade.pnlRGross).toBeCloseTo(-1.0, 2);
+      expect(trade.pnlR).toBeCloseTo(-1.07, 2);
+      expect(trade.pnlR).toBeLessThan(trade.pnlRGross!);
     });
 
     it('correctly calculates Breakeven win with partial profit', () => {

@@ -188,7 +188,12 @@ describe('Signal Engine & Multi-Timeframe Validation Suite', () => {
     process.env.MAX_STOP_PCT_INTRADAY = '50';
     let signal: ReturnType<typeof buildTradeSignal>;
     try {
-      signal = buildTradeSignal(tickerForLong, klinesWithSpike, 2.0);
+      signal = buildTradeSignal(tickerForLong, klinesWithSpike, 2.0, 'INTRADAY', undefined, undefined, undefined, undefined, undefined, {
+        // CRÍTICO-2: a checagem de spike lê a vela de 1m REAL, não mais o array de
+        // análise. O pavio spike fica na última vela de 1m.
+        klines1m: [spikeCandle],
+        klines5m: [{ ...spikeCandle, open: 90000, close: 90050 }]
+      });
     } finally {
       if (originalStopCap === undefined) {
         delete process.env.MAX_STOP_PCT_INTRADAY;

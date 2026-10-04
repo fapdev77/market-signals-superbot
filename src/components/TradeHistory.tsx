@@ -60,6 +60,8 @@ import {
 } from 'recharts';
 import { Tooltip } from './Tooltip';
 import { useToast } from './Toast';
+// SDD Fase 9 / S4 — texto de divulgacao do modelo de custo.
+import { TRADE_COST_DISCLOSURE } from '../utils/tradeCosts';
 
 export type TimeframeFilter = 'today' | '7d' | '15d' | '30d' | 'all';
 export type StatusFilter = 'ALL' | 'WINS' | 'LOSSES' | 'BREAKEVEN' | 'TARGET_REACHED' | 'STOPPED_OUT' | 'EXPIRED' | 'ACTIVE';
@@ -731,7 +733,12 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({
                       {/* Confluence */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-cyan-400">{trade.confluenceScore}%</span>
+                          <span
+                            title="Força de confluência entre fatores (0-100). Não é probabilidade de lucro."
+                            className="font-bold text-cyan-400"
+                          >
+                            {trade.confluenceScore}/100
+                          </span>
                           {trade.confluenceFactors.length > 0 && (
                             <span className="text-[10px] text-neutral-500">
                               ({trade.confluenceFactors.length} fatores)
@@ -743,8 +750,18 @@ export const TradeHistory: React.FC<TradeHistoryProps> = ({
                       {/* Final Result / PnL */}
                       <td className="py-3 px-4 text-right">
                         <div className="space-y-0.5">
-                          <div className={`font-bold text-sm ${trade.pnlPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <div
+                            title={trade.isEstimated ? TRADE_COST_DISCLOSURE : undefined}
+                            className={`font-bold text-sm ${trade.pnlPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+                          >
                             {formatPercent(trade.pnlPct)}
+                            {/* SDD Fase 9 / S4 — o numero liquido com o bruto ao lado: sem
+                                o bruto, nao ha como ver quanto da diferenca foi custo. */}
+                            {typeof trade.pnlPctGross === 'number' && (
+                              <span className="ml-1 text-[10px] text-neutral-500 font-normal">
+                                (bruto {formatPercent(trade.pnlPctGross)})
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center justify-end gap-1.5 text-[10px] text-neutral-400">
                             <span className={statusClass}>{statusLabel}</span>

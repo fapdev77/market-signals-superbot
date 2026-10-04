@@ -110,31 +110,3 @@ export function getBenchmarkPrice(symbol: string): number {
   // 4. Default realistic baseline for modern altcoins
   return 1.25;
 }
-
-/**
- * Generates a realistic synthetic ticker payload for fallback scenarios,
- * with consistent prices, high/low boundaries, and volumes based on the asset's scale.
- */
-export function generateRealisticTicker(symbol: string, existingPrice?: number) {
-  const basePrice = existingPrice && existingPrice > 0 ? existingPrice : getBenchmarkPrice(symbol);
-  const variancePct = Math.sin((Date.now() / 15000) + symbol.length) * 1.2;
-  const currentPrice = basePrice * (1 + variancePct / 100);
-
-  const isLowPrice = currentPrice < 1;
-  const decimals = isLowPrice ? 6 : 2;
-
-  const highPrice = currentPrice * 1.025;
-  const lowPrice = currentPrice * 0.975;
-  const volume = currentPrice > 1000 ? 35000 : currentPrice > 10 ? 450000 : 15000000;
-  const quoteVolume = volume * currentPrice;
-
-  return {
-    symbol,
-    lastPrice: currentPrice.toFixed(decimals),
-    priceChangePercent: (variancePct * 1.5).toFixed(2),
-    highPrice: highPrice.toFixed(decimals),
-    lowPrice: lowPrice.toFixed(decimals),
-    volume: volume.toString(),
-    quoteVolume: quoteVolume.toFixed(0)
-  };
-}

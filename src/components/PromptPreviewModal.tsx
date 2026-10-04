@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { getErrorMessage } from '../utils/errors';
+// SDD Fase 9 / S2 — o score deixa de ser exibido como probabilidade de acerto.
+import { useScoreCalibration } from '../hooks/useScoreCalibration';
+import { describeScore } from '../utils/scoreDisplay';
+
 import { TickerData, TradeSignal, AIModelConfig, AIReviewResponse } from '../types';
 import { DEFAULT_AI_PERSONAS } from '../constants/aiPersonas';
 import { 
@@ -55,6 +59,8 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
   onReviewComplete
 }) => {
   const [customNotes, setCustomNotes] = useState<string>('');
+  const calibrationFor = useScoreCalibration();
+
   const [promptText, setPromptText] = useState<string>('');
   const [isEditingPrompt, setIsEditingPrompt] = useState<boolean>(false);
   const [editedPrompt, setEditedPrompt] = useState<string>('');
@@ -207,9 +213,14 @@ export const PromptPreviewModal: React.FC<PromptPreviewModalProps> = ({
               <span className={signal?.direction === 'SHORT' ? 'text-rose-400' : 'text-emerald-400'}>
                 {signal?.direction || 'SINAL'}
               </span>
-              {signal?.confluenceScore && (
-                <span className="text-orange-400 font-extrabold">({signal.confluenceScore}%)</span>
-              )}
+              {signal?.confluenceScore ? (
+                <span
+                  title={describeScore(signal.confluenceScore, calibrationFor(signal.confluenceScore)).title}
+                  className="text-orange-400 font-extrabold"
+                >
+                  ({signal.confluenceScore}/100 força)
+                </span>
+              ) : null}
             </div>
             <button
               onClick={onClose}

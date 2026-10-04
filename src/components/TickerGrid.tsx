@@ -18,6 +18,10 @@ import {
   Sparkles
 } from 'lucide-react';
 import { formatPrice, formatPercent } from '../utils/formatters';
+// SDD Fase 9 / S2 — o score deixa de ser exibido como probabilidade de acerto.
+import { useScoreCalibration } from '../hooks/useScoreCalibration';
+import { describeScore, toneClass } from '../utils/scoreDisplay';
+
 import { Tooltip } from './Tooltip';
 import { apiClient } from '../services/apiClient';
 import { scanAllTickersForPatterns } from '../utils/aiPatternScanner';
@@ -210,6 +214,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
   const [filterSignal, setFilterSignal] = useState<'all' | 'signals_only' | 'golden_pocket' | 'favorites' | 'patterns_only' | 'volume_anomalies'>('all');
   const [sortBy, setSortBy] = useState<TickerSortOption>('volatility_desc');
   const [searchQuery, setSearchQuery] = useState('');
+  const calibrationFor = useScoreCalibration();
   const [favoriteSymbols, setFavoriteSymbols] = useState<Set<string>>(new Set());
   const [selectedPatternModal, setSelectedPatternModal] = useState<{ ticker: TickerData; pattern: DetectedChartPattern } | null>(null);
   const [selectedVolumeAlertModal, setSelectedVolumeAlertModal] = useState<{ ticker: TickerData; alert: VolumeSpikeAlert } | null>(null);
@@ -648,7 +653,7 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                     <Tooltip
                       position="left"
                       title={`Classificação de Sinal: ${signalType}`}
-                      badge={`${t.confluenceScore}%`}
+                      badge={`${t.confluenceScore}/100`}
                       content={
                         isLong
                           ? 'Recomendação de Compra: Confluência positiva de Order Flow com absorção passiva ou agressão compradora.'
@@ -814,17 +819,25 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                     </Tooltip>
                   </div>
 
-                  {/* Confluence Bar with Tooltip */}
+                  {/* Força de confluência (NÃO é probabilidade) + expectativa calibrada em R. */}
+                  {(() => {
+                    const score = describeScore(t.confluenceScore, calibrationFor(t.confluenceScore));
+                    return (
                   <Tooltip
                     position="top"
-                    title="Score de Confluência Algorítmica"
+                    title={score.title}
                     badge={`${t.confluenceScore}/100`}
-                    content="Ponderação quantitativa somando Delta CVD, Open Interest, Níveis de Volume Profile (POC/VAH/VAL), Suporte/Resistência e Fibonacci."
+                    content={`${score.primary} — ${score.secondary}`}
                   >
                     <div className="space-y-1 mb-2.5 cursor-help w-full">
                       <div className="flex justify-between text-[10px]">
-                        <span className="text-neutral-400 font-bold">Confluência:</span>
-                        <span className="font-extrabold text-orange-400">{t.confluenceScore}%</span>
+                        <span className="text-neutral-400 font-bold">Força:</span>
+                        <span className={`font-extrabold ${score.insufficientSample ? 'text-neutral-400' : score.tone === 'negative' ? 'text-rose-400' : 'text-orange-400'}`}>
+                          {t.confluenceScore}/100
+                        </span>
+                      </div>
+                      <div className={`text-[9px] font-bold ${toneClass(score.tone)}`}>
+                        {score.secondary}
                       </div>
                       <div className="w-full h-1 bg-neutral-900 rounded-full overflow-hidden border border-white/5">
                         <div
@@ -840,6 +853,8 @@ export const TickerGrid: React.FC<TickerGridProps> = ({
                       </div>
                     </div>
                   </Tooltip>
+                    );
+                  })()}
 
                   {/* Factors List Badges */}
                   <div className="flex flex-wrap gap-1 mb-2.5">

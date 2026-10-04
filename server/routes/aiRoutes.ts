@@ -4,11 +4,63 @@ import { reviewSignalWithAI, auditMarketWithAI, chatWithAITrader, buildSignalRev
 import { getAILogs, clearAILogs, addAILog } from '../aiLogger.js';
 import { getRecentSignals, saveAIAudit, getLatestAIAudit, getIndicatorWeights, getSignalById, getSignalsByDateRange } from '../db.js';
 import { parseOriginFilter } from '../utils/dataOrigin.js';
-import { buildTradeSignal, normalizePricePrecision } from '../signalEngine.js';
+import { buildTradeSignal } from '../signalEngine.js';
 import { TickerData, TradeSignal, BotState } from '../../src/types.js';
 import { getAIPersonaById } from '../../src/constants/aiPersonas.js';
 import { safeFetch } from '../utils/safeFetch.js';
 import { validateOutboundAIUrlWithDns } from '../utils/outboundPolicy.js';
+
+/**
+ * Resolve o sinal que será objeto da auditoria/preview de IA.
+ *
+ * ALTO-1 (auditoria): antes, quando não havia sinal, as rotas `/review` e
+ * `/review/preview-prompt` FABRICAVAM um `TradeSignal` na mão e devolviam-no como se fosse
+ * um sinal real. Esse objeto burjava, de uma vez, todas as travas de risco do motor:
+ *
+ *   - `riskRewardRatio: 2.2` fixo  -> pulava o gate de R:R mínimo;
+ *   - `validationStatus: 'CONFIRMED'` com `candle1mConfirmed/candle5mConfirmed: true`
+ *     -> afirmava confirmação multi-timeframe sem uma única vela;
+ *   - stop em ±1,5% e alvos em ±2%/±4% literais -> pulavam o stop cap por estratégia,
+ *     o teto por ATR, as âncoras estruturais (swing/suporte/resistência) e os alvos naturais;
+ *   - sem `SymbolFilters` -> sem arredondamento por tickSize, sem `checkExecutability`
+ *     e sem `computePositionSize`;
+ *   - `status: 'ACTIVE'` -> pulava o gate `PENDING_ENTRY`;
+ *   - sem TTL/`expiresAt` -> o sinal nunca expiraria.
+ *
+ * A tentativa de chamar `buildTradeSignal(ticker, [], ...)` não mitigava nada: com klines
+ * vazios ela sempre cai no ramo "dados insuficientes" e devolve `null` — era exatamente o
+ * gatilho do `||` que disparava a fabricação.
+ *
+ * AGORA: falha fechada. Se não existe sinal emitido pelo motor, não existe o que revisar —
+ * a rota responde 422 com o motivo, e a IA nunca recebe um objeto de risco inventado.
+ */
+async function resolveSignalForAi(
+  symbol: string,
+  signalId: string | undefined,
+  clientSignal: TradeSignal | undefined,
+  ticker: TickerData
+): Promise<{ signal: TradeSignal } | { error: string }> {
+  if (signalId) {
+    const stored = await getSignalById(signalId);
+    if (stored) return { signal: stored };
+  }
+  if (clientSignal && clientSignal.symbol === symbol) {
+    return { signal: clientSignal };
+  }
+
+  // Nenhum sinal emitido: tenta UM sinal novo pelo motor. Sem klines de validação ele
+  // nunca é CONFIRMED, então o resultado não é aplicável — apenas um sinal válido do
+  // ledger serve para auditoria.
+  const weights = await getIndicatorWeights();
+  const built = buildTradeSignal(ticker, [], weights.minRiskRewardRatio, 'INTRADAY', '30m', weights.signalTtlSettings);
+  if (built) return { signal: built };
+
+  return {
+    error: `Não existe sinal válido do motor para ${symbol} no momento. ` +
+      'A auditoria de IA só opera sobre sinais emitidos (com R:R, stop cap e validação ' +
+      'multi-timeframe aprovados). Envie signalId ou signal, ou aguarde o motor emitir um sinal.'
+  };
+}
 
 export function createAIRouter(
   getBotState: () => BotState,
@@ -203,43 +255,11 @@ export function createAIRouter(
       return res.status(404).json({ error: 'Ticker not found' });
     }
 
-    let targetSignal: TradeSignal | null = null;
-    if (signalId) {
-      targetSignal = await getSignalById(signalId);
+    const resolvedSignal = await resolveSignalForAi(symbol, signalId, clientSignal, ticker);
+    if ('error' in resolvedSignal) {
+      return res.status(422).json({ error: 'No signal available for AI review', message: resolvedSignal.error });
     }
-    if (!targetSignal && clientSignal && clientSignal.symbol === symbol) {
-      targetSignal = clientSignal;
-    }
-
-    if (!targetSignal) {
-      const weights = await getIndicatorWeights();
-      const isShort = ticker.signalType.includes('SHORT');
-      targetSignal = buildTradeSignal(ticker, [], weights.minRiskRewardRatio, 'INTRADAY', '30m', weights.signalTtlSettings) || {
-        id: `${symbol}-CUSTOM-${Date.now()}`,
-        symbol,
-        marketType: ticker.marketType,
-        signalType: ticker.signalType,
-        direction: isShort ? 'SHORT' : 'LONG',
-        entryZone: [
-          normalizePricePrecision(isShort ? ticker.price : ticker.price * 0.998),
-          normalizePricePrecision(isShort ? ticker.price * 1.002 : ticker.price)
-        ],
-        currentPrice: normalizePricePrecision(ticker.price),
-        stopLoss: normalizePricePrecision(isShort ? ticker.price * 1.015 : ticker.price * 0.985),
-        target1: normalizePricePrecision(isShort ? ticker.price * 0.98 : ticker.price * 1.02),
-        target2: normalizePricePrecision(isShort ? ticker.price * 0.96 : ticker.price * 1.04),
-        riskRewardRatio: 2.2,
-        confluenceScore: ticker.confluenceScore,
-        confluenceFactors: ticker.confluenceFactors,
-        timeframe: '1m / 5m / 15m',
-        validationStatus: 'CONFIRMED',
-        validationStage: 'VALIDADO: Auditoria IA Solicitada',
-        candle1mConfirmed: true,
-        candle5mConfirmed: true,
-        createdAt: Date.now(),
-        status: 'ACTIVE'
-      };
-    }
+    const targetSignal = resolvedSignal.signal;
 
     const review = await reviewSignalWithAI(
       ticker,
@@ -263,43 +283,11 @@ export function createAIRouter(
       return res.status(404).json({ error: 'Ticker not found' });
     }
 
-    let targetSignal: TradeSignal | null = null;
-    if (signalId) {
-      targetSignal = await getSignalById(signalId);
+    const resolvedSignal = await resolveSignalForAi(symbol, signalId, clientSignal, ticker);
+    if ('error' in resolvedSignal) {
+      return res.status(422).json({ error: 'No signal available for AI review', message: resolvedSignal.error });
     }
-    if (!targetSignal && clientSignal && clientSignal.symbol === symbol) {
-      targetSignal = clientSignal;
-    }
-
-    if (!targetSignal) {
-      const weights = await getIndicatorWeights();
-      const isShort = ticker.signalType.includes('SHORT');
-      targetSignal = buildTradeSignal(ticker, [], weights.minRiskRewardRatio, 'INTRADAY', '30m', weights.signalTtlSettings) || {
-        id: `${symbol}-CUSTOM-${Date.now()}`,
-        symbol,
-        marketType: ticker.marketType,
-        signalType: ticker.signalType,
-        direction: isShort ? 'SHORT' : 'LONG',
-        entryZone: [
-          normalizePricePrecision(isShort ? ticker.price : ticker.price * 0.998),
-          normalizePricePrecision(isShort ? ticker.price * 1.002 : ticker.price)
-        ],
-        currentPrice: normalizePricePrecision(ticker.price),
-        stopLoss: normalizePricePrecision(isShort ? ticker.price * 1.015 : ticker.price * 0.985),
-        target1: normalizePricePrecision(isShort ? ticker.price * 0.98 : ticker.price * 1.02),
-        target2: normalizePricePrecision(isShort ? ticker.price * 0.96 : ticker.price * 1.04),
-        riskRewardRatio: 2.2,
-        confluenceScore: ticker.confluenceScore,
-        confluenceFactors: ticker.confluenceFactors,
-        timeframe: '1m / 5m / 15m',
-        validationStatus: 'CONFIRMED',
-        validationStage: 'VALIDADO: Auditoria IA Solicitada',
-        candle1mConfirmed: true,
-        candle5mConfirmed: true,
-        createdAt: Date.now(),
-        status: 'ACTIVE'
-      };
-    }
+    const targetSignal = resolvedSignal.signal;
 
     const persona = getAIPersonaById(personaId);
     const prompt = buildSignalReviewPrompt(ticker, targetSignal, personaId, customNotes);
