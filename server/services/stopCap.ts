@@ -35,7 +35,7 @@ export function getStopCapPct(category: StrategyCategoryLike | string | undefine
 export interface StopCapResult {
   allowed: boolean;
   reason?: string;
-  /** Distância |entry−stop|/entry em % (a mesma noção de `signalRiskPct`). */
+  /** Distância |entry−stop|/entry em % (a mesma noção de `signalStopDistancePct`). */
   stopDistancePct: number;
   capPct: number;
 }

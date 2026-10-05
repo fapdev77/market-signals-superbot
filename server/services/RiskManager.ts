@@ -11,8 +11,11 @@ import { emitOperationalAlert } from './operationalAlerts.js';
  * exchange. What it *can* do — and previously did not — is limit how much risk it will recommend at once
  * and provide an operator-controlled stop. Everything here is pure and unit-tested.
  *
- * Risk per signal is derived from the distance between entry and stop, which is the only definition of
- * "risk" that matches how these signals resolve (stop-first, see TickProcessor).
+ * Risk per signal is priced by the stop, which is how these signals resolve (stop-first, see
+ * TickProcessor). Two distinct quantities live here and must not be conflated: the *distance* from
+ * entry to stop, in percent of price, and the *open risk*, in quote currency, that a signal commits
+ * once it is sized. `signalStopDistancePct` answers the first; `signalOpenRiskAmount` and
+ * `evaluatePortfolioRisk` work in the second.
  */
 
 export interface RiskLimits {
@@ -119,21 +122,53 @@ export interface PortfolioRisk {
   reasons: string[];
   concurrentCount: number;
   categoryCounts: Partial<Record<StrategyCategory, number>>;
-  /** Aggregate open risk (sum of each signal's stop distance as a share of equity). */
+  /** Aggregate open risk as a percentage of equity, summed from each signal's real open risk. */
   openRiskPct: number;
+  /** Aggregate open risk in quote currency. */
+  openRiskAmount: number;
+  /**
+   * Signals that carry no measurable open risk — no derivable stop distance, or a position size
+   * below the tradable minimum. They contribute nothing to `openRiskAmount`; this count keeps
+   * that exclusion visible instead of silent.
+   */
+  unmeasurableCount: number;
 }
 
-/** Open risk of a single signal as a percentage of equity, based on its entry-to-stop distance. */
-export function signalRiskPct(signal: TradeSignal, equity: number): number {
+/**
+ * Distance between entry and stop as a percentage of entry: |entry − stop| / entry × 100.
+ *
+ * This is geometry, not risk. It says how far away the stop sits, which is what `enforceStopCap`
+ * compares against a per-category cap, and it is independent of equity and of the risk budget.
+ * Open risk is a different quantity with a different unit — see `signalOpenRiskAmount`.
+ */
+export function signalStopDistancePct(signal: TradeSignal): number {
   const entry = signal.entryZone?.[0];
   if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(signal.stopLoss) || signal.stopLoss <= 0) {
     return 0;
   }
-  if (!Number.isFinite(equity) || equity <= 0) return 0;
-  // Risk is expressed per unit of notional, so scale by the configured risk budget rather than position
-  // size (which is derived from the same budget).
   const stopDistancePct = dMul(dDiv(Math.abs(dSub(entry, signal.stopLoss)), entry), 100);
   return dRound(stopDistancePct, 4);
+}
+
+/**
+ * Open risk of a single signal, in quote currency: how much equity the signal actually puts at
+ * risk when it is hit at the stop.
+ *
+ * Sizing goes through `computePositionSize` so the portfolio total is the same arithmetic the
+ * emitter uses, rather than a budget assumed to be deployable. A signal whose size cannot be
+ * computed commits nothing: no price data, no derivable stop distance, or a size below the
+ * tradable minimum. Returns 0 in those cases; `evaluatePortfolioRisk` counts them separately.
+ */
+export function signalOpenRiskAmount(signal: TradeSignal, limits: RiskLimits = DEFAULT_RISK_LIMITS): number {
+  const entry = signal.entryZone?.[0];
+  if (!Number.isFinite(entry) || entry <= 0) return 0;
+  const size = computePositionSize({
+    entryPrice: entry,
+    stopLossPrice: signal.stopLoss,
+    equity: limits.accountEquity,
+    riskPerTradePct: limits.riskPerTradePct
+  });
+  return size.valid ? size.riskAmount : 0;
 }
 
 /**
@@ -155,12 +190,23 @@ export function evaluatePortfolioRisk(
     categoryCounts[cat] = (categoryCounts[cat] ?? 0) + 1;
   }
 
-  // Aggregate open risk is the sum of the per-signal risk budgets that are actually in play.
-  // `computePositionSize` sizes every signal to risk exactly `riskPerTradePct` of equity, so N signals
-  // with a computable stop distance commit N * riskPerTradePct percent of equity. Signals whose stop
-  // distance cannot be derived contribute no measurable risk and are excluded rather than guessed at.
-  const riskBearingSignals = openSignals.filter(s => signalRiskPct(s, limits.accountEquity) > 0);
-  const openRiskPct = dRound(dMul(riskBearingSignals.length, limits.riskPerTradePct), 4);
+  // Aggregate open risk is the sum of what each open signal actually puts at the stop, priced by
+  // the same sizing the emitter uses. Signals whose risk cannot be measured contribute nothing and
+  // are counted in `unmeasurableCount` so the exclusion is observable rather than assumed.
+  let openRiskAmount = 0;
+  let unmeasurableCount = 0;
+  for (const s of openSignals) {
+    const amount = signalOpenRiskAmount(s, limits);
+    if (amount > 0) {
+      openRiskAmount = dAdd(openRiskAmount, amount);
+    } else {
+      unmeasurableCount += 1;
+    }
+  }
+  openRiskAmount = dRound(openRiskAmount, 2);
+  const openRiskPct = limits.accountEquity > 0
+    ? dRound(dMul(dDiv(openRiskAmount, limits.accountEquity), 100), 4)
+    : 0;
 
   if (concurrentCount >= limits.maxConcurrentSignals) {
     reasons.push(`Limite de sinais simultâneos atingido (${concurrentCount}/${limits.maxConcurrentSignals}).`);
@@ -184,7 +230,9 @@ export function evaluatePortfolioRisk(
     reasons,
     concurrentCount,
     categoryCounts,
-    openRiskPct
+    openRiskPct,
+    openRiskAmount,
+    unmeasurableCount
   };
 }
 

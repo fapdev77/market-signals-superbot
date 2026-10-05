@@ -5,7 +5,7 @@ import { dAdd, dSub, dMul, dDiv, dRound, dClamp } from '../server/utils/decimal.
 import {
   computePositionSize,
   evaluatePortfolioRisk,
-  signalRiskPct,
+  signalStopDistancePct,
   setKillSwitch,
   getKillSwitch,
   isTradingHalted,
@@ -217,9 +217,9 @@ describe('Phase 3.4 Portfolio risk limits', () => {
     createdAt: 1
   } as TradeSignal);
 
-  it('computes per-signal risk from the entry-to-stop distance', () => {
+  it('computes the stop distance from the entry-to-stop distance', () => {
     // (90000 - 89000) / 90000 = 1.111...%
-    expect(signalRiskPct(openSignal('a', 'SCALP'), 10000)).toBeCloseTo(1.1111, 3);
+    expect(signalStopDistancePct(openSignal('a', 'SCALP'))).toBeCloseTo(1.1111, 3);
   });
 
   it('blocks new signals once the concurrency limit is reached', () => {

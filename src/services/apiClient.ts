@@ -214,6 +214,8 @@ export const apiClient = {
       concurrentCount: number;
       categoryCounts: Record<string, number>;
       openRiskPct: number;
+      openRiskAmount: number;
+      unmeasurableCount: number;
     };
   }> => {
     return request('/api/system/risk-status');
