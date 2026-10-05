@@ -410,7 +410,10 @@ export class BacktestEngine {
                  diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached, profile } as any),
                  config: parsed,
                  trades: cachedTrades,
-                 walkForward: parsed.walkForward
+                 walkForward: parsed.walkForward,
+                 // P — o gate persistido volta com o run cacheado. Sem isto o resultado
+                 // padrão perderia o veredito que o run de fato produziu.
+                 riskGate: parsed.riskGate
               } as any;
             }
           }
@@ -1288,7 +1291,10 @@ export class BacktestEngine {
             equityCurve: result.equityCurve,
             diagnostic: result.diagnostic,
             trades: result.trades,
-            walkForward: result.walkForward
+            walkForward: result.walkForward,
+            // P — o veredito do gate faz parte do resultado. Persistido para que o run
+            // cacheado (caminho padrão) não o perca.
+            riskGate: result.riskGate
          }),
          createdAt: result.createdAt
       });

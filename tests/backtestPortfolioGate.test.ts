@@ -94,6 +94,17 @@ describe('P — gate de risco de portfólio no backtest', () => {
     expect(gate.reasons).toEqual([]);
   }, 60000);
 
+  it('sobrevive ao cache, que é o caminho padrão (useCache = true)', async () => {
+    // O save é incondicional, então o primeiro run (sem cache) persiste e o segundo o
+    // recupera. Sem `riskGate` na lista de campos persistidos, o run cacheado devolveria
+    // o gate AUSENTE — o painel sumiria sozinho num simples refresh.
+    const fresh = await BacktestEngine.runBacktest(config(), false);
+    const cached = await BacktestEngine.runBacktest(config(), true);
+
+    expect(cached.riskGate).toBeDefined();
+    expect(cached.riskGate).toEqual(fresh.riskGate);
+  }, 120000);
+
   it('preserva a pareabilidade 8.2.1 mesmo quando o gate bloqueia', async () => {
     const loose = await BacktestEngine.runBacktest(config(), false);
     const blocked = await BacktestEngine.runBacktest(
