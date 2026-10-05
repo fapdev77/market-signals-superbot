@@ -19,6 +19,7 @@ import {
   Activity, 
   Zap, 
   Sparkles,
+  TrendingUp,
   Lock,
   Unlock,
   Scale,
@@ -41,6 +42,7 @@ export type DashboardWidgetId =
   | 'system_health'
   | 'kill_switch'
   | 'prime_banner'
+  | 'trend_strength'
   | 'trapped_radar'
   | 'rsi_divergence'
   | 'market_heatmap'
@@ -65,37 +67,40 @@ const DEFAULT_LAYOUTS: ResponsiveLayouts = {
     { i: 'system_health', x: 0, y: 0, w: 12, h: 6, minW: 6, minH: 4 },
     { i: 'kill_switch', x: 0, y: 6, w: 12, h: 4, minW: 6, minH: 3 },
     { i: 'prime_banner', x: 0, y: 10, w: 12, h: 4, minW: 6, minH: 3 },
-    { i: 'trapped_radar', x: 0, y: 10, w: 12, h: 14, minW: 6, minH: 6 },
-    { i: 'rsi_divergence', x: 0, y: 24, w: 12, h: 14, minW: 6, minH: 6 },
-    { i: 'market_heatmap', x: 0, y: 38, w: 12, h: 12, minW: 6, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 50, w: 12, h: 11, minW: 6, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 61, w: 12, h: 12, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 73, w: 12, h: 8, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 81, w: 12, h: 16, minW: 6, minH: 6 }
+    { i: 'trend_strength', x: 0, y: 14, w: 12, h: 10, minW: 6, minH: 6 },
+    { i: 'trapped_radar', x: 0, y: 24, w: 12, h: 14, minW: 6, minH: 6 },
+    { i: 'rsi_divergence', x: 0, y: 38, w: 12, h: 14, minW: 6, minH: 6 },
+    { i: 'market_heatmap', x: 0, y: 52, w: 12, h: 12, minW: 6, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 64, w: 12, h: 11, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 75, w: 12, h: 12, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 87, w: 12, h: 8, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 95, w: 12, h: 16, minW: 6, minH: 6 }
   ],
   md: [
     { i: 'system_health', x: 0, y: 0, w: 10, h: 6, minW: 5, minH: 4 },
     { i: 'kill_switch', x: 0, y: 6, w: 10, h: 4, minW: 5, minH: 3 },
     { i: 'prime_banner', x: 0, y: 10, w: 10, h: 4, minW: 5, minH: 3 },
-    { i: 'trapped_radar', x: 0, y: 10, w: 10, h: 14, minW: 5, minH: 6 },
-    { i: 'rsi_divergence', x: 0, y: 24, w: 10, h: 14, minW: 5, minH: 6 },
-    { i: 'market_heatmap', x: 0, y: 38, w: 10, h: 12, minW: 5, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 50, w: 10, h: 11, minW: 5, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 61, w: 10, h: 12, minW: 5, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 73, w: 10, h: 8, minW: 5, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 81, w: 10, h: 16, minW: 5, minH: 6 }
+    { i: 'trend_strength', x: 0, y: 14, w: 10, h: 10, minW: 5, minH: 6 },
+    { i: 'trapped_radar', x: 0, y: 24, w: 10, h: 14, minW: 5, minH: 6 },
+    { i: 'rsi_divergence', x: 0, y: 38, w: 10, h: 14, minW: 5, minH: 6 },
+    { i: 'market_heatmap', x: 0, y: 52, w: 10, h: 12, minW: 5, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 64, w: 10, h: 11, minW: 5, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 75, w: 10, h: 12, minW: 5, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 87, w: 10, h: 8, minW: 5, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 95, w: 10, h: 16, minW: 5, minH: 6 }
   ],
   sm: [
     { i: 'system_health', x: 0, y: 0, w: 6, h: 6, minW: 6, minH: 4 },
     { i: 'kill_switch', x: 0, y: 6, w: 6, h: 4, minW: 6, minH: 3 },
     { i: 'prime_banner', x: 0, y: 10, w: 6, h: 4, minW: 6, minH: 3 },
-    { i: 'trapped_radar', x: 0, y: 10, w: 6, h: 14, minW: 6, minH: 6 },
-    { i: 'rsi_divergence', x: 0, y: 24, w: 6, h: 14, minW: 6, minH: 6 },
-    { i: 'market_heatmap', x: 0, y: 38, w: 6, h: 12, minW: 6, minH: 6 },
-    { i: 'volatility_heatmap', x: 0, y: 50, w: 6, h: 11, minW: 6, minH: 5 },
-    { i: 'liquidity_depth', x: 0, y: 61, w: 6, h: 12, minW: 6, minH: 7 },
-    { i: 'correlation_matrix', x: 0, y: 73, w: 6, h: 8, minW: 6, minH: 5 },
-    { i: 'ticker_grid', x: 0, y: 81, w: 6, h: 16, minW: 6, minH: 6 }
+    { i: 'trend_strength', x: 0, y: 14, w: 6, h: 10, minW: 6, minH: 6 },
+    { i: 'trapped_radar', x: 0, y: 24, w: 6, h: 14, minW: 6, minH: 6 },
+    { i: 'rsi_divergence', x: 0, y: 38, w: 6, h: 14, minW: 6, minH: 6 },
+    { i: 'market_heatmap', x: 0, y: 52, w: 6, h: 12, minW: 6, minH: 6 },
+    { i: 'volatility_heatmap', x: 0, y: 64, w: 6, h: 11, minW: 6, minH: 5 },
+    { i: 'liquidity_depth', x: 0, y: 75, w: 6, h: 12, minW: 6, minH: 7 },
+    { i: 'correlation_matrix', x: 0, y: 87, w: 6, h: 8, minW: 6, minH: 5 },
+    { i: 'ticker_grid', x: 0, y: 95, w: 6, h: 16, minW: 6, minH: 6 }
   ]
 };
 
@@ -186,6 +191,16 @@ const INITIAL_WIDGETS: WidgetConfig[] = [
     minW: 6,
     minH: 3,
     badge: 'ALERTA'
+  },
+  {
+    id: 'trend_strength',
+    title: 'Força de Tendência & Momentum (Binance Feed)',
+    description: 'Análise quantitativa de momentum direcional, ADX estimado, expansão de range 24h e fluxo agressor do ticker selecionado.',
+    icon: TrendingUp,
+    visible: true,
+    minW: 6,
+    minH: 6,
+    badge: 'MOMENTUM'
   },
   {
     id: 'trapped_radar',

@@ -26,6 +26,7 @@ import { MarketCorrelationMatrix } from './components/MarketCorrelationMatrix';
 import { PrimeOpportunityBanner } from './components/PrimeOpportunityBanner';
 import { MarketHeatmap } from './components/MarketHeatmap';
 import { VolatilityHeatmap } from './components/VolatilityHeatmap';
+import { TrendStrengthIndicator } from './components/TrendStrengthIndicator';
 import { DashboardGridLayout } from './components/DashboardGridLayout';
 import { LiquidityDepth } from './components/LiquidityDepth';
 import { RiskExposureDashboard } from './components/RiskExposureDashboard';
@@ -506,6 +507,25 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+              ),
+              trend_strength: (
+                <TrendStrengthIndicator
+                  ticker={selectedTicker || topGoldenPocketTicker || tickers[0] || null}
+                  tickers={tickers}
+                  onSelectTicker={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                  }}
+                  onOpenChart={(t) => {
+                    setSelectedTicker(t);
+                    setSelectedSignal(null);
+                    setAutoTriggerAIReview(false);
+                    setActiveTab('chart');
+                  }}
+                  onRequestAIReview={handleRequestAIReviewFromGrid}
+                  isWsConnected={clientWsStatus.connected}
+                />
               ),
               trapped_radar: (
                 <TrappedTradersRadar
