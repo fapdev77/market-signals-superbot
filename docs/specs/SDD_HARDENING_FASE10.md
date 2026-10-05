@@ -9,6 +9,45 @@
 
 ---
 
+## Estado de entrega (2026-10-05)
+
+Ordem executada: L4 → L1 → L3 → L2 → P. L5 absorvido pela extração antecipada da unidade 2.
+
+| Item | Commit | Estado |
+|---|---|---|
+| HIGH-4 — rate limit por IA | `6d4410f` | entregue |
+| M1 (`mfeR`/`maeR` reais) + M2 (`cumulativeR`) | `e4b3e99` | entregue |
+| flake `dbIntegrityRestore` | `969e789`, `49e3f6d` | entregue |
+| M6 — caracterização de TickProcessor/EvidenceService | `d8de1f7` | entregue |
+| M5 — geometria do stop × risco aberto | `8f5f0e8` | entregue |
+| L5 unidade 2 — bloco de métricas extraído | `7046c0b` | entregue |
+| M3/M4/M8 — métrica ausente vira `null` (+ migration v13) | `65e36c9` | entregue |
+| M7 + M8 recorrente em `src/utils` | `e6da52d` | entregue |
+| P — gate de portfólio no backtest | `d51ff17` | entregue, com escopo menor que o previsto (ver abaixo) |
+| Lote 0 — regenerar `docs/evidence/` | — | **aberto**: `compare:entry` exige rede |
+| L5 unidade 1 — bloco PENDING_ENTRY | — | não iniciado |
+
+### Três desvios do previsto
+
+**1. O Lote 5 entrou antes do P, por decisão do usuário.** A extração da unidade 2
+(`server/services/backtestMetrics.ts`) é mecânica e não muda comportamento, e sem ela
+M3/M4/M8 teriam de ser testados através da simulação inteira. A ordem real ficou
+L5-unidade-2 → L2 → P.
+
+**2. O M8 reincidiu em três calculadores fora do backtest.** `src/utils/backtestMetrics.ts`,
+`paperTradingEngine.ts` e `tradeMetrics.ts` devolviam `profitFactor` inventado (99.9,
+99.9, 1.0) com o mesmo defeito de M8. Corrigidos junto, com `tests/unmeasuredMetricConstants.test.ts`
+de guarda para que a constante não volte.
+
+**3. A causa do flake `dbIntegrityRestore` não era corrida de diretório.** A primeira
+hipótese (dois workers no mesmo path) era errada. Em execução completa, a causa é
+`fs.renameSync` falhando com **EPERM no Windows** em `restoreLatestValidBackup`, engolido
+pelo `catch` → `success: false`. Corrigido com `renameWithRetry` compartilhado
+(`server/utils/fsRename.ts`). Sem vermelho determinístico — EPERM é do ambiente —; a
+confiança veio de 20 execuções do alvo mais 2 suítes completas verdes.
+
+---
+
 ## Princípio que governa esta fase
 
 Quatro dos oito MEDIUM restantes são o **mesmo defeito** sob nomes diferentes:
@@ -319,6 +358,31 @@ Fecha com re-run da fixture de paridade e diff contra os números de `61f1e82`.
 
 ~1 dia. Depende de L2 (métricas) porque o resultado precisa ser legível nas métricas
 corretas antes de ser comparado.
+
+### O que a execução revelou sobre P
+
+A premissa do plano — "o backtest pode abrir posições simultâneas que o live rejeitaria" —
+**é falsa para este motor**. `BacktestEngine` é single-position: `inPosition` é um booleano
+e o sinal só é gerado quando não há posição nem pendente (§ `!inPosition && !pendingConfirmation
+&& !pendingEntry`). O conjunto aberto é, portanto, vazio em todo ponto de emissão, e nenhum
+limite de concorrência ou de portfolio pode disparar. Um portfolio de verdade exigiria um
+backtest multi-símbolo, que é escopo de L5 e não deste lote.
+
+O que P entrega então, e o que a suíte fixa (`tests/backtestPortfolioGate.test.ts`):
+
+- o gate roda em **todo** sinal emitido, com a mesma função e os mesmos limites do live;
+- ele **bloqueia de verdade** quando o operador aperta os limites (via
+  `POST /api/system/risk-limits` ou por run, em `config.riskLimits`);
+- o resultado **declara** o alcance: `riskGate.openAtEvaluation` e uma hipótese explícita
+  dizendo que a concorrência não pôde limitar e que os números são por símbolo.
+
+Um detalhe que valia registrar: passar `[signal]` ao gate — contar o candidato como se
+estivesse aberto — parece correto e é o inverso. Ele faz o backtest recusar sinais que o
+live aceitaria sempre que `maxConcurrentSignals <= 1`, `maxSignalsPerCategory <= 1` ou
+`riskPerTradePct >= maxPortfolioRiskPct`, sem que exista posição aberta alguma. Trocaria
+viés otimista por viés pessimista. O guarda de paridade existe para travar isso.
+
+**Diff contra `61f1e82`: não executado.** O Lote 0 continua bloqueado por rede.
 
 ---
 
