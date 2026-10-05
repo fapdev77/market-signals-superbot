@@ -222,7 +222,9 @@ export function recomputeAccountSummary(state: PaperAccountState): PaperAccountS
   
   const grossWins = closedTrades.filter(t => t.netPnl > 0).reduce((acc, t) => acc + t.netPnl, 0);
   const grossLosses = Math.abs(closedTrades.filter(t => t.netPnl < 0).reduce((acc, t) => acc + t.netPnl, 0));
-  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : (grossWins > 0 ? 99.9 : 0);
+  // M8 — sem nenhum trade perdedor não há quociente: o denominador é zero. A
+  // constante 99.9 que ocupava este lugar era o número do autor.
+  const profitFactor = grossLosses > 0 ? grossWins / grossLosses : null;
   
   const averageWin = winningTrades > 0 ? grossWins / winningTrades : 0;
   const averageLoss = losingTrades > 0 ? grossLosses / losingTrades : 0;

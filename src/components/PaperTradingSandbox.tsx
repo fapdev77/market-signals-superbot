@@ -1263,7 +1263,7 @@ export const PaperTradingSandbox: React.FC<PaperTradingSandboxProps> = ({
                   <div className="bg-[#050505] p-3 rounded-lg border border-white/10">
                     <span className="text-[10px] text-neutral-400 uppercase font-bold block mb-1">Profit Factor Líquido</span>
                     <span className="text-base font-black text-orange-400">
-                      {accountState.profitFactor.toFixed(2)}
+                      {accountState.profitFactor === null ? 'n/d' : accountState.profitFactor.toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -1362,7 +1362,7 @@ export const PaperTradingSandbox: React.FC<PaperTradingSandboxProps> = ({
 
                 <div>
                   <span className="text-[9px] text-neutral-400 uppercase block font-bold">Fator de Lucro</span>
-                  <span className="text-white font-bold">{accountState.profitFactor.toFixed(2)}</span>
+                  <span className="text-white font-bold">{accountState.profitFactor === null ? 'n/d' : accountState.profitFactor.toFixed(2)}</span>
                 </div>
 
                 <div>

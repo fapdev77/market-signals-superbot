@@ -80,7 +80,8 @@ export interface TradingInsightsSummary {
   avgPnlPerTradePct: number;
   avgPnlPerTradeUsd: number;
   expectancyR: number;
-  profitFactor: number;
+  /** `null` when no losing trade closed, i.e. the factor was never measured (M8). */
+  profitFactor: number | null;
   maxDrawdownPct: number;
   peakCumulativePnlPct: number;
   bestTrade: { symbol: string; pnlPct: number; direction: 'LONG' | 'SHORT' } | null;
@@ -465,7 +466,10 @@ export function calculateTradingInsights(trades: ExecutedTrade[]): TradingInsigh
   const avgPnlPerTradePct = targetList.length > 0 ? totalPnlPct / targetList.length : 0;
   const avgPnlPerTradeUsd = targetList.length > 0 ? totalPnlUsd / targetList.length : 0;
   const expectancyR = targetList.length > 0 ? totalR / targetList.length : 0;
-  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99.9 : 1.0;
+  // M8 — sem nenhum trade perdedor não há quociente. Este caminho devolvia 99.9
+  // com ganhos e 1.0 sem nenhum dos dois: nenhum dos dois números foi medido, e
+  // 1.0 é o valor de "equilíbrio" que um relatório leria como resultado real.
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : null;
 
   // Max Drawdown calculation from cumulative series
   const series = calculateCumulativePnLSeries(targetList);
@@ -489,7 +493,7 @@ export function calculateTradingInsights(trades: ExecutedTrade[]): TradingInsigh
     avgPnlPerTradePct: parseFloat(avgPnlPerTradePct.toFixed(2)),
     avgPnlPerTradeUsd: parseFloat(avgPnlPerTradeUsd.toFixed(2)),
     expectancyR: parseFloat(expectancyR.toFixed(2)),
-    profitFactor: parseFloat(profitFactor.toFixed(2)),
+    profitFactor: profitFactor === null ? null : parseFloat(profitFactor.toFixed(2)),
     maxDrawdownPct: parseFloat(maxDrawdownPct.toFixed(2)),
     peakCumulativePnlPct: parseFloat(peakCumulativePnlPct.toFixed(2)),
     bestTrade,

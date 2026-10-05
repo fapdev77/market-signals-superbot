@@ -79,8 +79,8 @@ export const TradingInsights: React.FC<TradingInsightsProps> = ({
 
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white/[0.03] border border-white/5 font-mono">
             <span className="text-neutral-400">Profit Factor:</span>
-            <span className={`font-bold ${insights.profitFactor >= 1.5 ? 'text-emerald-400' : insights.profitFactor >= 1 ? 'text-cyan-400' : 'text-rose-400'}`}>
-              {insights.profitFactor.toFixed(2)}x
+            <span className={`font-bold ${insights.profitFactor === null ? 'text-neutral-500' : insights.profitFactor >= 1.5 ? 'text-emerald-400' : insights.profitFactor >= 1 ? 'text-cyan-400' : 'text-rose-400'}`}>
+              {insights.profitFactor === null ? 'n/d' : `${insights.profitFactor.toFixed(2)}x`}
             </span>
           </div>
         </div>

@@ -469,11 +469,20 @@ export class BacktestEngine {
     }
 
     const hasFundingHistory = historicalFundingRecords.length > 0;
+    // M7 — open interest e long/short não são instrumentados no histórico: não há
+    // coluna em `historical_klines` nem série de long/short. O 0 de cobertura é
+    // real (nenhuma vela tinha o dado), mas o fator não foi medido porque não pôde
+    // ser, e o relatório precisa dizer isso em vez de deixar 0% parecer medição.
     const factorCoverageResult = calculateFactorCoverage({
       totalCandles: klines.length,
       candlesWithOi: 0,
       candlesWithFunding: hasFundingHistory ? klines.length : 0,
-      candlesWithLongShort: 0
+      candlesWithLongShort: 0,
+      availability: {
+        openInterest: false,
+        longShort: false,
+        funding: hasFundingHistory
+      }
     });
 
     const preset = PROFILE_PRESETS[profile];
@@ -1143,6 +1152,7 @@ export class BacktestEngine {
       assumptions,
       reducedFactorSet: factorCoverageResult.reducedFactorSet,
       factorCoverage: factorCoverageResult.factorCoverage,
+      factorCoverageAvailability: factorCoverageResult.factorCoverageAvailability,
       fundingCoverage: dRound(fundingCoverage, 2),
       startTime: klines[0].openTime,
       endTime: klines[klines.length - 1].openTime,

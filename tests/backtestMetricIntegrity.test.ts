@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeBacktestMetrics } from '../server/services/backtestMetrics.js';
 import type { BacktestMetricInputs } from '../server/services/backtestMetrics.js';
+import { calculateFactorCoverage } from '../server/services/factorCoverage.js';
 
 /**
  * M3 / M4 / M8 (auditoria 2026-10-04) — métrica preenchida com constante.
@@ -155,5 +156,82 @@ describe('M3 — Sharpe/Sortino só são anualizados com amostra suficiente', ()
     expect(m.sharpeRatio).toBeNull();
     expect(m.tradesUsed).toBe(0);
     expect(m.assumptions.some(a => /sharpe: n\/d/i.test(a))).toBe(true);
+  });
+});
+
+/**
+ * M7 — `reducedFactorSet` era uma constante disfarçada.
+ *
+ * O motor passava `candlesWithOi: 0` e `candlesWithLongShort: 0` hardcoded, então
+ * a cobertura dava 0% e `reducedFactorSet` era `true` em toda execução. O relatório
+ * dizia "rodou com conjunto reduzido de fatores" sem distinguir dois casos que não
+ * se confundem: o fator foi medido e veio incompleto, ou o fator nunca foi
+ * instrumentado. `historical_klines` não tem coluna de open interest e não há
+ * histórico de long/short — o segundo é o caso real, e ele precisa ser declarado.
+ */
+describe('M7 — fator não instrumentado não vira cobertura medida', () => {
+  it('declara quais fatores puderam ser medidos', () => {
+    const c = calculateFactorCoverage({
+      totalCandles: 500,
+      candlesWithOi: 0,
+      candlesWithFunding: 500,
+      candlesWithLongShort: 0,
+      availability: { openInterest: false, longShort: false, funding: true }
+    });
+    expect(c.availability.openInterest).toBe(false);
+    expect(c.availability.longShort).toBe(false);
+    expect(c.availability.funding).toBe(true);
+  });
+
+  it('um fator indisponível não aparece como se tivesse sido medido em 0%', () => {
+    const c = calculateFactorCoverage({
+      totalCandles: 500,
+      candlesWithOi: 0,
+      candlesWithFunding: 500,
+      candlesWithLongShort: 0,
+      availability: { openInterest: false, longShort: false, funding: true }
+    });
+    // Cobertura permanece 0 — honesto, nenhuma vela tinha o dado — mas o sinal
+    // explícito diz que o número é ausência de instrumentação, não medição.
+    expect(c.factorCoverage.openInterest).toBe(0);
+    expect(c.factorCoverageAvailability).toEqual({
+      openInterest: false,
+      longShort: false,
+      funding: true
+    });
+  });
+
+  it('um fator medido e incompleto continua distinto do indisponível', () => {
+    const partial = calculateFactorCoverage({
+      totalCandles: 500,
+      candlesWithOi: 250,
+      candlesWithFunding: 500,
+      candlesWithLongShort: 0,
+      availability: { openInterest: true, longShort: false, funding: true }
+    });
+    expect(partial.factorCoverage.openInterest).toBe(50);
+    expect(partial.factorCoverageAvailability.openInterest).toBe(true);
+  });
+
+  it('reducedFactorSet continua true — a execução foi reduzida de fato', () => {
+    const c = calculateFactorCoverage({
+      totalCandles: 500,
+      candlesWithOi: 0,
+      candlesWithFunding: 500,
+      candlesWithLongShort: 0,
+      availability: { openInterest: false, longShort: false, funding: true }
+    });
+    expect(c.reducedFactorSet).toBe(true);
+  });
+
+  it('sem disponibilidade declarada, o comportamento antigo é preservado', () => {
+    const c = calculateFactorCoverage({
+      totalCandles: 500,
+      candlesWithOi: 0,
+      candlesWithFunding: 500,
+      candlesWithLongShort: 0
+    });
+    expect(c.reducedFactorSet).toBe(true);
+    expect(c.factorCoverage.openInterest).toBe(0);
   });
 });

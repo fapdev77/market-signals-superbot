@@ -1144,7 +1144,8 @@ export interface PaperAccountState {
   winningTrades: number;
   losingTrades: number;
   winRate: number;
-  profitFactor: number;
+  /** `null` when no losing trade closed, i.e. the factor was never measured (M8). */
+  profitFactor: number | null;
   averageWin: number;
   averageLoss: number;
   positions: PaperPosition[];

@@ -7,9 +7,11 @@ export interface RiskMetricsInput {
 
 export interface AdvancedRiskMetrics {
   sharpeRatio: number;
-  sortinoRatio: number;
+  /** `null` when no losing return exists to divide by (M8). */
+  sortinoRatio: number | null;
   maxDrawdown: number;
-  profitFactor: number;
+  /** `null` when no losing return exists to divide by (M8). */
+  profitFactor: number | null;
   winRate: number;
   grossProfit: number;
   netProfit: number;
@@ -79,7 +81,10 @@ export function calculateAdvancedRiskMetrics(
 
   const totalTrades = returnsPct.length;
   const winRate = (wins / totalTrades) * 100;
-  const profitFactor = grossLossSum > 0 ? grossProfitSum / grossLossSum : grossProfitSum > 0 ? 9.9 : 0;
+  // M8 — sem nenhum trade perdedor não há quociente: o denominador é zero. As
+  // constantes que ocupavam este lugar (9.9 e 5.0) não eram medidas, eram o
+  // número do autor, e eram altas o bastante para passar um limiar de qualidade.
+  const profitFactor = grossLossSum > 0 ? grossProfitSum / grossLossSum : null;
   const netProfit = ((balance - initialBalance) / initialBalance) * 100;
 
   // Mean of net trade returns
@@ -95,13 +100,14 @@ export function calculateAdvancedRiskMetrics(
 
   // Sharpe & Sortino (normalized for trade distribution)
   const sharpeRatio = stdDev > 0.0001 ? Number(((meanReturn / stdDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : 0;
-  const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : (meanReturn > 0 ? 5.0 : 0);
+  // Sortino só existe se houver retornos negativos — é a definição da razão.
+  const sortinoRatio = downsideDev > 0.0001 ? Number(((meanReturn / downsideDev) * Math.sqrt(Math.min(totalTrades, 252))).toFixed(2)) : null;
 
   return {
     sharpeRatio,
     sortinoRatio,
     maxDrawdown: Number(maxDrawdown.toFixed(2)),
-    profitFactor: Number(profitFactor.toFixed(2)),
+    profitFactor: profitFactor === null ? null : Number(profitFactor.toFixed(2)),
     winRate: Number(winRate.toFixed(2)),
     grossProfit: Number(grossProfitSum.toFixed(2)),
     netProfit: Number(netProfit.toFixed(2)),
