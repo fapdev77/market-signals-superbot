@@ -459,6 +459,27 @@ export interface BacktestConfig {
    * Ausente/false preserva o comportamento atual (fill no open do candle seguinte).
    */
   entryConfirmation?: boolean;
+  /**
+   * Risco por trade em %, aplicado só nesta execução. Ausente = o que o runtime tem em
+   * vigor (`getRiskLimits().riskPerTradePct`). Não altera o runtime: existe para
+   * reproduzir um cenário no backtest sem mexer na configuração global.
+   */
+  riskPerTradePct?: number;
+  /**
+   * P — limites do gate de risco de portfólio aplicados só nesta execução. Ausente =
+   * `getRiskLimits()`, o mesmo que o live usa no caminho de emissão. Os campos presentes
+   * sobrescrevem os do runtime; os ausentes são mantidos.
+   */
+  riskLimits?: Partial<BacktestRiskLimits>;
+}
+
+/** Limites de risco — espelha `RiskLimits` de `server/services/RiskManager.ts`. */
+export interface BacktestRiskLimits {
+  accountEquity: number;
+  riskPerTradePct: number;
+  maxConcurrentSignals: number;
+  maxPortfolioRiskPct: number;
+  maxSignalsPerCategory: number;
 }
 
 /** 7.2 — estatísticas por sinal emitido para a decisão da confirmação de entrada. */
@@ -576,6 +597,20 @@ export interface BacktestResult {
   trades?: BacktestTrade[];
   /** 7.2 — métricas do braço de confirmação de entrada (preenchido nos dois braços). */
   entryConfirmation?: EntryConfirmationStats;
+  /**
+   * P — decisão do gate de risco no ponto de emissão, com os mesmos limites do live.
+   * `evaluated` é o total de sinais; `allowed + blocked` tem de fechar nele.
+   * `openAtEvaluation` é o maior tamanho do conjunto aberto que o gate enxergou
+   * (0 enquanto o motor for single-position, que só emite quando está plano).
+   */
+  riskGate?: {
+    evaluated: number;
+    allowed: number;
+    blocked: number;
+    openAtEvaluation: number;
+    reasons: string[];
+    limits: BacktestRiskLimits;
+  };
   sharpeRatio?: number;
   sortinoRatio?: number;
   /** M3 — whether Sharpe/Sortino were annualised, and on how many trades. */

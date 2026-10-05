@@ -22,7 +22,8 @@ import {
 import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './FundingService.js';
 // CRÍTICO-1: o dimensionamento por risco é a MESMA primitiva do live. Importar em vez de
 // reimplementar mantém backtest e live literalmente sobre o mesmo código de risco.
-import { computePositionSize, DEFAULT_RISK_LIMITS } from './RiskManager.js';
+import { computePositionSize, DEFAULT_RISK_LIMITS, evaluatePortfolioRisk, getRiskLimits, type RiskLimits } from './RiskManager.js';
+import type { TradeSignal } from '../../src/types.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
 import { computeBacktestMetrics } from './backtestMetrics.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
@@ -546,7 +547,36 @@ export class BacktestEngine {
     // 83%–25% do equity, então o backtest superdimensionava o PnL em 1,2×–4× — e por
     // contaminar o saldo, todas as métricas derivadas (`netProfit`, `equityCurve`,
     // `maxDrawdown`, `profitFactor`, `sharpeRatio`) e o auto-tuner saíam junto.
-    const riskPerTradePct = (config as any).riskPerTradePct ?? DEFAULT_RISK_LIMITS.riskPerTradePct;
+    const riskPerTradePct = config.riskPerTradePct ?? DEFAULT_RISK_LIMITS.riskPerTradePct;
+    // P — os limites do gate sao os MESMOS que o live usa (`getRiskLimits()`), para que
+    // um operador que estreitou o risco via `POST /api/system/risk-limits` veja o backtest
+    // recusar o que o live recusaria. Um override por run continua disponivel em
+    // `config.riskLimits` para reproduzir um cenário sem mexer na configuração global.
+    const riskLimits: RiskLimits = {
+      ...getRiskLimits(),
+      riskPerTradePct,
+      ...(config.riskLimits ?? {})
+    };
+    /**
+     * P — o gate enxerga o conjunto que está ABERTO, exatamente como o live
+     * (`server.ts`: `evaluatePortfolioRisk(openSignals, getRiskLimits(), { category })`).
+     * O sinal candidato NÃO entra na contagem: para o live ele é o `incoming`, não uma
+     * posição aberta. Passá-lo como se estivesse aberto faria o backtest recusar sinais que
+     * o live aceitaria — o erro oposto, e igualmente distorcedor.
+     *
+     * Este conjunto é VAZIO em todo ponto de emissão, porque o motor é single-position
+     * (`inPosition` é um booleano) e só gera sinal quando está plano. Isso é declarado no
+     * resultado em vez de escondido: a dimensão de concorrência não pode limitar aqui.
+     */
+    const openSignalsForGate: TradeSignal[] = [];
+    /** P — todo sinal emitido passa pelo gate; nada é contabilizado sem decidedor. */
+    const riskGate = {
+      evaluated: 0,
+      allowed: 0,
+      blocked: 0,
+      openAtEvaluation: 0,
+      reasons: new Set<string>()
+    };
 
     /**
      * Notional que a posição aberta deve comprometer, pela MESMA primitiva do live.
@@ -838,6 +868,18 @@ export class BacktestEngine {
           );
 
           if (signal && signal.validationStatus !== 'REJECTED_SPIKE') {
+            // P — o gate de risco decide antes de o sinal entrar na simulação, com a
+            // mesma função e os mesmos limites do caminho de emissão do live.
+            const gate = evaluatePortfolioRisk(openSignalsForGate, riskLimits, {
+              // `strategyCat` é o análogo de `targetCategory` no live: a categoria do
+              // ALVO do sinal, não a que o sinal acabou carregando (que pode ser
+              // `undefined`). É essa que o `maxSignalsPerCategory` conta.
+              category: strategyCat
+            });
+            riskGate.evaluated++;
+            riskGate.openAtEvaluation = Math.max(riskGate.openAtEvaluation, openSignalsForGate.length);
+            for (const reason of gate.reasons) riskGate.reasons.add(reason);
+
             const rIndex = ecStats.rPerSignal.length;
             ecStats.rPerSignal.push(0);
             // 8.2.1 — a mesma vela/direção/zona gera a MESMA chave nos dois braços.
@@ -846,7 +888,13 @@ export class BacktestEngine {
             );
             ecStats.signalsEmitted++;
 
-            if (config.entryConfirmation === true) {
+            if (!gate.allowed) {
+              // Sinal produzido pelo motor mas recusado pelo mesmo gate do live. A chave e o
+              // R-pendente continuam registrados ANTES da decisão, nos dois braços, para a
+              // pareabilidade 8.2.1 não depender de o gate ter bloqueado.
+              riskGate.blocked++;
+            } else if (config.entryConfirmation === true) {
+              riskGate.allowed++;
               // 7.2.1 — braço com confirmação: PENDING_ENTRY gerenciado pelo ciclo puro do live.
               pendingConfirmation = {
                 signal: {
@@ -864,6 +912,7 @@ export class BacktestEngine {
                 rIndex
               };
             } else {
+              riskGate.allowed++;
               // Phase 2.5.4: the signal is derived from THIS candle's close, so the fill belongs to the
               // NEXT candle's open. Filling at this candle's open was lookahead bias.
               pendingEntry = {
@@ -1080,6 +1129,12 @@ export class BacktestEngine {
     const avgDurationMinutes = metrics.avgDurationMinutes;
     // M3/M4/M8 — o motivo de cada métrica que ficou sem medição viaja com o resultado.
     assumptions.push(...metrics.assumptions);
+    // P — o que o gate de portfólio cobre e o que ele NÃO consegue cobrir aqui.
+    assumptions.push(
+      `Gate de risco de portfólio avaliado em ${riskGate.evaluated} sinais com os limites do live ` +
+        `(getRiskLimits()); ${riskGate.blocked} bloqueado(s). O motor mantém no máximo 1 posição, ` +
+        'então a dimensão de concorrência não pode limitar aqui — os números são por símbolo, não de portfólio.'
+    );
     // 8.0.3 — invariante: positionsClosed ≤ positionsFilled ≤ signalsEmitted.
     const openPositionsAtEnd = inPosition ? 1 : 0;
     if (openPositionsAtEnd > 0) {
@@ -1158,6 +1213,14 @@ export class BacktestEngine {
       endTime: klines[klines.length - 1].openTime,
       totalCandlesTested: klines.length,
       entryConfirmation: ecStats,
+      riskGate: {
+        evaluated: riskGate.evaluated,
+        allowed: riskGate.allowed,
+        blocked: riskGate.blocked,
+        openAtEvaluation: riskGate.openAtEvaluation,
+        reasons: [...riskGate.reasons],
+        limits: riskLimits
+      },
       totalTrades,
       legs: totalLegs,
       positionsClosed,
@@ -1515,7 +1578,14 @@ export class BacktestEngine {
       s: config.seed ?? 42,
       a: config.asOf ?? null,
       wf: config.walkForward ?? null,
-      io: config.isOnlyUntil ?? null
+      io: config.isOnlyUntil ?? null,
+      // P — os limites de risco mudam o resultado em DUAS frentes: o dimensionamento
+      // (`riskPerTradePct`) e o gate de portfólio (`riskLimits`). Fora da chave, um run
+      // com limites apertados recebia o resultado cacheado de um run frouxo — e o
+      // `riskGate` do resultado afirmaria um bloqueio que aquela simulação não fez.
+      // A mudança do material do hash invalida as linhas antigas sozinha.
+      rpt: config.riskPerTradePct ?? null,
+      rl: config.riskLimits ?? null
     });
     return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
   }
