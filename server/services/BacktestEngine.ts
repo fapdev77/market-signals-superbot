@@ -24,6 +24,7 @@ import { calculateHistoricalFundingCost, type HistoricalFundingRecord } from './
 // reimplementar mantém backtest e live literalmente sobre o mesmo código de risco.
 import { computePositionSize, DEFAULT_RISK_LIMITS } from './RiskManager.js';
 import { calculateFactorCoverage } from './factorCoverage.js';
+import { computeBacktestMetrics } from './backtestMetrics.js';
 import { calculateFundingCostWithCoverage } from './FundingService.js';
 import { calculateFitnessExpectancy, evaluateAutoTuneHoldout } from './autoTuneOptimizer.js';
 // 6.7.5/G-15: split temporal 3-way — treino → validação → holdout intocado (blocos contíguos).
@@ -1041,17 +1042,33 @@ export class BacktestEngine {
     }
 
     // 8.0.1 — `totalTrades` é sinônimo explícito de posições FECHADAS (wins+losses).
-    const positionsClosed = wins + losses;
-    const totalTrades = positionsClosed;
+    // O cálculo vive em `computeBacktestMetrics` (server/services/backtestMetrics.ts) para
+    // poder ser exercitado sem rodar a simulação inteira.
+    const metrics = computeBacktestMetrics({
+      wins,
+      losses,
+      totalProfit,
+      totalLoss,
+      totalWinPctSum,
+      totalLossPctSum,
+      totalDurationSum,
+      balance,
+      initialBalance,
+      netReturns: trades.map(t => t.pnlPct),
+      days,
+      targetRiskRatio: preset.targetRiskRatio
+    });
+    const positionsClosed = metrics.positionsClosed;
+    const totalTrades = metrics.totalTrades;
     const positionsFilled = ecStats.entriesFilled;
-    const winRate = positionsClosed > 0 ? (wins / positionsClosed) * 100 : 0;
+    const winRate = metrics.winRate;
     const winRatePerLeg = legWins + legLosses > 0 ? (legWins / (legWins + legLosses)) * 100 : 0;
-    const profitFactor = totalLoss > 0 ? dDiv(totalProfit, totalLoss) : totalProfit > 0 ? 9.9 : 0;
-    const netProfitPct = dMul(dDiv(dSub(balance, initialBalance), initialBalance), 100);
-    const avgWinPct = wins > 0 ? totalWinPctSum / wins : 0;
-    const avgLossPct = losses > 0 ? totalLossPctSum / losses : 0;
-    const avgRiskReward = avgLossPct > 0 ? avgWinPct / avgLossPct : preset.targetRiskRatio;
-    const avgDurationMinutes = positionsClosed > 0 ? Math.round(totalDurationSum / positionsClosed) : 0;
+    const profitFactor = metrics.profitFactor;
+    const netProfitPct = metrics.netProfitPct;
+    const avgWinPct = metrics.avgWinPct;
+    const avgLossPct = metrics.avgLossPct;
+    const avgRiskReward = metrics.avgRiskReward;
+    const avgDurationMinutes = metrics.avgDurationMinutes;
     // 8.0.3 — invariante: positionsClosed ≤ positionsFilled ≤ signalsEmitted.
     const openPositionsAtEnd = inPosition ? 1 : 0;
     if (openPositionsAtEnd > 0) {
@@ -1073,18 +1090,8 @@ export class BacktestEngine {
 
     // Advanced Institutional Metrics (Sharpe, Sortino, Slippage, Fees) - Phase 2.3
     const totalFeesPaid = dRound(totalFeesPaidValue, 2);
-    const netReturns = trades.map(t => t.pnlPct);
-    const meanReturn = netReturns.length > 0 ? netReturns.reduce((a, b) => a + b, 0) / netReturns.length : 0;
-    const variance = netReturns.length > 0 ? netReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / netReturns.length : 0;
-    const stdDev = Math.sqrt(variance);
-    const downsideVar = netReturns.length > 0 ? netReturns.reduce((a, b) => a + (b < 0 ? Math.pow(b, 2) : 0), 0) / netReturns.length : 0;
-    const downsideDev = Math.sqrt(downsideVar);
-
-    // Correct annualization factor: trades per day * 252 trading days per year
-    const tradesPerDay = days > 0 ? totalTrades / days : 1;
-    const annualFactor = Math.sqrt(Math.max(1, tradesPerDay * 252));
-    const sharpeRatio = stdDev > 0.0001 ? dRound((meanReturn / stdDev) * annualFactor, 2) : 0;
-    const sortinoRatio = downsideDev > 0.0001 ? dRound((meanReturn / downsideDev) * annualFactor, 2) : (meanReturn > 0 ? 4.5 : 0);
+    const sharpeRatio = metrics.sharpeRatio;
+    const sortinoRatio = metrics.sortinoRatio;
 
     // R-10: rolling walk-forward metrics, aggregated from the closed trades.
     const wf = aggregateWalkForward(trades, walkForwardWindows);
