@@ -11,7 +11,12 @@ import {
 import { applyMigrations } from '../server/migrations/index.js';
 
 describe('M4.3 & CA-4.3: Database Integrity Check and Automatic Restore', () => {
-  const testDir = path.join(process.cwd(), 'data', 'test-integrity');
+  // O diretório de teste carrega o PID do worker, como `tests/setup.ts` já faz
+  // para o SQLite. Com um caminho fixo, este arquivo apagava `data/test-integrity`
+  // de forma incondicional em cada `beforeEach`/`afterEach`; rodando em paralelo
+  // com outra suíte, uma delas podia remover o backup entre a escrita e a leitura
+  // neste teste, fazendo-o falhar de forma intermitente sem causa no código.
+  const testDir = path.join(process.cwd(), 'data', `test-integrity.${process.pid}`);
   const dbPath = path.join(testDir, 'superbot.db');
   const backupDir = path.join(testDir, 'backups');
 
