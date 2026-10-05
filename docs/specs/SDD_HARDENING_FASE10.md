@@ -23,6 +23,7 @@ Ordem executada: L4 → L1 → L3 → L2 → P. L5 absorvido pela extração ant
 | L5 unidade 2 — bloco de métricas extraído | `7046c0b` | entregue |
 | M3/M4/M8 — métrica ausente vira `null` (+ migration v13) | `65e36c9` | entregue |
 | M7 + M8 recorrente em `src/utils` | `e6da52d` | entregue |
+| M8 recorrente no caminho de cache do backtest | `207360b` | entregue |
 | P — gate de portfólio no backtest | `d51ff17` | entregue, com escopo menor que o previsto (ver abaixo) |
 | Lote 0 — regenerar `docs/evidence/` | — | **aberto**: `compare:entry` exige rede |
 | L5 unidade 1 — bloco PENDING_ENTRY | — | não iniciado |
@@ -38,6 +39,15 @@ L5-unidade-2 → L2 → P.
 `paperTradingEngine.ts` e `tradeMetrics.ts` devolviam `profitFactor` inventado (99.9,
 99.9, 1.0) com o mesmo defeito de M8. Corrigidos junto, com `tests/unmeasuredMetricConstants.test.ts`
 de guarda para que a constante não volte.
+
+**2b. O M8 reincidiu de novo, e pior, no caminho de cache do backtest.** O bloco de
+reconstrução do cache hit substituía cinco campos por constantes — `avgWinPct || 1.8`,
+`avgLossPct || 0.9`, `avgRiskReward || 2.0`, `avgDurationMinutes || 25`,
+`totalCandlesTested || 5000`. Não eram fallback de linha antiga: o blob JSON NUNCA
+gravou esses campos, então `parsed.avgWinPct` era `undefined` em toda linha e as
+constantes eram o único valor que o caminho padrão (`useCache` default = true) reportava.
+A fixture de paridade media `avgWinPct` **0,48** e o painel mostrava **1,8**. E `||`
+ainda apagava o `null` que M3/M4 passaram a significar "não medido".
 
 **3. A causa do flake `dbIntegrityRestore` não era corrida de diretório.** A primeira
 hipótese (dois workers no mesmo path) era errada. Em execução completa, a causa é
