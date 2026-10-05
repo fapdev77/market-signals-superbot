@@ -399,13 +399,21 @@ export class BacktestEngine {
               return {
                  ...cached,
                  profile: parsed.profile as TradingProfile || profile,
-                 totalCandlesTested: parsed.totalCandlesTested || 5000,
-                 winningTrades: parsed.winningTrades || Math.round(cached.totalTrades * (cached.winRate / 100)),
-                 losingTrades: parsed.losingTrades || (cached.totalTrades - Math.round(cached.totalTrades * (cached.winRate / 100))),
-                 avgWinPct: parsed.avgWinPct || 1.8,
-                 avgLossPct: parsed.avgLossPct || 0.9,
-                 avgRiskReward: parsed.avgRiskReward || 2.0,
-                 avgDurationMinutes: parsed.avgDurationMinutes || 25,
+                 // M8 (recorrência) — o blob nunca gravou estes campos, então as
+                 // constantes abaixo (`|| 1.8`, `|| 0.9`, `|| 2.0`, `|| 25`,
+                 // `|| 5000`) eram o ÚNICO valor que este caminho reportava: o run
+                 // media 0,48 e o painel mostrava 1,8. Pior, `||` apaga `null`, que
+                 // depois de M3/M4 significa "não medido". Ausente agora é `null`.
+                 totalCandlesTested: parsed.totalCandlesTested ?? null,
+                 // Contagens: derivadas de `totalTrades`/`winRate`, que são medidos.
+                 // O round é um fallback para linhas antigas, então `??` — e não `||` —
+                 // preserva um zero legítimo.
+                 winningTrades: parsed.winningTrades ?? Math.round(cached.totalTrades * (cached.winRate / 100)),
+                 losingTrades: parsed.losingTrades ?? (cached.totalTrades - Math.round(cached.totalTrades * (cached.winRate / 100))),
+                 avgWinPct: parsed.avgWinPct ?? null,
+                 avgLossPct: parsed.avgLossPct ?? null,
+                 avgRiskReward: parsed.avgRiskReward ?? null,
+                 avgDurationMinutes: parsed.avgDurationMinutes ?? null,
                  equityCurve: parsed.equityCurve || [],
                  diagnostic: parsed.diagnostic || this.generateDiagnostic({ ...cached, profile } as any),
                  config: parsed,
@@ -1294,7 +1302,16 @@ export class BacktestEngine {
             walkForward: result.walkForward,
             // P — o veredito do gate faz parte do resultado. Persistido para que o run
             // cacheado (caminho padrão) não o perca.
-            riskGate: result.riskGate
+            riskGate: result.riskGate,
+            // M8 (recorrência) — as métricas medidas e as contagens. Sem isto o cache
+            // hit não tinha o que ler e caía na constante inventada.
+            totalCandlesTested: result.totalCandlesTested,
+            winningTrades: result.winningTrades,
+            losingTrades: result.losingTrades,
+            avgWinPct: result.avgWinPct,
+            avgLossPct: result.avgLossPct,
+            avgRiskReward: result.avgRiskReward,
+            avgDurationMinutes: result.avgDurationMinutes
          }),
          createdAt: result.createdAt
       });
@@ -1555,7 +1572,12 @@ export class BacktestEngine {
     }
 
     weightAnalysis.push(`Fluxo de Ordem (CVD) e Volume Surge representaram mais de 40% das confirmações do perfil.`);
-    weightAnalysis.push(`Duração média do trade foi de ${res.avgDurationMinutes} minutos por operação.`);
+    // `null` = não medido: o texto diz isso em vez de imprimir "undefined/null".
+    if (res.avgDurationMinutes === null) {
+      weightAnalysis.push('Duração média do trade não mensurável: nenhum trade fechou na janela.');
+    } else {
+      weightAnalysis.push(`Duração média do trade foi de ${res.avgDurationMinutes} minutos por operação.`);
+    }
 
     if (res.winRate < 55) {
       suggestions.push(`Aumentar peso do CVD Imbalance e Open Interest para evitar entradas sem pressão de fluxo.`);

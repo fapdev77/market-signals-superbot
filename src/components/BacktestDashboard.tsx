@@ -1153,7 +1153,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
 
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-neutral-400 bg-neutral-900 px-2 py-1 rounded border border-white/5">
-                Velas Analisadas: <strong className="text-white">{backtestResult.totalCandlesTested.toLocaleString()}</strong>
+                Velas Analisadas: <strong className="text-white">{backtestResult.totalCandlesTested === null ? 'n/d' : backtestResult.totalCandlesTested.toLocaleString()}</strong>
               </span>
               <span className="text-[10px] text-neutral-400 bg-neutral-900 px-2 py-1 rounded border border-white/5">
                 ID: {backtestResult.id.substring(0, 8)}
@@ -1208,14 +1208,14 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
             <div className="bg-[#050505] p-3 rounded-lg border border-white/5">
               <span className="text-[9px] text-neutral-500 font-bold uppercase block mb-0.5">Média Win/Loss</span>
               <span className="text-xs font-bold text-neutral-300 block mt-0.5">
-                +{backtestResult.avgWinPct}% / -{backtestResult.avgLossPct}%
+                +{backtestResult.avgWinPct ?? 'n/d'}% / -{backtestResult.avgLossPct ?? 'n/d'}%
               </span>
             </div>
 
             <div className="bg-[#050505] p-3 rounded-lg border border-white/5">
               <span className="text-[9px] text-neutral-500 font-bold uppercase block mb-0.5">Duração Média</span>
               <span className="text-xs font-bold text-white block mt-0.5">
-                {backtestResult.avgDurationMinutes} min
+                {backtestResult.avgDurationMinutes ?? 'n/d'} min
               </span>
             </div>
           </div>

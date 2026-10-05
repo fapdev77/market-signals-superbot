@@ -551,7 +551,8 @@ export interface BacktestResult {
   strategyId: string;
   startTime: number;
   endTime: number;
-  totalCandlesTested: number;
+  /** `null` when a cached row predates persistence of the field (M8 recurrence). */
+  totalCandlesTested: number | null;
   /** 8.0.1 — posições FECHADAS. Sinônimo explícito de `positionsClosed`. */
   totalTrades: number;
   /** 8.0.1 — eventos de saída (pernas) acumulados em todas as posições. */
