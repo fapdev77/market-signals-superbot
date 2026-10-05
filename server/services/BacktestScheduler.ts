@@ -82,7 +82,7 @@ export interface ScheduleRunResult {
     symbol: string;
     trades: number;
     winRate: number;
-    profitFactor: number;
+    profitFactor: number | null;
     netProfit: number;
   };
 }
@@ -237,7 +237,7 @@ export async function executeScheduledBacktest(
     addBinanceLog(
       'SUCCESS',
       'REST_API',
-      `Backtest diário agendado para ${symbol} concluído com sucesso. WR: ${result.winRate.toFixed(1)}%, PF: ${result.profitFactor.toFixed(2)}, Trades: ${result.totalTrades}.`
+      `Backtest diário agendado para ${symbol} concluído com sucesso. WR: ${result.winRate.toFixed(1)}%, PF: ${result.profitFactor === null ? 'n/d' : result.profitFactor.toFixed(2)}, Trades: ${result.totalTrades}.`
     );
 
     return {

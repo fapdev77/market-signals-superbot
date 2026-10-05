@@ -916,8 +916,8 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
                       <td className={`py-2 px-2.5 text-right font-bold ${row.winRate >= 50 ? 'text-emerald-400' : 'text-amber-400'}`}>
                         {row.winRate.toFixed(1)}%
                       </td>
-                      <td className={`py-2 px-2.5 text-right font-bold ${row.profitFactor >= 1.5 ? 'text-emerald-400' : row.profitFactor >= 1.0 ? 'text-amber-400' : 'text-rose-400'}`}>
-                        {row.profitFactor.toFixed(2)}
+                      <td className={`py-2 px-2.5 text-right font-bold ${row.profitFactor === null ? 'text-neutral-600' : row.profitFactor >= 1.5 ? 'text-emerald-400' : row.profitFactor >= 1.0 ? 'text-amber-400' : 'text-rose-400'}`}>
+                        {row.profitFactor === null ? 'n/d' : row.profitFactor.toFixed(2)}
                       </td>
                       <td className="py-2 px-2.5 text-right text-rose-400">
                         {row.maxDrawdown.toFixed(2)}%
@@ -1028,7 +1028,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
                 </div>
                 <div>
                   <span className="text-neutral-500 text-[10px]">Profit Factor:</span>
-                  <div className="font-bold text-white">{autoTuneResult.initialResult.profitFactor}</div>
+                  <div className="font-bold text-white">{autoTuneResult.initialResult.profitFactor ?? 'n/d'}</div>
                 </div>
                 <div>
                   <span className="text-neutral-500 text-[10px]">Lucro Líquido:</span>
@@ -1054,7 +1054,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
                 </div>
                 <div>
                   <span className="text-neutral-500 text-[10px]">Profit Factor:</span>
-                  <div className="font-black text-emerald-400">{autoTuneResult.bestResult.profitFactor}</div>
+                  <div className="font-black text-emerald-400">{autoTuneResult.bestResult.profitFactor ?? 'n/d'}</div>
                 </div>
                 <div>
                   <span className="text-neutral-500 text-[10px]">Lucro Líquido:</span>
@@ -1172,8 +1172,8 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ tickers, w
 
             <div className="bg-[#050505] p-3 rounded-lg border border-white/5">
               <span className="text-[9px] text-neutral-500 font-bold uppercase block mb-0.5">Profit Factor</span>
-              <span className={`text-base font-black ${backtestResult.profitFactor >= 1.5 ? 'text-emerald-400' : 'text-orange-400'}`}>
-                {backtestResult.profitFactor}
+              <span className={`text-base font-black ${backtestResult.profitFactor === null ? 'text-neutral-500' : backtestResult.profitFactor >= 1.5 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                {backtestResult.profitFactor ?? 'n/d'}
               </span>
             </div>
 

@@ -69,8 +69,13 @@ function num(v: number | undefined): number {
   return typeof v === 'number' && isFinite(v) ? v : 0;
 }
 
-/** Formata um valor possivelmente ausente sem inventar casa decimal. */
-function fmt(value: number | undefined, digits = 2, suffix = ''): string {
+/**
+ * Formata um valor possivelmente ausente sem inventar casa decimal.
+ * `null` é "medido ausente" (ex.: profit factor sem nenhuma perda) e sai como
+ * "n/d"; `undefined` é "campo não preenchido" e sai como "—".
+ */
+function fmt(value: number | null | undefined, digits = 2, suffix = ''): string {
+  if (value === null) return 'n/d';
   if (typeof value !== 'number' || !isFinite(value)) return '—';
   return `${value.toFixed(digits)}${suffix}`;
 }

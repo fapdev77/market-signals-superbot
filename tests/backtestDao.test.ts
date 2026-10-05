@@ -137,3 +137,65 @@ describe('R-14 unified backtest DAO', () => {
     expect(tables).toContain('schema_migrations');
   });
 });
+
+/**
+ * M8 — um backtest sem nenhuma posição perdedora não tem profit factor.
+ *
+ * A coluna era `REAL NOT NULL`, então o motor só podia gravar 0 ou a constante
+ * 9.9. A migration 013 tira o NOT NULL; este teste fecha o contrato nas duas
+ * pontas: a coluna aceita `null` e o DAO não a transforma de volta em 0 no
+ * caminho de leitura — que é onde o zero silencioso nasceria.
+ */
+describe('M8 — profit_factor nullável sobrevive à persistência', () => {
+  const symbol = `PFNULL${UNIQUE}USDT`;
+  const strategyId = 'pf-null-strategy';
+
+  afterAll(async () => {
+    const db = await getDb();
+    db.run('DELETE FROM backtest_results WHERE symbol = ?', [symbol]);
+  });
+
+  const baseRow = (id: string, profitFactor: number | null, createdAt: number): BacktestResultRow => ({
+    id: `${id}-${UNIQUE}`,
+    symbol,
+    strategyId,
+    startTime: 1_000,
+    endTime: 2_000,
+    totalTrades: 7,
+    winRate: 100,
+    profitFactor,
+    maxDrawdown: 3,
+    netProfit: 4.2,
+    config: '{}',
+    createdAt
+  });
+
+  it('grava e lê null sem virar 0', async () => {
+    await backtestResultsDao.insert(baseRow('pf-null', null, 3_000));
+    const fetched = await backtestResultsDao.getLatest(symbol, strategyId);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.profitFactor).toBeNull();
+  });
+
+  it('preserva um profit factor medido', async () => {
+    await backtestResultsDao.insert(baseRow('pf-set', 2.4, 4_000));
+    const fetched = await backtestResultsDao.getLatest(symbol, strategyId);
+    expect(fetched!.profitFactor).toBeCloseTo(2.4, 6);
+  });
+
+  it('listRecent distingue o ausente do medido', async () => {
+    const rows = await backtestResultsDao.listRecent(10, symbol);
+    const byId = new Map(rows.map(r => [r.id, r.profitFactor]));
+    expect(byId.get(`pf-null-${UNIQUE}`)).toBeNull();
+    expect(byId.get(`pf-set-${UNIQUE}`)).toBeCloseTo(2.4, 6);
+  });
+
+  it('a coluna realmente aceita NULL (a constraint foi removida)', async () => {
+    const db = await getDb();
+    const ddl = db
+      .exec("SELECT sql FROM sqlite_master WHERE type='table' AND name='backtest_results'")[0]
+      .values[0][0] as string;
+    expect(ddl).toMatch(/profit_factor\s+REAL\s*[,\n)]/);
+    expect(ddl).not.toMatch(/profit_factor[^,)]*\bNOT\s+NULL\b/i);
+  });
+});

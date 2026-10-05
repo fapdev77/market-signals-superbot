@@ -1069,6 +1069,8 @@ export class BacktestEngine {
     const avgLossPct = metrics.avgLossPct;
     const avgRiskReward = metrics.avgRiskReward;
     const avgDurationMinutes = metrics.avgDurationMinutes;
+    // M3/M4/M8 — o motivo de cada métrica que ficou sem medição viaja com o resultado.
+    assumptions.push(...metrics.assumptions);
     // 8.0.3 — invariante: positionsClosed ≤ positionsFilled ≤ signalsEmitted.
     const openPositionsAtEnd = inPosition ? 1 : 0;
     if (openPositionsAtEnd > 0) {
@@ -1156,12 +1158,13 @@ export class BacktestEngine {
       winningTrades: wins,
       losingTrades: losses,
       winRate: dRound(winRate, 2),
-      profitFactor: dRound(profitFactor, 2),
+      // Já arredondados em `computeBacktestMetrics`; `null` = sem medição.
+      profitFactor,
       maxDrawdown: dRound(maxDrawdown, 2),
       netProfit: dRound(netProfitPct, 2),
-      avgWinPct: dRound(avgWinPct, 2),
-      avgLossPct: dRound(avgLossPct, 2),
-      avgRiskReward: dRound(avgRiskReward, 2),
+      avgWinPct,
+      avgLossPct,
+      avgRiskReward,
       avgDurationMinutes,
       equityCurve,
       diagnostic: {
@@ -1176,8 +1179,13 @@ export class BacktestEngine {
       },
       createdAt: Date.now(),
       trades,
-      sharpeRatio,
-      sortinoRatio,
+      sharpeRatio: sharpeRatio ?? undefined,
+      sortinoRatio: sortinoRatio ?? undefined,
+      sharpeAnnualization: {
+        isAnnualized: metrics.isAnnualized,
+        tradesUsed: metrics.tradesUsed,
+        annualFactor: metrics.annualFactor
+      },
       makerTakerFeePct: feePct,
       slippagePct: slipPct,
       grossProfit: dRound(totalProfit, 2),
@@ -1317,12 +1325,18 @@ export class BacktestEngine {
 
     // Generate AutoTune summary report
     const wrDiff = dRound(bestResult.winRate - initialResult.winRate, 1);
-    const pfDiff = dRound(bestResult.profitFactor - initialResult.profitFactor, 2);
+    // Profit factor sem medição não tem diferença a reportar: subtrair `null` produziria NaN.
+    const pfDiff =
+      bestResult.profitFactor !== null && initialResult.profitFactor !== null
+        ? dRound(bestResult.profitFactor - initialResult.profitFactor, 2)
+        : null;
+    const pfText = bestResult.profitFactor === null ? 'n/d' : `${bestResult.profitFactor}`;
+    const pfDiffText = pfDiff === null ? '' : ` (${Number(pfDiff) >= 0 ? '+' : ''}${pfDiff})`;
     const ddDiff = dRound(initialResult.maxDrawdown - bestResult.maxDrawdown, 1);
     const profitDiff = dRound(bestResult.netProfit - initialResult.netProfit, 1);
 
     const tuningSummary = `O Auto-Tuning executou ${iterations} iterações de simulação quantitativa no perfil ${PROFILE_PRESETS[profile].name} (${symbol}). ` +
-      `Resultado: Win Rate ${bestResult.winRate}% (${Number(wrDiff) >= 0 ? '+' : ''}${wrDiff}%), Profit Factor ${bestResult.profitFactor} (${Number(pfDiff) >= 0 ? '+' : ''}${pfDiff}), ` +
+      `Resultado: Win Rate ${bestResult.winRate}% (${Number(wrDiff) >= 0 ? '+' : ''}${wrDiff}%), Profit Factor ${pfText}${pfDiffText}, ` +
       `Lucro Líquido ${bestResult.netProfit}% (${Number(profitDiff) >= 0 ? '+' : ''}${profitDiff}%) e Max Drawdown de ${bestResult.maxDrawdown}% (${Number(ddDiff) >= 0 ? 'redução de ' : ''}${ddDiff}%). ` +
       `R-10/6.7.5: os candidatos foram avaliados apenas no bloco de treino do split 60/20/20 (sem vazamento); ` +
       `a validação do conjunto escolhido no trecho não visto está em \`oosValidation\` e a certificação final, no holdout intocado de \`holdoutValidation\`.`;
@@ -1436,7 +1450,12 @@ export class BacktestEngine {
       weaknesses.push(`Taxa de acerto abaixo de 60% (${res.winRate}%). Filtro de confluência pode estar tolerante.`);
     }
 
-    if (res.profitFactor >= 1.8) {
+    // Fator de Lucro sem perdas medidas não é nem força nem fraqueza: não foi medido.
+    if (res.profitFactor === null) {
+      weaknesses.push(
+        'Fator de Lucro não mensurável: nenhuma posição perdedora fechou na janela, então não há prejuízo medido para dividir. O resultado medido é o lucro líquido.'
+      );
+    } else if (res.profitFactor >= 1.8) {
       strengths.push(`Fator de Lucro institucional de ${res.profitFactor} (>1.8 indica excelente expectancy positiva).`);
     } else if (res.profitFactor < 1.2) {
       weaknesses.push(`Fator de Lucro fraco (${res.profitFactor}). Relação Risco:Retorno e alvos precisam ser ajustados.`);

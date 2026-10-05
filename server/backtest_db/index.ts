@@ -40,7 +40,8 @@ export interface BacktestResultRow {
   endTime: number;
   totalTrades: number;
   winRate: number;
-  profitFactor: number;
+  /** `null` when no losing position closed, i.e. the factor was never measured. */
+  profitFactor: number | null;
   maxDrawdown: number;
   netProfit: number;
   /** JSON string with the full result payload (equity curve, trades, etc). */
@@ -58,6 +59,16 @@ type SqlJsStatementValues = Array<number | string | null>;
 function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * M8 — `num()` converte `null` em 0, que é um profit factor perfeitamente válido à
+ * vista. A ausência precisa sobreviver até o consumidor.
+ */
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -276,7 +287,7 @@ export const backtestResultsDao = {
       endTime: num(row[4]),
       totalTrades: num(row[5]),
       winRate: num(row[6]),
-      profitFactor: num(row[7]),
+      profitFactor: numOrNull(row[7]),
       maxDrawdown: num(row[8]),
       netProfit: num(row[9]),
       config: String(row[10] ?? '{}'),
@@ -307,7 +318,7 @@ export const backtestResultsDao = {
       endTime: num(row[4]),
       totalTrades: num(row[5]),
       winRate: num(row[6]),
-      profitFactor: num(row[7]),
+      profitFactor: numOrNull(row[7]),
       maxDrawdown: num(row[8]),
       netProfit: num(row[9]),
       config: String(row[10] ?? '{}'),

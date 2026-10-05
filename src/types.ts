@@ -557,13 +557,18 @@ export interface BacktestResult {
   winningTrades: number;
   losingTrades: number;
   winRate: number;
-  profitFactor: number;
+  /** Gross profit over gross loss. `null` when no loss was measured to divide by. */
+  profitFactor: number | null;
   maxDrawdown: number;
   netProfit: number;
-  avgWinPct: number;
-  avgLossPct: number;
-  avgRiskReward: number;
-  avgDurationMinutes: number;
+  /** `null` when there were no winning positions to average. */
+  avgWinPct: number | null;
+  /** `null` when there were no losing positions to average. */
+  avgLossPct: number | null;
+  /** Realised win/loss ratio. `null` when no loss was measured — never the preset target. */
+  avgRiskReward: number | null;
+  /** `null` when no position closed. */
+  avgDurationMinutes: number | null;
   equityCurve: EquityPoint[];
   diagnostic: BacktestDiagnostic;
   config: BacktestConfig;
@@ -573,6 +578,12 @@ export interface BacktestResult {
   entryConfirmation?: EntryConfirmationStats;
   sharpeRatio?: number;
   sortinoRatio?: number;
+  /** M3 — whether Sharpe/Sortino were annualised, and on how many trades. */
+  sharpeAnnualization?: {
+    isAnnualized: boolean;
+    tradesUsed: number;
+    annualFactor: number | null;
+  };
   makerTakerFeePct?: number;
   slippagePct?: number;
   grossProfit?: number;
@@ -607,6 +618,16 @@ export interface BacktestResult {
   assumptions?: string[];
   /** True when any historical factor (OI, funding, long/short) has < 100% coverage (M2.2 / Phase 5). */
   reducedFactorSet?: boolean;
+  /**
+   * M7 — which factors the run could actually measure. `oiCoverageAvailable: false` means the
+   * factor was never instrumented, which is different from "measured and found incomplete":
+   * a 0% coverage from absent instrumentation must not read as a measurement.
+   */
+  factorCoverageAvailability?: {
+    openInterest: boolean;
+    longShort: boolean;
+    funding: boolean;
+  };
   /** Coverage % across historical factors (M2.2 / Phase 5). */
   factorCoverage?: {
     openInterest: number;
@@ -651,7 +672,8 @@ export interface AIPersona {
 export interface AutoTuneIteration {
   iteration: number;
   winRate: number;
-  profitFactor: number;
+  /** `null` when the iteration closed no losing position to divide by. */
+  profitFactor: number | null;
   netProfit: number;
   maxDrawdown: number;
   fitnessScore: number;

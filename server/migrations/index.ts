@@ -334,6 +334,46 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 13,
+    id: '013-backtest-profit-factor-nullable',
+    description:
+      'M8: profit_factor deixa de ser NOT NULL — um backtest sem perdas medidas não tem profit factor, e gravar 0 ou 9.9 fazia uma medição inexistente parecer um número.',
+    // SQLite não tem ALTER COLUMN; a rebuild é o caminho suportado. `backtest_results`
+    // não tem trigger nem é referenciada por FK, então o dance padrão (criar, copiar,
+    // dropar, renomear) é seguro. Todas as linhas existentes são copiadas intactas.
+    up: db => {
+      if (!tableExists(db, 'backtest_results')) return;
+      exec(db, `
+        CREATE TABLE backtest_results_new (
+          id TEXT PRIMARY KEY,
+          symbol TEXT NOT NULL,
+          strategy_id TEXT NOT NULL,
+          start_time INTEGER NOT NULL,
+          end_time INTEGER NOT NULL,
+          total_trades INTEGER NOT NULL,
+          win_rate REAL NOT NULL,
+          profit_factor REAL,
+          max_drawdown REAL NOT NULL,
+          net_profit REAL NOT NULL,
+          config TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `);
+      exec(db, `
+        INSERT INTO backtest_results_new (
+          id, symbol, strategy_id, start_time, end_time, total_trades,
+          win_rate, profit_factor, max_drawdown, net_profit, config, created_at
+        )
+        SELECT
+          id, symbol, strategy_id, start_time, end_time, total_trades,
+          win_rate, profit_factor, max_drawdown, net_profit, config, created_at
+        FROM backtest_results;
+      `);
+      exec(db, 'DROP TABLE backtest_results;');
+      exec(db, 'ALTER TABLE backtest_results_new RENAME TO backtest_results;');
+    }
   }
 ];
 
