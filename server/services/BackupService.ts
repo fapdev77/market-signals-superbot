@@ -13,6 +13,7 @@ import fs from 'fs';
 import { getErrorMessage } from '../utils/errors.js';
 import path from 'path';
 import initSqlJs, { Database } from 'sql.js';
+import { renameWithRetry } from '../utils/fsRename.js';
 
 export interface IntegrityCheckResult {
   healthy: boolean;
@@ -147,7 +148,11 @@ export function restoreLatestValidBackup(dbPath: string, backupDir: string): Res
       try {
         const tempPath = `${dbPath}.restore-tmp`;
         fs.copyFileSync(backup.fullPath, tempPath);
-        fs.renameSync(tempPath, dbPath);
+        // Rename over the corrupt file can hit a transient EPERM/EBUSY on Windows when a
+        // scanner holds the handle. Retrying matters more here than on the save path: a
+        // restore that gives up leaves the database corrupt, and the boot sequence then
+        // refuses to start instead of recovering from a backup that is sitting right there.
+        renameWithRetry(tempPath, dbPath);
         console.warn(`♻️ [DB RECOVERY] Banco corrompido restaurado com sucesso a partir de: ${backup.filename}`);
         return { success: true, backupPath: backup.fullPath };
       } catch (err) {

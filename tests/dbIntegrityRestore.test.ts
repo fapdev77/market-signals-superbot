@@ -12,10 +12,14 @@ import { applyMigrations } from '../server/migrations/index.js';
 
 describe('M4.3 & CA-4.3: Database Integrity Check and Automatic Restore', () => {
   // O diretório de teste carrega o PID do worker, como `tests/setup.ts` já faz
-  // para o SQLite. Com um caminho fixo, este arquivo apagava `data/test-integrity`
-  // de forma incondicional em cada `beforeEach`/`afterEach`; rodando em paralelo
-  // com outra suíte, uma delas podia remover o backup entre a escrita e a leitura
-  // neste teste, fazendo-o falhar de forma intermitente sem causa no código.
+  // para o SQLite: o arquivo apaga `testDir` incondicionalmente em cada
+  // `beforeEach`/`afterEach`, e um caminho sob `data/` compartilhado com outra
+  // suíte permitiria que uma remoção acontecesse entre a escrita e a leitura aqui.
+  //
+  // NOTA: a falha intermitente que motivou esta mudança NÃO era uma corrida de
+  // diretório — `fileParallelism: false` serializa os arquivos de teste. A causa
+  // real era `renameSync` falhando com EPERM no Windows ao substituir o banco
+  // corrompido, agora coberta por `renameWithRetry` (ver `server/utils/fsRename.ts`).
   const testDir = path.join(process.cwd(), 'data', `test-integrity.${process.pid}`);
   const dbPath = path.join(testDir, 'superbot.db');
   const backupDir = path.join(testDir, 'backups');
