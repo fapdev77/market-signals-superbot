@@ -20,9 +20,23 @@ import {
   Zap,
   ArrowRight,
   ArrowDown,
-  ArrowUp
+  ArrowUp,
+  BarChart2,
+  Gauge,
+  Flame
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
+import {
+  computeCvdDeltaMetrics,
+  classifyOrderFlowDivergence,
+  generateCvdDeltaSeries,
+  computeOrderBookImbalance,
+  computeMultiTierOBI,
+  type CvdDeltaMetrics,
+  type OrderFlowDivergenceResult,
+  type CvdDeltaDataPoint,
+  type OrderBookImbalanceResult
+} from '../utils/cvdDeltaUtils';
 
 interface LiquidityDepthProps {
   ticker: TickerData;
@@ -35,17 +49,24 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 700, height: 320 });
+  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 700, height: 350 });
   const [depthData, setDepthData] = useState<OrderBookDepthData | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
   const [depthRange, setDepthRange] = useState<'0.5%' | '1%' | '2%' | '5%'>('2%');
   const [chartStyle, setChartStyle] = useState<'smooth' | 'step'>('step');
+  const [showCvdOverlay, setShowCvdOverlay] = useState<boolean>(true);
+  const [cvdOverlayMode, setCvdOverlayMode] = useState<'curve' | 'bars' | 'split'>('curve');
+  const [showObiOverlay, setShowObiOverlay] = useState<boolean>(true);
+  const [obiViewMode, setObiViewMode] = useState<'compact' | 'tiers' | 'gauge'>('compact');
   const [hoveredPoint, setHoveredPoint] = useState<{
     side: 'bid' | 'ask';
     level: OrderBookLevel;
     x: number;
     y: number;
+    takerBuyEstimatedUsd?: number;
+    takerSellEstimatedUsd?: number;
+    deltaEstimatedUsd?: number;
   } | null>(null);
 
   // Resize observer
@@ -243,7 +264,24 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     };
   }, [depthData, maxDeviation]);
 
-  // Render D3 Depth Chart
+  // CVD Delta metrics & Order flow divergence & OBI
+  const obiMetrics = useMemo(() => {
+    return computeOrderBookImbalance(
+      filteredDepth?.visibleBidUsd || 0,
+      filteredDepth?.visibleAskUsd || 0
+    );
+  }, [filteredDepth]);
+
+  const multiTierObi = useMemo(() => {
+    return computeMultiTierOBI(filteredDepth?.bids || [], filteredDepth?.asks || []);
+  }, [filteredDepth]);
+
+  const cvdMetrics = useMemo(() => computeCvdDeltaMetrics(ticker), [ticker]);
+  const imbalance = obiMetrics.imbalancePct;
+  const divergence = useMemo(() => classifyOrderFlowDivergence(ticker, imbalance), [ticker, imbalance]);
+  const cvdSeries = useMemo(() => generateCvdDeltaSeries(ticker, 28), [ticker]);
+
+  // Render D3 Depth Chart with CVD Delta Overlay
   useEffect(() => {
     if (!svgRef.current || !filteredDepth || filteredDepth.bids.length === 0 || filteredDepth.asks.length === 0) return;
 
@@ -251,7 +289,12 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    const margin = { top: 25, right: 25, bottom: 40, left: 60 };
+    const margin = { 
+      top: 25, 
+      right: showCvdOverlay ? 65 : 25, 
+      bottom: 40, 
+      left: 60 
+    };
     const innerWidth = width - margin.left - margin.right;
     const innerHeight = height - margin.top - margin.bottom;
 
@@ -260,10 +303,8 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     const g = svg.append('g')
       .attr('transform', `translate(${margin.left},${margin.top})`);
 
-    // Prepare data
-    // Bids: sorted by price ascending for plotting left-to-right toward midPrice
+    // Prepare depth data
     const sortedBids = [...filteredDepth.bids].sort((a, b) => a.price - b.price);
-    // Asks: sorted by price ascending away from midPrice
     const sortedAsks = [...filteredDepth.asks].sort((a, b) => a.price - b.price);
 
     const minPrice = sortedBids[0]?.price || filteredDepth.midPrice * 0.98;
@@ -294,7 +335,7 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
       .attr('class', 'grid text-neutral-800 opacity-20 stroke-neutral-700')
       .call(yAxisGrid);
 
-    // Defs for gradients and glow filters
+    // Defs for gradients, filters and masks
     const defs = svg.append('defs');
 
     // Bid gradient (Emerald)
@@ -313,7 +354,27 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     askGradient.append('stop').attr('offset', '0%').attr('stop-color', '#f43f5e').attr('stop-opacity', 0.45);
     askGradient.append('stop').attr('offset', '100%').attr('stop-color', '#881337').attr('stop-opacity', 0.05);
 
-    // Area & Line Generators
+    // CVD Overlay Gradient (Cyan / Electric Amber)
+    const cvdGradient = defs.append('linearGradient')
+      .attr('id', 'cvd-overlay-gradient')
+      .attr('x1', '0%').attr('y1', '0%')
+      .attr('x2', '0%').attr('y2', '100%');
+    cvdGradient.append('stop').attr('offset', '0%').attr('stop-color', '#06b6d4').attr('stop-opacity', 0.35);
+    cvdGradient.append('stop').attr('offset', '100%').attr('stop-color', '#0891b2').attr('stop-opacity', 0.02);
+
+    // Glow Filter for CVD Line
+    const filter = defs.append('filter')
+      .attr('id', 'cvd-glow')
+      .attr('x', '-20%').attr('y', '-20%')
+      .attr('width', '140%').attr('height', '140%');
+    filter.append('feGaussianBlur')
+      .attr('stdDeviation', '2.5')
+      .attr('result', 'coloredBlur');
+    const feMerge = filter.append('feMerge');
+    feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    // Area & Line Generators for Depth
     const curveType = chartStyle === 'step' ? d3.curveStepBefore : d3.curveMonotoneX;
 
     const bidArea = d3.area<OrderBookLevel>()
@@ -364,6 +425,127 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
       .attr('stroke-width', 2)
       .attr('d', askLine);
 
+    // ==========================================
+    // CVD DELTA OVERLAY LAYER (Taker Buy vs Sell)
+    // ==========================================
+    if (showCvdOverlay && cvdSeries && cvdSeries.length > 0) {
+      const cvdGroup = g.append('g').attr('class', 'cvd-delta-overlay');
+
+      // Secondary Y-Scale for CVD Delta
+      const maxAbsCvd = Math.max(
+        ...cvdSeries.map(d => Math.abs(d.cumulativeCvdUsd)),
+        Math.abs(cvdMetrics.netCvdDeltaUsd),
+        1000000
+      ) * 1.25;
+
+      const cvdYScale = d3.scaleLinear()
+        .domain([-maxAbsCvd, maxAbsCvd])
+        .range([innerHeight, 0]);
+
+      // Delta Baseline (Zero Aggression Line)
+      const zeroY = cvdYScale(0);
+      cvdGroup.append('line')
+        .attr('x1', 0)
+        .attr('x2', innerWidth)
+        .attr('y1', zeroY)
+        .attr('y2', zeroY)
+        .attr('stroke', 'rgba(6, 182, 212, 0.35)')
+        .attr('stroke-width', 1)
+        .attr('stroke-dasharray', '2,2');
+
+      // 1. CVD Delta Volume Aggression Bars (Histogram at Bottom/Center)
+      if (cvdOverlayMode === 'bars' || cvdOverlayMode === 'split') {
+        const barWidth = Math.max(3, (innerWidth / cvdSeries.length) - 3);
+        const maxDeltaBar = Math.max(...cvdSeries.map(d => Math.abs(d.deltaUsd)), 10000);
+        const barHeightMax = innerHeight * 0.30;
+
+        cvdSeries.forEach((pt, i) => {
+          const px = (i / (cvdSeries.length - 1)) * innerWidth;
+          const isBuyDelta = pt.deltaUsd >= 0;
+          const normalizedHeight = (Math.abs(pt.deltaUsd) / maxDeltaBar) * barHeightMax;
+          const barY = isBuyDelta ? zeroY - normalizedHeight : zeroY;
+
+          cvdGroup.append('rect')
+            .attr('x', px - barWidth / 2)
+            .attr('y', Math.max(0, Math.min(innerHeight - normalizedHeight, barY)))
+            .attr('width', barWidth)
+            .attr('height', Math.max(2, normalizedHeight))
+            .attr('fill', isBuyDelta ? 'rgba(16, 185, 129, 0.45)' : 'rgba(244, 63, 94, 0.45)')
+            .attr('stroke', isBuyDelta ? '#10b981' : '#f43f5e')
+            .attr('stroke-width', 0.8)
+            .attr('rx', 1.5)
+            .attr('opacity', 0.85);
+        });
+      }
+
+      // 2. Continuous CVD Curve Line & Shaded Area
+      if (cvdOverlayMode === 'curve' || cvdOverlayMode === 'split') {
+        const cvdArea = d3.area<CvdDeltaDataPoint>()
+          .x((_, i) => (i / (cvdSeries.length - 1)) * innerWidth)
+          .y0(zeroY)
+          .y1(d => cvdYScale(d.cumulativeCvdUsd))
+          .curve(d3.curveMonotoneX);
+
+        const cvdLine = d3.line<CvdDeltaDataPoint>()
+          .x((_, i) => (i / (cvdSeries.length - 1)) * innerWidth)
+          .y(d => cvdYScale(d.cumulativeCvdUsd))
+          .curve(d3.curveMonotoneX);
+
+        // CVD Area
+        cvdGroup.append('path')
+          .datum(cvdSeries)
+          .attr('fill', 'url(#cvd-overlay-gradient)')
+          .attr('d', cvdArea);
+
+        // CVD Stroke Line
+        const cvdStrokeColor = cvdMetrics.cvdDirection === 'BUY' 
+          ? '#06b6d4' 
+          : cvdMetrics.cvdDirection === 'SELL' 
+          ? '#f43f5e' 
+          : '#38bdf8';
+
+        cvdGroup.append('path')
+          .datum(cvdSeries)
+          .attr('fill', 'none')
+          .attr('stroke', cvdStrokeColor)
+          .attr('stroke-width', 2.2)
+          .attr('filter', 'url(#cvd-glow)')
+          .attr('d', cvdLine);
+
+        // Current CVD endpoint marker
+        const lastPt = cvdSeries[cvdSeries.length - 1];
+        if (lastPt) {
+          const lastX = innerWidth;
+          const lastY = cvdYScale(lastPt.cumulativeCvdUsd);
+
+          cvdGroup.append('circle')
+            .attr('cx', lastX)
+            .attr('cy', lastY)
+            .attr('r', 4.5)
+            .attr('fill', cvdStrokeColor)
+            .attr('stroke', '#ffffff')
+            .attr('stroke-width', 1.5)
+            .attr('class', 'animate-pulse');
+        }
+      }
+
+      // 3. Secondary Y-Axis for CVD Delta (Right side)
+      const cvdYAxis = d3.axisRight(cvdYScale)
+        .ticks(4)
+        .tickFormat(d => {
+          const val = (d as number) / 1_000_000;
+          return `${val >= 0 ? '+' : ''}${val.toFixed(1)}M Δ`;
+        });
+
+      const cvdAxisG = g.append('g')
+        .attr('transform', `translate(${innerWidth},0)`)
+        .attr('class', 'text-cyan-400/80 font-mono text-[9.5px]')
+        .call(cvdYAxis);
+
+      cvdAxisG.select('.domain').attr('stroke', 'rgba(6, 182, 212, 0.3)');
+      cvdAxisG.selectAll('line').attr('stroke', 'rgba(6, 182, 212, 0.2)');
+    }
+
     // Mid Market Price Vertical Center Line
     const midX = xScale(filteredDepth.midPrice);
     if (midX >= 0 && midX <= innerWidth) {
@@ -382,9 +564,9 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
         .attr('transform', `translate(${midX}, 12)`);
 
       pinG.append('rect')
-        .attr('x', -40)
+        .attr('x', -44)
         .attr('y', -10)
-        .attr('width', 80)
+        .attr('width', 88)
         .attr('height', 18)
         .attr('rx', 4)
         .attr('fill', '#18181b')
@@ -406,7 +588,6 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
       const wx = xScale(wall.price);
       const wy = yScale(wall.totalUsd);
       if (wx >= 0 && wx <= innerWidth) {
-        // Pulsing wall circle
         g.append('circle')
           .attr('cx', wx)
           .attr('cy', wy)
@@ -416,7 +597,6 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
           .attr('stroke-width', 1.5)
           .attr('class', 'animate-pulse');
 
-        // Wall tag
         g.append('text')
           .attr('x', wx)
           .attr('y', wy - 10)
@@ -533,11 +713,20 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
             .attr('fill', side === 'bid' ? '#10b981' : '#f43f5e')
             .style('display', 'block');
 
+          // Estimate taker aggression at hovered price tier
+          const tierRatio = (cvdMetrics.takerBuyRatioPct / 100);
+          const estimatedTierTakerBuy = level.totalUsd * tierRatio * 0.45;
+          const estimatedTierTakerSell = level.totalUsd * (1 - tierRatio) * 0.45;
+          const estimatedTierDelta = estimatedTierTakerBuy - estimatedTierTakerSell;
+
           setHoveredPoint({
             side,
             level,
             x: cx + margin.left,
-            y: cy + margin.top
+            y: cy + margin.top,
+            takerBuyEstimatedUsd: estimatedTierTakerBuy,
+            takerSellEstimatedUsd: estimatedTierTakerSell,
+            deltaEstimatedUsd: estimatedTierDelta
           });
         }
       })
@@ -547,15 +736,14 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
         setHoveredPoint(null);
       });
 
-  }, [filteredDepth, dimensions, chartStyle]);
+  }, [filteredDepth, dimensions, chartStyle, showCvdOverlay, cvdOverlayMode, cvdSeries, cvdMetrics]);
 
   const baseAsset = ticker?.baseAsset || ticker.symbol.replace(/USDT|USD|BUSD/g, '');
 
-  const imbalance = filteredDepth?.visibleImbalance ?? filteredDepth?.imbalancePct ?? 0;
   const isBidDominant = imbalance > 0;
   const isAskDominant = imbalance < 0;
 
-  // Percentage distribution (e.g. 55% bid vs 45% ask)
+  // Percentage distribution of depth
   const bidRatioPct = Math.max(10, Math.min(90, 50 + imbalance / 2));
   const askRatioPct = 100 - bidRatioPct;
 
@@ -570,21 +758,129 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-extrabold text-white uppercase tracking-wider font-mono">
-                Profundidade de Liquidez & Pressão de Livro (Order Book Imbalance)
+                Profundidade de Liquidez & Overlay CVD Delta
               </h3>
               <span className="text-[10px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded border border-orange-500/30 font-mono font-bold">
-                D3 Depth
+                D3 OrderBook + CVD
               </span>
+              {showCvdOverlay && (
+                <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded border border-cyan-500/30 font-mono font-bold flex items-center gap-1">
+                  <Activity className="w-3 h-3 animate-pulse" />
+                  CVD Ativo
+                </span>
+              )}
             </div>
             <p className="text-xs text-neutral-400 font-sans mt-0.5">
-              Curvas cumulativas de ordens limitadas de compra (Bids) vs venda (Asks) e mensuração quantitativa de desequilíbrio de pressão.
+              Profundidade do livro de ofertas contrastada em tempo real com o Volume Delta Cumulativo (CVD) e agressão Taker Buy vs Sell.
             </p>
           </div>
         </div>
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-          {/* Depth Range Range Filter */}
+          {/* OBI % Toggle Button */}
+          <button
+            onClick={() => setShowObiOverlay(prev => !prev)}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition flex items-center gap-1.5 ${
+              showObiOverlay 
+                ? 'bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-sm' 
+                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+            }`}
+            title="Ativar/desativar visualização do Order Book Imbalance (OBI)"
+          >
+            <Scale className={`w-3.5 h-3.5 ${showObiOverlay ? 'text-amber-400' : 'text-neutral-500'}`} />
+            <span>OBI {showObiOverlay ? 'ON' : 'OFF'}</span>
+            <span className={`text-[9px] px-1 py-0.2 rounded font-black ${
+              obiMetrics.imbalancePct >= 0 
+                ? 'bg-emerald-500/20 text-emerald-300' 
+                : 'bg-rose-500/20 text-rose-300'
+            }`}>
+              {obiMetrics.imbalancePct >= 0 ? '+' : ''}{obiMetrics.imbalancePct.toFixed(1)}%
+            </span>
+          </button>
+
+          {/* OBI View Mode (when active) */}
+          {showObiOverlay && (
+            <div className="flex items-center bg-[#050505] p-0.5 rounded-lg border border-amber-500/20">
+              <button
+                onClick={() => setObiViewMode('compact')}
+                className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                  obiViewMode === 'compact'
+                    ? 'bg-amber-500 text-black font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="Visão compacta de OBI"
+              >
+                Geral
+              </button>
+              <button
+                onClick={() => setObiViewMode('tiers')}
+                className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                  obiViewMode === 'tiers'
+                    ? 'bg-amber-500 text-black font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="Desdobramento de OBI por faixas de preço (±0.5%, ±1%, ±2%, ±5%)"
+              >
+                Faixas OBI
+              </button>
+            </div>
+          )}
+
+          {/* CVD Overlay Toggle Button */}
+          <button
+            onClick={() => setShowCvdOverlay(prev => !prev)}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition flex items-center gap-1.5 ${
+              showCvdOverlay 
+                ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30 shadow-sm' 
+                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+            }`}
+            title="Ativar/desativar overlay de Volume Delta Cumulativo (CVD)"
+          >
+            <Activity className={`w-3.5 h-3.5 ${showCvdOverlay ? 'text-cyan-400' : 'text-neutral-500'}`} />
+            <span>CVD Delta {showCvdOverlay ? 'ON' : 'OFF'}</span>
+          </button>
+
+          {/* CVD Mode Selector (when active) */}
+          {showCvdOverlay && (
+            <div className="flex items-center bg-[#050505] p-0.5 rounded-lg border border-cyan-500/20">
+              <button
+                onClick={() => setCvdOverlayMode('curve')}
+                className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                  cvdOverlayMode === 'curve'
+                    ? 'bg-cyan-500 text-black font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="Curva contínua de CVD com área"
+              >
+                Curva
+              </button>
+              <button
+                onClick={() => setCvdOverlayMode('bars')}
+                className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                  cvdOverlayMode === 'bars'
+                    ? 'bg-cyan-500 text-black font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="Histograma de delta de agressão"
+              >
+                Barras
+              </button>
+              <button
+                onClick={() => setCvdOverlayMode('split')}
+                className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                  cvdOverlayMode === 'split'
+                    ? 'bg-cyan-500 text-black font-extrabold'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="Visão combinada (Curva + Barras de delta)"
+              >
+                Dual
+              </button>
+            </div>
+          )}
+
+          {/* Depth Range Filter */}
           <div className="flex items-center bg-[#050505] p-0.5 rounded-lg border border-white/10">
             {(['0.5%', '1%', '2%', '5%'] as const).map(r => (
               <button
@@ -611,7 +907,7 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
                   : 'text-neutral-500 hover:text-neutral-300'
               }`}
             >
-              Degraus (Step)
+              Degraus
             </button>
             <button
               onClick={() => setChartStyle('smooth')}
@@ -633,7 +929,7 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' 
                 : 'bg-neutral-900 text-neutral-400 border-white/10'
             }`}
-            title="Alternar atualização automática periódica da profundidade"
+            title="Alternar atualização periódica da profundidade, OBI e CVD"
           >
             <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? 'bg-emerald-400 animate-pulse' : 'bg-neutral-600'}`} />
             <span>{autoRefresh ? 'Live' : 'Pausado'}</span>
@@ -647,26 +943,28 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
             }}
             disabled={loading}
             className="p-1.5 rounded-lg bg-neutral-900 border border-white/10 hover:border-white/20 text-neutral-400 hover:text-white transition disabled:opacity-50"
-            title="Recarregar profundidade agora"
+            title="Recarregar profundidade, OBI e CVD agora"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-orange-400' : ''}`} />
           </button>
         </div>
       </div>
 
-      {/* Key Order Book Pressure Diagnostic Metrics */}
+      {/* Primary Diagnostic Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Metric 1: Order Book Imbalance Gauge */}
-        <div className="bg-[#050505] p-3 rounded-xl border border-white/10 space-y-1.5">
+        {/* Metric 1: Order Book Imbalance (OBI) Gauge */}
+        <div className={`bg-[#050505] p-3 rounded-xl border transition-all ${
+          showObiOverlay ? 'border-amber-500/30 shadow-md ring-1 ring-amber-500/20' : 'border-white/10'
+        } space-y-1.5`}>
           <div className="flex items-center justify-between text-[11px] font-mono">
             <span className="text-neutral-400 flex items-center gap-1">
-              <Zap className="w-3.5 h-3.5 text-orange-400" />
-              Pressão de Livro:
+              <Scale className="w-3.5 h-3.5 text-amber-400" />
+              OBI (Bids - Asks)/(Bids + Asks):
             </span>
             <span className={`font-black ${
               isBidDominant ? 'text-emerald-400' : isAskDominant ? 'text-rose-400' : 'text-neutral-300'
             }`}>
-              {imbalance >= 0 ? '+' : ''}{imbalance.toFixed(1)}% {isBidDominant ? 'BUY' : isAskDominant ? 'SELL' : 'FLAT'}
+              {obiMetrics.imbalancePct >= 0 ? '+' : ''}{obiMetrics.imbalancePct.toFixed(1)}% {isBidDominant ? 'BID' : isAskDominant ? 'ASK' : 'FLAT'}
             </span>
           </div>
 
@@ -675,18 +973,18 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
             <div className="h-2 w-full bg-neutral-800 rounded-full overflow-hidden flex">
               <div 
                 className="bg-emerald-500 h-full transition-all duration-300"
-                style={{ width: `${bidRatioPct}%` }}
-                title={`Bids: ${bidRatioPct.toFixed(1)}%`}
+                style={{ width: `${obiMetrics.bidPercentage}%` }}
+                title={`Bids: ${obiMetrics.bidPercentage.toFixed(1)}%`}
               />
               <div 
                 className="bg-rose-500 h-full transition-all duration-300"
-                style={{ width: `${askRatioPct}%` }}
-                title={`Asks: ${askRatioPct.toFixed(1)}%`}
+                style={{ width: `${obiMetrics.askPercentage}%` }}
+                title={`Asks: ${obiMetrics.askPercentage.toFixed(1)}%`}
               />
             </div>
             <div className="flex justify-between text-[9px] font-mono text-neutral-400">
-              <span className="text-emerald-400 font-bold">{bidRatioPct.toFixed(0)}% Compradores</span>
-              <span className="text-rose-400 font-bold">{askRatioPct.toFixed(0)}% Vendedores</span>
+              <span className="text-emerald-400 font-bold">{obiMetrics.bidPercentage.toFixed(0)}% Bids (Passivo)</span>
+              <span className="text-rose-400 font-bold">{obiMetrics.askPercentage.toFixed(0)}% Asks (Passivo)</span>
             </div>
           </div>
         </div>
@@ -755,7 +1053,7 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
                 ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' 
                 : 'bg-neutral-800 text-neutral-300 border-white/10'
             }`}>
-              {filteredDepth?.pressureLabel || 'LIVRO EQUILIBRADO'}
+              {obiMetrics.label || 'LIVRO EQUILIBRADO'}
             </span>
           </div>
           <p className="text-[9.5px] text-neutral-500 font-mono text-center pt-0.5">
@@ -768,10 +1066,241 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
         </div>
       </div>
 
-      {/* D3 Depth Canvas Container */}
+      {/* Multi-Tier OBI Grid (when OBI tier mode is active) */}
+      {showObiOverlay && obiViewMode === 'tiers' && (
+        <div className="bg-[#050811] p-3 rounded-xl border border-amber-500/25 space-y-2">
+          <div className="flex items-center justify-between border-b border-white/10 pb-1.5 text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <span className="text-amber-400 font-extrabold flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5" />
+                Desdobramento de Order Book Imbalance (OBI) por Faixas de Profundidade
+              </span>
+              <span className="text-[9.5px] text-neutral-400 font-sans">
+                Fórmula: OBI = (Bids - Asks) / (Bids + Asks)
+              </span>
+            </div>
+            <span className="text-[10px] text-neutral-400">
+              Faixa Atual Ativa: <strong className="text-white">±{depthRange}</strong>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {(['0.5%', '1%', '2%', '5%', 'full'] as const).map(tierKey => {
+              const tier = multiTierObi[tierKey];
+              const isCurrentTier = tierKey === depthRange || (tierKey === 'full' && depthRange === '5%');
+              return (
+                <div 
+                  key={tierKey}
+                  className={`p-2 rounded-lg border font-mono text-xs space-y-1 transition ${
+                    isCurrentTier 
+                      ? 'bg-amber-500/10 border-amber-500/40 ring-1 ring-amber-500/30' 
+                      : 'bg-[#090a0f] border-white/10'
+                  }`}
+                >
+                  <div className="flex justify-between items-center text-[10px]">
+                    <span className="text-neutral-400 font-bold">
+                      {tierKey === 'full' ? 'Livro Completo' : `Faixa ±${tierKey}`}
+                    </span>
+                    <span className={`font-black text-[10.5px] ${
+                      tier.imbalancePct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {tier.imbalancePct >= 0 ? '+' : ''}{tier.imbalancePct.toFixed(1)}%
+                    </span>
+                  </div>
+
+                  {/* Micro balance bar */}
+                  <div className="h-1.5 w-full bg-neutral-800 rounded-full overflow-hidden flex">
+                    <div className="bg-emerald-500 h-full" style={{ width: `${tier.bidPercentage}%` }} />
+                    <div className="bg-rose-500 h-full" style={{ width: `${tier.askPercentage}%` }} />
+                  </div>
+
+                  <div className="flex justify-between text-[9px] text-neutral-400 pt-0.5">
+                    <span className="text-emerald-400/90">${(tier.bidsVolumeUsd / 1_000_000).toFixed(1)}M</span>
+                    <span className="text-rose-400/90">${(tier.asksVolumeUsd / 1_000_000).toFixed(1)}M</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Comparative CVD Delta & OBI Real-Time Taker Volume Overlay Card */}
+      <div className="bg-[#07090e] p-3.5 rounded-xl border border-cyan-500/25 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-400">
+              <Activity className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black text-cyan-300 uppercase tracking-wider font-mono">
+                  Comparative CVD Delta & Order Book Imbalance (OBI)
+                </h4>
+                <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                  cvdMetrics.cvdDirection === 'BUY'
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : cvdMetrics.cvdDirection === 'SELL'
+                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                    : 'bg-neutral-800 text-neutral-400 border-white/10'
+                }`}>
+                  DELTA {cvdMetrics.cvdDirection}
+                </span>
+                {showObiOverlay && (
+                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                    obiMetrics.imbalancePct >= 0
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                  }`}>
+                    OBI {obiMetrics.imbalancePct >= 0 ? '+' : ''}{obiMetrics.imbalancePct.toFixed(1)}%
+                  </span>
+                )}
+              </div>
+              <span className="text-[10.5px] text-neutral-400 font-mono">
+                {cvdMetrics.aggressionDominanceLabel} • OBI: {obiMetrics.label}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-mono">
+            <div className="text-right">
+              <div className="text-[10px] text-neutral-400">Net CVD Delta (24h)</div>
+              <div className={`text-sm font-black ${
+                cvdMetrics.netCvdDeltaUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}>
+                {cvdMetrics.netCvdDeltaUsd >= 0 ? '+' : ''}${((cvdMetrics.netCvdDeltaUsd) / 1_000_000).toFixed(2)}M
+                <span className="text-[10px] ml-1 font-bold">
+                  ({cvdMetrics.cvdDeltaPercent >= 0 ? '+' : ''}{cvdMetrics.cvdDeltaPercent.toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+
+            <div className="text-right border-l border-white/10 pl-3">
+              <div className="text-[10px] text-neutral-400">Velocidade de Delta</div>
+              <div className="text-xs font-bold text-amber-300">
+                ${((cvdMetrics.volumeDeltaSpeedUsdPerMin) / 1000).toFixed(1)}k/min
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Side-by-Side: Taker Aggression (CVD) vs Passive Order Book Imbalance (OBI) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Active Taker Market Flow (CVD) */}
+          <div className="bg-[#0a0d14] p-2.5 rounded-lg border border-cyan-500/20 space-y-1.5">
+            <div className="flex justify-between items-center text-[11px] font-mono">
+              <span className="text-cyan-300 font-bold flex items-center gap-1">
+                <Activity className="w-3 h-3" />
+                Fluxo Ativo Taker (Agressão a Mercado)
+              </span>
+              <span className="text-neutral-400 text-[10px]">
+                Delta: <strong className={cvdMetrics.netCvdDeltaUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                  {cvdMetrics.netCvdDeltaUsd >= 0 ? '+' : ''}${(cvdMetrics.netCvdDeltaUsd / 1_000_000).toFixed(2)}M
+                </strong>
+              </span>
+            </div>
+
+            <div className="h-2.5 w-full bg-neutral-900 rounded-lg overflow-hidden flex border border-white/10">
+              <div 
+                className="bg-emerald-500 h-full transition-all duration-500"
+                style={{ width: `${cvdMetrics.takerBuyRatioPct}%` }}
+                title={`Taker Buy: ${cvdMetrics.takerBuyRatioPct.toFixed(1)}%`}
+              />
+              <div 
+                className="bg-rose-500 h-full transition-all duration-500"
+                style={{ width: `${cvdMetrics.takerSellRatioPct}%` }}
+                title={`Taker Sell: ${cvdMetrics.takerSellRatioPct.toFixed(1)}%`}
+              />
+            </div>
+
+            <div className="flex justify-between text-[9.5px] font-mono">
+              <span className="text-emerald-400 font-bold">
+                Buy: ${((cvdMetrics.takerBuyVolumeUsd) / 1_000_000).toFixed(1)}M ({cvdMetrics.takerBuyRatioPct.toFixed(0)}%)
+              </span>
+              <span className="text-rose-400 font-bold">
+                Sell: ${((cvdMetrics.takerSellVolumeUsd) / 1_000_000).toFixed(1)}M ({cvdMetrics.takerSellRatioPct.toFixed(0)}%)
+              </span>
+            </div>
+          </div>
+
+          {/* Passive Order Book Imbalance (OBI) */}
+          <div className="bg-[#0a0d14] p-2.5 rounded-lg border border-amber-500/20 space-y-1.5">
+            <div className="flex justify-between items-center text-[11px] font-mono">
+              <span className="text-amber-300 font-bold flex items-center gap-1">
+                <Scale className="w-3 h-3" />
+                Liquidez Passiva (OBI: (Bids - Asks)/(Bids + Asks))
+              </span>
+              <span className="text-neutral-400 text-[10px]">
+                OBI: <strong className={obiMetrics.imbalancePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                  {obiMetrics.imbalancePct >= 0 ? '+' : ''}{obiMetrics.imbalancePct.toFixed(1)}%
+                </strong>
+              </span>
+            </div>
+
+            <div className="h-2.5 w-full bg-neutral-900 rounded-lg overflow-hidden flex border border-white/10">
+              <div 
+                className="bg-emerald-500 h-full transition-all duration-500"
+                style={{ width: `${obiMetrics.bidPercentage}%` }}
+                title={`Bids: ${obiMetrics.bidPercentage.toFixed(1)}%`}
+              />
+              <div 
+                className="bg-rose-500 h-full transition-all duration-500"
+                style={{ width: `${obiMetrics.askPercentage}%` }}
+                title={`Asks: ${obiMetrics.askPercentage.toFixed(1)}%`}
+              />
+            </div>
+
+            <div className="flex justify-between text-[9.5px] font-mono">
+              <span className="text-emerald-400 font-bold">
+                Bids: ${(obiMetrics.bidsVolumeUsd / 1_000_000).toFixed(1)}M ({obiMetrics.bidPercentage.toFixed(0)}%)
+              </span>
+              <span className="text-rose-400 font-bold">
+                Asks: ${(obiMetrics.asksVolumeUsd / 1_000_000).toFixed(1)}M ({obiMetrics.askPercentage.toFixed(0)}%)
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Order Flow & OBI Confluence Diagnostic Banner */}
+        <div className="bg-[#0b0f17] p-2.5 rounded-lg border border-cyan-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border ${
+              divergence.bias === 'BUY'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                : divergence.bias === 'SELL'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                : 'bg-neutral-800 text-neutral-300 border-white/10'
+            }`}>
+              {divergence.divergenceLabel}
+            </span>
+            <span className="text-neutral-300 text-[11px]">
+              {divergence.divergenceDescription}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 text-[10px] text-neutral-400 shrink-0">
+            <span>OBI/Delta Confluência:</span>
+            <span className={`font-black ${
+              (obiMetrics.imbalancePct > 0 && cvdMetrics.netCvdDeltaUsd > 0)
+                ? 'text-emerald-400'
+                : (obiMetrics.imbalancePct < 0 && cvdMetrics.netCvdDeltaUsd < 0)
+                ? 'text-rose-400'
+                : 'text-amber-300'
+            }`}>
+              {(obiMetrics.imbalancePct > 0 && cvdMetrics.netCvdDeltaUsd > 0)
+                ? 'CONVERGÊNCIA COMPRADORA ALTA'
+                : (obiMetrics.imbalancePct < 0 && cvdMetrics.netCvdDeltaUsd < 0)
+                ? 'CONVERGÊNCIA VENDEDORA ALTA'
+                : 'ABSORÇÃO / DIVERGÊNCIA DE FLUXO'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* D3 Depth Canvas Container with CVD Overlay */}
       <div 
         ref={containerRef} 
-        className="w-full h-[330px] bg-[#050505] rounded-xl border border-white/5 overflow-hidden relative"
+        className="w-full h-[360px] bg-[#050505] rounded-xl border border-white/5 overflow-hidden relative"
       >
         <svg 
           ref={svgRef} 
@@ -781,28 +1310,50 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
         />
 
         {/* Legend Overlay on Canvas Top Left */}
-        <div className="absolute top-2.5 left-3 flex items-center gap-3 bg-[#0a0a0c]/85 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-white/10 text-[10px] font-mono pointer-events-none">
+        <div className="absolute top-2.5 left-3 flex flex-wrap items-center gap-3 bg-[#0a0a0c]/90 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/10 text-[10px] font-mono pointer-events-none shadow-lg">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
-            <span className="text-emerald-400 font-bold">Bids (Compras Limitadas)</span>
+            <span className="text-emerald-400 font-bold">Bids (Limit)</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-sm bg-rose-500" />
-            <span className="text-rose-400 font-bold">Asks (Vendas Limitadas)</span>
+            <span className="text-rose-400 font-bold">Asks (Limit)</span>
           </div>
           <div className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
             <span className="text-amber-300 font-bold">Mid Market</span>
           </div>
+          {showObiOverlay && (
+            <div className="flex items-center gap-1 border-l border-white/15 pl-2">
+              <Scale className="w-3 h-3 text-amber-400" />
+              <span className={`font-bold ${obiMetrics.imbalancePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                OBI: {obiMetrics.imbalancePct >= 0 ? '+' : ''}{obiMetrics.imbalancePct.toFixed(1)}%
+              </span>
+            </div>
+          )}
+          {showCvdOverlay && (
+            <>
+              <div className="flex items-center gap-1 border-l border-white/15 pl-2">
+                <span className="w-2.5 h-0.5 bg-cyan-400" />
+                <span className="text-cyan-300 font-bold">Curva CVD Delta</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-emerald-400 font-bold">▲ Buy Taker: ${((cvdMetrics.takerBuyVolumeUsd)/1_000_000).toFixed(1)}M</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-rose-400 font-bold">▼ Sell Taker: ${((cvdMetrics.takerSellVolumeUsd)/1_000_000).toFixed(1)}M</span>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Hover Crosshair Tooltip */}
+        {/* Hover Crosshair Tooltip with Depth, OBI & CVD Aggression breakdown */}
         {hoveredPoint && (
           <div 
-            className="absolute z-50 pointer-events-none bg-[#0c0d10]/95 backdrop-blur-md border border-white/20 p-2.5 rounded-xl shadow-2xl font-mono text-xs w-60 space-y-1 transition-all"
+            className="absolute z-50 pointer-events-none bg-[#0c0d10]/95 backdrop-blur-md border border-cyan-500/30 p-2.5 rounded-xl shadow-2xl font-mono text-xs w-64 space-y-1.5 transition-all"
             style={{
-              left: Math.min(dimensions.width - 250, Math.max(10, hoveredPoint.x + 15)),
-              top: Math.min(dimensions.height - 140, Math.max(10, hoveredPoint.y - 40))
+              left: Math.min(dimensions.width - 270, Math.max(10, hoveredPoint.x + 15)),
+              top: Math.min(dimensions.height - 180, Math.max(10, hoveredPoint.y - 40))
             }}
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-1">
@@ -835,6 +1386,33 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
                   {hoveredPoint.level.totalQty.toLocaleString('en-US', { maximumFractionDigits: 2 })} {baseAsset}
                 </span>
               </div>
+
+              {/* OBI at this Tier */}
+              {showObiOverlay && (
+                <div className="mt-1 pt-1 border-t border-amber-500/20 flex justify-between items-center text-[10px]">
+                  <span className="text-amber-300 font-bold">OBI na Faixa (±{Math.abs(hoveredPoint.level.deviationPct).toFixed(1)}%):</span>
+                  <span className={`font-black ${obiMetrics.imbalancePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {obiMetrics.imbalancePct >= 0 ? '+' : ''}{obiMetrics.imbalancePct.toFixed(1)}%
+                  </span>
+                </div>
+              )}
+
+              {/* Taker CVD Delta at this Price Tier */}
+              {showCvdOverlay && typeof hoveredPoint.deltaEstimatedUsd === 'number' && (
+                <div className="mt-1 pt-1 border-t border-cyan-500/20 space-y-0.5 text-[10px]">
+                  <div className="text-cyan-300 font-bold flex items-center justify-between">
+                    <span>Estimativa Delta Taker:</span>
+                    <span className={hoveredPoint.deltaEstimatedUsd >= 0 ? 'text-emerald-400 font-black' : 'text-rose-400 font-black'}>
+                      {hoveredPoint.deltaEstimatedUsd >= 0 ? '+' : ''}${(hoveredPoint.deltaEstimatedUsd / 1_000_000).toFixed(2)}M
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-neutral-400">
+                    <span className="text-emerald-400">Buy: ${(hoveredPoint.takerBuyEstimatedUsd! / 1_000_000).toFixed(2)}M</span>
+                    <span className="text-rose-400">Sell: ${(hoveredPoint.takerSellEstimatedUsd! / 1_000_000).toFixed(2)}M</span>
+                  </div>
+                </div>
+              )}
+
               {hoveredPoint.level.isWall && (
                 <div className="mt-1 pt-1 border-t border-white/10 text-[9.5px] text-amber-400 font-bold flex items-center gap-1">
                   <Sparkles className="w-3 h-3 text-amber-400" />
