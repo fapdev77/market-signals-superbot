@@ -215,13 +215,13 @@ export const ASSET_TO_SECTOR_MAP: Record<string, { sector: SectorCategoryKey; na
 /**
  * Classifica um ativo para um setor conhecido com fallback heurístico inteligente
  */
-export function classifyAssetSector(ticker: TickerData): {
+export function classifyAssetSector(ticker: TickerData | string): {
   sectorKey: SectorCategoryKey;
   definition: SectorDefinition;
   assetName: string;
   categoryTag: string;
 } {
-  const sym = (ticker.symbol || '').toUpperCase();
+  const sym = (typeof ticker === 'string' ? ticker : (ticker.symbol || '')).toUpperCase();
   
   if (ASSET_TO_SECTOR_MAP[sym]) {
     const map = ASSET_TO_SECTOR_MAP[sym];
@@ -234,13 +234,14 @@ export function classifyAssetSector(ticker: TickerData): {
   }
 
   // Heurísticas por nome de baseAsset / símbolo
-  const base = (ticker.baseAsset || sym.replace(/USDT|BUSD|USDC/g, '')).toUpperCase();
+  const tickerObj = typeof ticker === 'object' ? ticker : null;
+  const base = (tickerObj?.baseAsset || sym.replace(/USDT|BUSD|USDC/g, '')).toUpperCase();
 
   if (['DOGE', 'SHIB', 'PEPE', 'WIF', 'BONK', 'FLOKI', 'POPCAT', 'BOME', 'MEME', 'TURBO', 'NEIRO', 'DOGS', 'CAT'].some(m => base.includes(m))) {
     return {
       sectorKey: 'MEME',
       definition: SECTOR_DEFINITIONS.MEME,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'Meme Token'
     };
   }
@@ -249,7 +250,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'AI',
       definition: SECTOR_DEFINITIONS.AI,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'AI & Data Compute'
     };
   }
@@ -258,7 +259,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'DEFI',
       definition: SECTOR_DEFINITIONS.DEFI,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'DeFi Protocol'
     };
   }
@@ -267,7 +268,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'GAMING',
       definition: SECTOR_DEFINITIONS.GAMING,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'Gaming & Metaverse'
     };
   }
@@ -276,7 +277,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'DEPIN',
       definition: SECTOR_DEFINITIONS.DEPIN,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'DePIN & Storage'
     };
   }
@@ -285,7 +286,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'RWA',
       definition: SECTOR_DEFINITIONS.RWA,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'Real World Assets'
     };
   }
@@ -294,7 +295,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'TRADFI',
       definition: SECTOR_DEFINITIONS.TRADFI,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'TradFi & Macro'
     };
   }
@@ -303,7 +304,7 @@ export function classifyAssetSector(ticker: TickerData): {
     return {
       sectorKey: 'STABLECOIN',
       definition: SECTOR_DEFINITIONS.STABLECOIN,
-      assetName: ticker.name || base,
+      assetName: tickerObj?.name || base,
       categoryTag: 'Stablecoin'
     };
   }
@@ -311,7 +312,7 @@ export function classifyAssetSector(ticker: TickerData): {
   return {
     sectorKey: 'L1_L2',
     definition: SECTOR_DEFINITIONS.L1_L2,
-    assetName: ticker.name || base,
+    assetName: tickerObj?.name || base,
     categoryTag: 'Layer 1 / Layer 2'
   };
 }

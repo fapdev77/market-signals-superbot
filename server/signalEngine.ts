@@ -10,7 +10,7 @@ import { computePositionSize } from './services/RiskManager.js';
 import { incrementMetric, METRIC_NAMES } from './utils/metrics.js';
 // 6.7: confirmação de entrada (R1–R5) e teto do stop (D1–D8 aprovados em 2026-09-30).
 import { confirmEntry } from './services/entryConfirmation.js';
-import { enforceStopCap } from './services/stopCap.js';
+import { enforceStopCap, getStopCapPct } from './services/stopCap.js';
 import { isPendingEntryEnabled } from './services/pendingEntryLifecycle.js';
 
 /**
@@ -587,22 +587,55 @@ export function buildTradeSignal(
       break;
   }
 
-  const slDist = price * slPct;
+  // Institutional Dynamic Volatility (ATR-based) Risk Sizing
+  const atrMultipliers: Record<string, number> = {
+    SCALP: 1.0,
+    DAY_TRADE: 1.4,
+    INTRADAY: 1.6,
+    SWING: 2.2,
+    POSITION: 3.5,
+    COUNTER_TRADE: 1.3,
+    CUSTOM: 1.5
+  };
+  const strategyAtrMultiplier = atrMultipliers[strategyCategory] || 1.5;
+
+  let calculatedAtr = 0;
+  if (Array.isArray(klines) && klines.length >= 5) {
+    const lookbackAtr = klines.slice(-15);
+    const trueRanges = lookbackAtr.map((k, idx) => {
+      const prevClose = idx > 0 ? lookbackAtr[idx - 1].close : k.open;
+      return Math.max(
+        k.high - k.low,
+        Math.abs(k.high - prevClose),
+        Math.abs(k.low - prevClose)
+      );
+    });
+    calculatedAtr = trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
+  }
+
+  // Cap dynamic distance to the category ceiling from stopCap
+  const capPct = getStopCapPct(strategyCategory) / 100;
+  const maxAllowedDist = price * (capPct * 0.95);
+
+  // Dynamic stop distance: ATR-anchored when klines are present, percentage fallback otherwise
+  const rawSlDistance = calculatedAtr > 0 ? calculatedAtr * strategyAtrMultiplier : price * slPct;
+  const dynamicSlDistance = Math.min(rawSlDistance, maxAllowedDist);
+  const slDist = Math.max(price * 0.003, dynamicSlDistance);
 
   // Phase 2.2: Stop Loss anchored to recent candle Swing High / Swing Low extremes with safety buffer
   let recentLowestLow = price * (1 - slPct);
   let recentHighestHigh = price * (1 + slPct);
-  if (klines && klines.length >= 5) {
+  if (Array.isArray(klines) && klines.length >= 5) {
     const lookback = klines.slice(-10);
     recentLowestLow = Math.min(...lookback.map(k => k.low));
     recentHighestHigh = Math.max(...lookback.map(k => k.high));
   }
 
-  // Long: Stop loss slightly below lowest low (with 0.15% buffer)
-  // Short: Stop loss slightly above highest high (with 0.15% buffer)
+  // Long: Stop loss anchored to recent swing low and dynamic volatility, strictly capped within maxAllowedDist
+  // Short: Stop loss anchored to recent swing high and dynamic volatility, strictly capped within maxAllowedDist
   let stopLoss = isLong
-    ? Math.min(recentLowestLow * 0.9985, ticker.keyLevels.support1, price - slDist)
-    : Math.max(recentHighestHigh * 1.0015, ticker.keyLevels.resistance1, price + slDist);
+    ? Math.max(price - maxAllowedDist, Math.min(recentLowestLow * 0.9985, price - slDist))
+    : Math.min(price + maxAllowedDist, Math.max(recentHighestHigh * 1.0015, price + slDist));
 
   // R-7: cap the stop distance to maxStopLossAtrMultiple × ATR% of the recent
   // window. After an extreme-volatility candle the swing/suporte anchor could
@@ -610,7 +643,7 @@ export function buildTradeSignal(
   // the stop structural (it still sits beyond the price) but bounded, and the
   // R:R is recomputed AFTER the cap below.
   const capMultiple = weights?.maxStopLossAtrMultiple ?? 2.5;
-  if (klines && klines.length >= 5 && capMultiple > 0) {
+  if (Array.isArray(klines) && klines.length >= 5 && capMultiple > 0) {
     const lookbackAtr = klines.slice(-15);
     const trueRanges = lookbackAtr.map((k, idx) => {
       const prevClose = idx > 0 ? lookbackAtr[idx - 1].close : k.open;
@@ -655,12 +688,12 @@ export function buildTradeSignal(
   // 6.5.2: `let` porque o risco de referência é refinado após o arredondamento do stop ao tickSize.
   let riskAmount = Math.abs(price - stopLoss) || (price * slPct);
 
-  // Sanity check to ensure targets are in the correct direction
+  // Sanity check to ensure targets are in the correct direction with minimum spacing
   if (isLong) {
-    if (target1 <= price + riskAmount) target1 = price + riskAmount * 1.5;
+    if (target1 <= price + riskAmount * 0.8) target1 = price + riskAmount * 1.5;
     if (target2 <= target1) target2 = target1 + riskAmount * 1.5;
   } else {
-    if (target1 >= price - riskAmount) target1 = price - riskAmount * 1.5;
+    if (target1 >= price - riskAmount * 0.8) target1 = price - riskAmount * 1.5;
     if (target2 >= target1) target2 = target1 - riskAmount * 1.5;
   }
 

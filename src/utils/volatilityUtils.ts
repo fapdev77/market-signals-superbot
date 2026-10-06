@@ -161,8 +161,7 @@ export function calculateTickerVolatility(ticker: TickerData): TickerVolatilityM
 /**
  * Computes volatility metrics across the whole ticker universe with relative rankings.
  */
-export function calculateUniverseVolatility(tickers: TickerData[]): VolatilitySummary {
-  if (!tickers || tickers.length === 0) {
+export function calculateUniverseVolatility(tickers: TickerData[]): VolatilitySummary {  if (!tickers || tickers.length === 0) {
     return {
       items: [],
       averageAtrPercent: 0,
@@ -224,3 +223,6 @@ export function calculateUniverseVolatility(tickers: TickerData[]): VolatilitySu
     compressionCount
   };
 }
+
+export const summarizeMarketVolatility = calculateUniverseVolatility;
+

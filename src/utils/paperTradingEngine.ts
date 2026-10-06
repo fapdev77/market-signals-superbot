@@ -12,6 +12,8 @@ import {
   TickerData
 } from '../types';
 
+export type { PaperAccountState };
+
 export const PAPER_STORAGE_KEY = 'superbot_paper_trading_state_v2';
 
 export const DEFAULT_FEE_TIERS: PaperFeeTier[] = [
@@ -90,6 +92,7 @@ export const INITIAL_ACCOUNT_STATE: PaperAccountState = {
  */
 export function loadPaperAccountState(): PaperAccountState {
   try {
+    if (typeof localStorage === 'undefined') return INITIAL_ACCOUNT_STATE;
     const raw = localStorage.getItem(PAPER_STORAGE_KEY);
     if (!raw) return INITIAL_ACCOUNT_STATE;
     const parsed = JSON.parse(raw) as PaperAccountState;
@@ -118,8 +121,12 @@ export function loadPaperAccountState(): PaperAccountState {
 export function savePaperAccountState(state: PaperAccountState): void {
   try {
     state.lastUpdatedAt = Date.now();
-    localStorage.setItem(PAPER_STORAGE_KEY, JSON.stringify(state));
-    window.dispatchEvent(new Event('paper_trading_updated'));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PAPER_STORAGE_KEY, JSON.stringify(state));
+    }
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new Event('paper_trading_updated'));
+    }
   } catch (err) {
     console.error('Falha ao salvar estado do Paper Trading:', err);
   }
