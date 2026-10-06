@@ -1,4 +1,7 @@
-import { TickerData, DetectedChartPattern, ChartPatternType, PatternBias, PatternCategory, PatternStage } from '../types';
+import { TickerData, DetectedChartPattern, ChartPatternType, PatternBias, PatternCategory, PatternStage, KlineCandle } from '../types';
+import { detectDoublePatterns } from './chartPatterns/doublePatterns.js';
+import { detectFlagPatterns } from './chartPatterns/flagPatterns.js';
+import { detectWedgeAndTrianglePatterns } from './chartPatterns/trianglePatterns.js';
 
 /**
  * AI Pattern Scanner
@@ -663,14 +666,175 @@ const PATTERN_DETECTOR_RULES: PatternDetectorRule[] = [
 
 /**
  * Scans a single TickerData object and detects all matching chart patterns.
+ * If candlestick history (klines) is provided, performs pure geometric analysis
+ * (ZigZag pivots, linear regression trendlines, channel convergence, symmetry).
  * Returns patterns sorted by highest confidence score.
  */
-export function scanTickerForPatterns(ticker: TickerData): DetectedChartPattern[] {
+export function scanTickerForPatterns(
+  ticker: TickerData, 
+  klines?: KlineCandle[]
+): DetectedChartPattern[] {
   if (!ticker || !ticker.price) return [];
 
   const detected: DetectedChartPattern[] = [];
+  const geometricTypesDetected = new Set<ChartPatternType>();
 
+  // 1. PURE GEOMETRIC PATTERN DETECTION (When candlestick series is available)
+  if (Array.isArray(klines) && klines.length >= 6) {
+    const currentPrice = ticker.price;
+
+    // A. Double Patterns (Double Bottom & Double Top)
+    try {
+      const doubleMatch = detectDoublePatterns(klines, currentPrice);
+      if (doubleMatch) {
+        geometricTypesDetected.add(doubleMatch.type);
+        const isBottom = doubleMatch.type === 'DOUBLE_BOTTOM';
+        const targetGainPct = parseFloat((Math.abs(doubleMatch.measuredMoveTarget - currentPrice) / currentPrice * 100).toFixed(2));
+        const rr = calculateRiskReward(currentPrice, doubleMatch.measuredMoveTarget, doubleMatch.stopLossPrice);
+
+        detected.push({
+          id: `${ticker.symbol}_${doubleMatch.type}`,
+          type: doubleMatch.type,
+          name: isBottom ? 'Double Bottom (Fundo Duplo W)' : 'Double Top (Topo Duplo M)',
+          shortName: isBottom ? 'Double Bottom' : 'Double Top',
+          bias: isBottom ? 'BULLISH' : 'BEARISH',
+          category: 'REVERSAL',
+          stage: doubleMatch.stage,
+          confidence: doubleMatch.confidence,
+          timeframe: '15m - 1h',
+          breakoutTriggerPrice: doubleMatch.necklinePrice,
+          measuredMoveTarget: doubleMatch.measuredMoveTarget,
+          targetGainPct,
+          suggestedStopLoss: doubleMatch.stopLossPrice,
+          riskRewardRatio: rr,
+          poleOrBaseHeightPct: doubleMatch.heightPct,
+          summary: isBottom
+            ? 'Reversão clássica em W com fundos simétricos confirmados e reteste da neckline.'
+            : 'Reversão clássica em M com topos simétricos confirmados e perda da neckline.',
+          technicalRationale: [
+            isBottom
+              ? `Fundo 1 em ${doubleMatch.point1.price.toFixed(2)} e Fundo 2 em ${doubleMatch.point2.price.toFixed(2)} com Neckline em ${doubleMatch.necklinePrice.toFixed(2)}.`
+              : `Topo 1 em ${doubleMatch.point1.price.toFixed(2)} e Topo 2 em ${doubleMatch.point2.price.toFixed(2)} com Neckline em ${doubleMatch.necklinePrice.toFixed(2)}.`,
+            `Amplitude geométrica do padrão: ${doubleMatch.heightPct}% de projeção medida.`,
+            ...(ticker.cvdDirection === (isBottom ? 'BUY' : 'SELL')
+              ? [`Order flow CVD em direção (${ticker.cvdDirection}) confirmando absorção institucional.`]
+              : [])
+          ],
+          keyLevelsConfluence: `Neckline em ${doubleMatch.necklinePrice.toFixed(2)} | Invalidação em ${doubleMatch.stopLossPrice.toFixed(2)}`
+        });
+      }
+    } catch {
+      // Graceful error protection
+    }
+
+    // B. Flag Patterns (Bull Flag & Bear Flag)
+    try {
+      const flagMatch = detectFlagPatterns(klines, currentPrice);
+      if (flagMatch) {
+        geometricTypesDetected.add(flagMatch.type);
+        const isBull = flagMatch.type === 'BULL_FLAG';
+        const targetGainPct = parseFloat((Math.abs(flagMatch.measuredMoveTarget - currentPrice) / currentPrice * 100).toFixed(2));
+        const rr = calculateRiskReward(currentPrice, flagMatch.measuredMoveTarget, flagMatch.stopLossPrice);
+
+        detected.push({
+          id: `${ticker.symbol}_${flagMatch.type}`,
+          type: flagMatch.type,
+          name: isBull ? 'Bull Flag (Bandeira de Alta)' : 'Bear Flag (Bandeira de Baixa)',
+          shortName: isBull ? 'Bull Flag' : 'Bear Flag',
+          bias: isBull ? 'BULLISH' : 'BEARISH',
+          category: 'CONTINUATION',
+          stage: flagMatch.stage,
+          confidence: flagMatch.confidence,
+          timeframe: '15m - 1h',
+          breakoutTriggerPrice: flagMatch.breakoutTriggerPrice,
+          measuredMoveTarget: flagMatch.measuredMoveTarget,
+          targetGainPct,
+          suggestedStopLoss: flagMatch.stopLossPrice,
+          riskRewardRatio: rr,
+          poleOrBaseHeightPct: flagMatch.poleHeightPct,
+          summary: isBull
+            ? 'Bandeira de alta com mastro impulsivo e canal descendente de baixa volatilidade.'
+            : 'Bandeira de baixa com mastro vendedor e repique ascendente de baixa volatilidade.',
+          technicalRationale: [
+            `Mastro impulsivo de ${flagMatch.poleHeightPct.toFixed(1)}% medido entre pivôs de volume.`,
+            `Canal da bandeira com retração contida e inclinação ${isBull ? 'descendente' : 'ascendente'}.`,
+            ...(ticker.cvdDirection === (isBull ? 'BUY' : 'SELL')
+              ? [`Delta CVD (${ticker.cvdDirection}) alinhado à continuidade da tendência.`]
+              : [])
+          ],
+          keyLevelsConfluence: `Gatilho em ${flagMatch.breakoutTriggerPrice.toFixed(2)} | Invalidação em ${flagMatch.stopLossPrice.toFixed(2)}`
+        });
+      }
+    } catch {
+      // Graceful error protection
+    }
+
+    // C. Wedge & Triangle Patterns (Ascending, Descending, Wedges)
+    try {
+      const triangleMatch = detectWedgeAndTrianglePatterns(klines, currentPrice);
+      if (triangleMatch) {
+        geometricTypesDetected.add(triangleMatch.type);
+        const isBullish = triangleMatch.type === 'ASCENDING_TRIANGLE' || triangleMatch.type === 'FALLING_WEDGE';
+        const isTriangle = triangleMatch.type === 'ASCENDING_TRIANGLE' || triangleMatch.type === 'DESCENDING_TRIANGLE';
+        const targetGainPct = parseFloat((Math.abs(triangleMatch.measuredMoveTarget - currentPrice) / currentPrice * 100).toFixed(2));
+        const rr = calculateRiskReward(currentPrice, triangleMatch.measuredMoveTarget, triangleMatch.stopLossPrice);
+
+        const nameMap: Record<string, string> = {
+          ASCENDING_TRIANGLE: 'Triângulo Ascendente',
+          DESCENDING_TRIANGLE: 'Triângulo Descendente',
+          FALLING_WEDGE: 'Falling Wedge (Cunha Descendente)',
+          RISING_WEDGE: 'Rising Wedge (Cunha Ascendente)'
+        };
+
+        const shortNameMap: Record<string, string> = {
+          ASCENDING_TRIANGLE: 'Asc. Triangle',
+          DESCENDING_TRIANGLE: 'Desc. Triangle',
+          FALLING_WEDGE: 'Falling Wedge',
+          RISING_WEDGE: 'Rising Wedge'
+        };
+
+        detected.push({
+          id: `${ticker.symbol}_${triangleMatch.type}`,
+          type: triangleMatch.type,
+          name: nameMap[triangleMatch.type] || triangleMatch.type,
+          shortName: shortNameMap[triangleMatch.type] || triangleMatch.type,
+          bias: isBullish ? 'BULLISH' : 'BEARISH',
+          category: isTriangle ? 'BREAKOUT' : 'REVERSAL',
+          stage: triangleMatch.stage,
+          confidence: triangleMatch.confidence,
+          timeframe: isTriangle ? '30m - 2h' : '1h - 4h',
+          breakoutTriggerPrice: triangleMatch.breakoutTriggerPrice,
+          measuredMoveTarget: triangleMatch.measuredMoveTarget,
+          targetGainPct,
+          suggestedStopLoss: triangleMatch.stopLossPrice,
+          riskRewardRatio: rr,
+          summary: isTriangle
+            ? `Padrão de triângulo geométrico com compressão de spreads contra nível horizontal.`
+            : `Padrão de cunha geométrica com linhas convergentes e exaustão direcional.`,
+          technicalRationale: [
+            triangleMatch.type === 'ASCENDING_TRIANGLE'
+              ? `Resistência horizontal estática em ${triangleMatch.breakoutTriggerPrice.toFixed(2)} com fundos ascendentes.`
+              : triangleMatch.type === 'DESCENDING_TRIANGLE'
+              ? `Suporte horizontal estático em ${triangleMatch.breakoutTriggerPrice.toFixed(2)} com topos descendentes.`
+              : triangleMatch.type === 'FALLING_WEDGE'
+              ? `Cunha descendente com linhas de suporte e resistência convergindo para baixo.`
+              : `Cunha ascendente com perda de momentum e linhas convergindo para cima.`,
+            `Slope Linha Superior: ${triangleMatch.upperTrendline.slope.toFixed(3)} | Slope Linha Inferior: ${triangleMatch.lowerTrendline.slope.toFixed(3)}`
+          ],
+          keyLevelsConfluence: `Gatilho em ${triangleMatch.breakoutTriggerPrice.toFixed(2)} | Invalidação em ${triangleMatch.stopLossPrice.toFixed(2)}`
+        });
+      }
+    } catch {
+      // Graceful error protection
+    }
+  }
+
+  // 2. HEURISTIC RULES FALLBACK (Only for pattern types not already confirmed geometrically)
   for (const rule of PATTERN_DETECTOR_RULES) {
+    if (geometricTypesDetected.has(rule.type)) {
+      continue; // Pure geometric detection takes strict precedence
+    }
+
     try {
       const match = rule.detect(ticker);
       if (match) {
@@ -688,22 +852,36 @@ export function scanTickerForPatterns(ticker: TickerData): DetectedChartPattern[
 /**
  * Returns the single top-confidence detected pattern for a ticker, or null if none.
  */
-export function getTopDetectedPattern(ticker: TickerData): DetectedChartPattern | null {
-  const patterns = scanTickerForPatterns(ticker);
+export function getTopDetectedPattern(
+  ticker: TickerData, 
+  klines?: KlineCandle[]
+): DetectedChartPattern | null {
+  const patterns = scanTickerForPatterns(ticker, klines);
   return patterns.length > 0 ? patterns[0] : null;
 }
 
 /**
  * Batch scans an array of Tickers, returning a Map of symbol -> DetectedChartPattern[].
+ * Supports an optional Map or dictionary of candlestick series per symbol.
  */
-export function scanAllTickersForPatterns(tickers: TickerData[]): Map<string, DetectedChartPattern[]> {
+export function scanAllTickersForPatterns(
+  tickers: TickerData[],
+  klinesMap?: Map<string, KlineCandle[]> | Record<string, KlineCandle[]>
+): Map<string, DetectedChartPattern[]> {
   const resultMap = new Map<string, DetectedChartPattern[]>();
 
   if (!Array.isArray(tickers)) return resultMap;
 
   for (const t of tickers) {
     if (t && t.symbol) {
-      const patterns = scanTickerForPatterns(t);
+      let klines: KlineCandle[] | undefined;
+      if (klinesMap instanceof Map) {
+        klines = klinesMap.get(t.symbol);
+      } else if (klinesMap && typeof klinesMap === 'object') {
+        klines = (klinesMap as Record<string, KlineCandle[]>)[t.symbol];
+      }
+
+      const patterns = scanTickerForPatterns(t, klines);
       if (patterns.length > 0) {
         resultMap.set(t.symbol, patterns);
       }

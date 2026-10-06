@@ -329,7 +329,9 @@ export function scanRSIDivergence(
     const riskReward = calculateRiskReward(price, targetPrice, stopLossPrice);
 
     return {
+      id: `${ticker.symbol}_${timeframe}`,
       symbol: ticker.symbol,
+      ticker,
       timeframe,
       divergenceType: analysis.divergenceType,
       bias: analysis.bias,
@@ -338,13 +340,18 @@ export function scanRSIDivergence(
       rsiPrevSwing: analysis.rsiPrevSwing,
       priceCurrent: analysis.priceCurrent,
       pricePrevSwing: analysis.pricePrevSwing,
-      suggestedEntry: price,
-      targetPrice,
-      stopLossPrice,
+      divergenceSlope: parseFloat((Math.abs(analysis.rsiCurrent - analysis.rsiPrevSwing) / 10).toFixed(2)),
+      status: 'ACTIVE',
+      isOverbought: analysis.rsiCurrent >= 70,
+      isOversold: analysis.rsiCurrent <= 30,
+      entryZone: [parseFloat((price * 0.998).toFixed(4)), parseFloat((price * 1.002).toFixed(4))],
+      stopLoss: stopLossPrice,
+      target1: targetPrice,
+      target2: parseFloat((targetPrice * (analysis.bias === 'BULLISH' ? 1.02 : 0.98)).toFixed(4)),
       riskRewardRatio: riskReward,
+      confluences,
       verdict: analysis.verdict,
-      confluenceFactors: confluences,
-      updatedAt: Date.now()
+      detectedAt: Date.now()
     };
   }
 
@@ -384,7 +391,9 @@ export function scanRSIDivergence(
   const stopLossPrice = bias === 'BULLISH' ? (key?.support1 ? key.support1 * 0.99 : price * 0.985) : (key?.resistance1 ? key.resistance1 * 1.01 : price * 1.015);
 
   return {
+    id: `${ticker.symbol}_${timeframe}`,
     symbol: ticker.symbol,
+    ticker,
     timeframe,
     divergenceType,
     bias,
@@ -393,22 +402,31 @@ export function scanRSIDivergence(
     rsiPrevSwing,
     priceCurrent,
     pricePrevSwing,
-    suggestedEntry: price,
-    targetPrice,
-    stopLossPrice,
+    divergenceSlope: parseFloat((Math.abs(rsiCurrent - rsiPrevSwing) / 10).toFixed(2)),
+    status: 'ACTIVE',
+    isOverbought: rsiCurrent >= 70,
+    isOversold: rsiCurrent <= 30,
+    entryZone: [parseFloat((price * 0.998).toFixed(4)), parseFloat((price * 1.002).toFixed(4))],
+    stopLoss: stopLossPrice,
+    target1: targetPrice,
+    target2: parseFloat((targetPrice * (bias === 'BULLISH' ? 1.02 : 0.98)).toFixed(4)),
     riskRewardRatio: calculateRiskReward(price, targetPrice, stopLossPrice),
+    confluences,
     verdict,
-    confluenceFactors: confluences,
-    updatedAt: Date.now()
+    detectedAt: Date.now()
   };
 }
 
 export interface UniverseRSIDivergenceSummary {
-  items: Array<RSIDivergenceItem & { id?: string }>;
+  items: Array<RSIDivergenceItem>;
   bullishCount: number;
   bearishCount: number;
+  regularCount: number;
+  hiddenCount: number;
   totalDivergences: number;
-  topOpportunity: (RSIDivergenceItem & { id?: string }) | null;
+  avgRSI: number;
+  marketCondition: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL';
+  topOpportunity: RSIDivergenceItem | null;
 }
 
 /**
@@ -423,22 +441,27 @@ export function scanUniverseRSIDivergences(
       items: [],
       bullishCount: 0,
       bearishCount: 0,
+      regularCount: 0,
+      hiddenCount: 0,
       totalDivergences: 0,
+      avgRSI: 50,
+      marketCondition: 'NEUTRAL',
       topOpportunity: null
     };
   }
 
-  const items: Array<RSIDivergenceItem & { id?: string }> = tickers.map(t => {
-    const div = scanRSIDivergence(t, timeframe);
-    return {
-      ...div,
-      id: `${t.symbol}_${timeframe}`
-    };
-  });
+  const items: Array<RSIDivergenceItem> = tickers.map(t => scanRSIDivergence(t, timeframe));
 
   const divergences = items.filter(i => i.divergenceType !== 'NO_DIVERGENCE');
+  const regularCount = divergences.filter(i => i.divergenceType === 'REGULAR_BULLISH' || i.divergenceType === 'REGULAR_BEARISH').length;
+  const hiddenCount = divergences.filter(i => i.divergenceType === 'HIDDEN_BULLISH' || i.divergenceType === 'HIDDEN_BEARISH').length;
   const bullishCount = divergences.filter(i => i.bias === 'BULLISH').length;
   const bearishCount = divergences.filter(i => i.bias === 'BEARISH').length;
+
+  const totalRSI = items.reduce((acc, i) => acc + (i.rsiCurrent || 50), 0);
+  const avgRSI = items.length > 0 ? Math.round((totalRSI / items.length) * 10) / 10 : 50;
+  const marketCondition: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL' = 
+    avgRSI >= 65 ? 'OVERBOUGHT' : avgRSI <= 35 ? 'OVERSOLD' : 'NEUTRAL';
 
   const sortedByConfidence = [...divergences].sort((a, b) => b.confidence - a.confidence);
   const topOpportunity = sortedByConfidence[0] || null;
@@ -447,7 +470,11 @@ export function scanUniverseRSIDivergences(
     items,
     bullishCount,
     bearishCount,
+    regularCount,
+    hiddenCount,
     totalDivergences: divergences.length,
+    avgRSI,
+    marketCondition,
     topOpportunity
   };
 }

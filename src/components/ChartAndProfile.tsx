@@ -1049,8 +1049,8 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
   }
 
   const detectedPattern = useMemo(() => {
-    return ticker ? getTopDetectedPattern(ticker) : null;
-  }, [ticker]);
+    return ticker ? getTopDetectedPattern(ticker, klines) : null;
+  }, [ticker, klines]);
 
   return (
     <div className="space-y-4 font-mono pb-10">
