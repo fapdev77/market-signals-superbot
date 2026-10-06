@@ -357,7 +357,7 @@ export function processTickerState(
   else if (weights.volumeProfileTimeframe === '4h') divTimeframe = '4h';
   else if (weights.volumeProfileTimeframe === '1d' || weights.volumeProfileTimeframe === '1D') divTimeframe = '1D';
 
-  const rsiDivItem = scanRSIDivergence(partialTickerForDivergence, divTimeframe);
+  const rsiDivItem = scanRSIDivergence(partialTickerForDivergence, divTimeframe, klines);
   const rsiDivWeight = weights.rsiDivergenceWeight ?? 20;
 
   if (rsiDivItem && rsiDivItem.divergenceType !== 'NO_DIVERGENCE') {

@@ -144,9 +144,10 @@ async function startServer() {
   const portIdx = args.indexOf('--port');
   const cliPort = portIdx !== -1 && args[portIdx + 1] ? Number(args[portIdx + 1]) : undefined;
 
-  const PORT = cliPort || (Number(process.env.PORT) || 3000);
-  // M4.1: Host binding security guard (defaults to 127.0.0.1; forbids 0.0.0.0 in prod without flag)
-  const HOST = resolveServerHost(cliHost || process.env.HOST);
+  const PORT = cliPort || (process.env.NODE_ENV !== 'production' ? 3000 : (Number(process.env.PORT) || 3000));
+  // M4.1: Host binding security guard (defaults to 0.0.0.0 in dev for container ingress, 127.0.0.1 in prod)
+  const defaultDevHost = process.env.NODE_ENV !== 'production' ? '0.0.0.0' : undefined;
+  const HOST = resolveServerHost(cliHost || process.env.HOST || defaultDevHost);
   enforceHostBinding(HOST, process.env.NODE_ENV, process.env.ALLOW_PUBLIC_BIND === 'true');
 
   // M4.3: Check database integrity and restore from backup if corrupted

@@ -7,6 +7,7 @@ import { getErrorMessage, getHttpStatus, getErrorHeaders } from './utils/errors.
 // R-13: health por feed — todo caminho de fetch grava sucesso/falha no registro central.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
 import { incrementMetric } from './utils/metrics.js';
+import { computeUnifiedVolumeProfile } from './utils/volumeProfileCore.js';
 // R-2: os geradores sintéticos vivem todos em server/demo/.
 import { generateFallbackKlines } from './demo/syntheticKlines.js';
 import { simulateLongShortRatio } from './demo/syntheticMarket.js';
@@ -1470,67 +1471,11 @@ export async function fetchKlines(
 }
 
 /**
- * Calculates Volume Profile (POC, VAH, VAL) from candle arrays
+ * Calculates Volume Profile (POC, VAH, VAL) from candle arrays using
+ * unified proportional distribution across each candle's price span.
  */
 export function calculateVolumeProfile(klines: KlineCandle[], binsCount: number = 24) {
-  if (!klines.length) {
-    return { vah: 0, val: 0, poc: 0, bins: [] };
-  }
-
-  let minPrice = Infinity;
-  let maxPrice = -Infinity;
-  klines.forEach(c => {
-    if (c.low < minPrice) minPrice = c.low;
-    if (c.high > maxPrice) maxPrice = c.high;
-  });
-
-  const step = (maxPrice - minPrice) / binsCount || 1;
-  const bins = Array.from({ length: binsCount }, (_, i) => ({
-    priceMin: minPrice + i * step,
-    priceMax: minPrice + (i + 1) * step,
-    midPrice: minPrice + (i + 0.5) * step,
-    volume: 0,
-    buyVolume: 0
-  }));
-
-  let totalVolume = 0;
-  klines.forEach(c => {
-    const mid = (c.high + c.low) / 2;
-    const binIdx = Math.min(Math.floor((mid - minPrice) / step), binsCount - 1);
-    if (binIdx >= 0 && binIdx < binsCount) {
-      bins[binIdx].volume += c.volume;
-      bins[binIdx].buyVolume += c.takerBuyVolume;
-      totalVolume += c.volume;
-    }
-  });
-
-  // POC = bin with max volume
-  let pocBin = bins[0];
-  bins.forEach(b => {
-    if (b.volume > pocBin.volume) pocBin = b;
-  });
-
-  // Value Area = 70% of total volume around POC
-  const sortedBins = [...bins].sort((a, b) => b.volume - a.volume);
-  let accumulatedVol = 0;
-  const targetVol = totalVolume * 0.7;
-  const valueBins: typeof bins = [];
-
-  for (const b of sortedBins) {
-    valueBins.push(b);
-    accumulatedVol += b.volume;
-    if (accumulatedVol >= targetVol) break;
-  }
-
-  const val = Math.min(...valueBins.map(b => b.priceMin));
-  const vah = Math.max(...valueBins.map(b => b.priceMax));
-
-  return {
-    vah,
-    val,
-    poc: pocBin.midPrice,
-    bins
-  };
+  return computeUnifiedVolumeProfile(klines, binsCount, 0.70);
 }
 
 /**
