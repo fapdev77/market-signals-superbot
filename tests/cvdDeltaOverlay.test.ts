@@ -7,9 +7,11 @@ import {
   computeMultiTierOBI,
   computeCvdVolumeOscillator,
   classifyCvdMomentum,
+  computeHistoricalCvdComparison,
   type CvdDeltaMetrics,
   type OrderBookImbalanceResult,
-  type VolumeOscillatorResult
+  type VolumeOscillatorResult,
+  type HistoricalCvdComparison
 } from '../src/utils/cvdDeltaUtils.js';
 import type { TickerData, OrderBookLevel } from '../src/types.js';
 
@@ -323,5 +325,46 @@ describe('CVD Delta Overlay & Real-Time Taker Aggression (TDD)', () => {
       expect(emptyResult.series).toHaveLength(0);
     });
   });
+
+  describe('computeHistoricalCvdComparison (Real-time vs 30m Flow Lookback)', () => {
+    it('compares instantaneous taker flow against 30-minute historical accumulation baseline', () => {
+      const ticker = makeMockTicker({
+        price: 65000,
+        quoteVolume24h: 3000000000,
+        takerBuyRatio: 0.60,
+        cvdDirection: 'BUY'
+      });
+
+      const comparison: HistoricalCvdComparison = computeHistoricalCvdComparison(ticker, 30, 30);
+
+      expect(comparison).toBeDefined();
+      expect(comparison.lookbackMinutes).toBe(30);
+      expect(comparison.historicalNetDeltaUsd).toBeGreaterThan(0);
+      expect(comparison.historicalBuyRatioPct).toBeGreaterThan(50);
+      expect(comparison.historicalCvdTrend).toBe('ACCUMULATION');
+      expect(comparison.realtimeBuyRatioPct).toBe(60);
+      expect(comparison.series).toHaveLength(30);
+      expect(typeof comparison.accumulationShiftPct).toBe('number');
+      expect(typeof comparison.flowRegimeLabel).toBe('string');
+      expect(typeof comparison.flowRegimeDescription).toBe('string');
+    });
+
+    it('detects distribution flow when historical flow is selling dominated', () => {
+      const ticker = makeMockTicker({
+        price: 65000,
+        quoteVolume24h: 3000000000,
+        takerBuyRatio: 0.38,
+        cvdDirection: 'SELL'
+      });
+
+      const comparison = computeHistoricalCvdComparison(ticker, 30, 30);
+
+      expect(comparison.historicalCvdTrend).toBe('DISTRIBUTION');
+      expect(comparison.historicalNetDeltaUsd).toBeLessThan(0);
+      expect(comparison.historicalBuyRatioPct).toBeLessThan(50);
+      expect(comparison.flowRegime).toContain('DISTRIBUTION');
+    });
+  });
 });
+
 
