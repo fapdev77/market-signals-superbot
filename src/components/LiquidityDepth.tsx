@@ -37,6 +37,12 @@ import {
   type CvdDeltaDataPoint,
   type OrderBookImbalanceResult
 } from '../utils/cvdDeltaUtils';
+import {
+  computeVolumeDeltaOscillator,
+  generateVolumeOscillatorSeries,
+  type VolumeOscillatorResult,
+  type VolumeOscillatorPoint
+} from '../utils/volumeOscillatorUtils';
 
 interface LiquidityDepthProps {
   ticker: TickerData;
@@ -59,6 +65,8 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
   const [cvdOverlayMode, setCvdOverlayMode] = useState<'curve' | 'bars' | 'split'>('curve');
   const [showObiOverlay, setShowObiOverlay] = useState<boolean>(true);
   const [obiViewMode, setObiViewMode] = useState<'compact' | 'tiers' | 'gauge'>('compact');
+  const [showVolumeOscillator, setShowVolumeOscillator] = useState<boolean>(true);
+  const [oscillatorPreset, setOscillatorPreset] = useState<'fast' | 'standard'>('fast');
   const [hoveredPoint, setHoveredPoint] = useState<{
     side: 'bid' | 'ask';
     level: OrderBookLevel;
@@ -280,6 +288,18 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
   const imbalance = obiMetrics.imbalancePct;
   const divergence = useMemo(() => classifyOrderFlowDivergence(ticker, imbalance), [ticker, imbalance]);
   const cvdSeries = useMemo(() => generateCvdDeltaSeries(ticker, 28), [ticker]);
+
+  // Volume Oscillator for CVD Delta Shifts
+  const volumeOsc = useMemo(() => {
+    const periods = oscillatorPreset === 'fast' 
+      ? { fastPeriod: 5, slowPeriod: 14 } 
+      : { fastPeriod: 10, slowPeriod: 21 };
+    return computeVolumeDeltaOscillator(ticker, periods);
+  }, [ticker, oscillatorPreset]);
+
+  const oscSeries = useMemo(() => {
+    return generateVolumeOscillatorSeries(ticker, 30);
+  }, [ticker, oscillatorPreset]);
 
   // Render D3 Depth Chart with CVD Delta Overlay
   useEffect(() => {
@@ -839,6 +859,27 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
           >
             <Activity className={`w-3.5 h-3.5 ${showCvdOverlay ? 'text-cyan-400' : 'text-neutral-500'}`} />
             <span>CVD Delta {showCvdOverlay ? 'ON' : 'OFF'}</span>
+          </button>
+
+          {/* Volume Oscillator Toggle Button */}
+          <button
+            onClick={() => setShowVolumeOscillator(prev => !prev)}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition flex items-center gap-1.5 ${
+              showVolumeOscillator 
+                ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 shadow-sm' 
+                : 'bg-neutral-900 text-neutral-400 border-white/10 hover:text-white'
+            }`}
+            title="Ativar/desativar indicador de Volume Oscillator (Momento do Delta CVD)"
+          >
+            <BarChart2 className={`w-3.5 h-3.5 ${showVolumeOscillator ? 'text-purple-400' : 'text-neutral-500'}`} />
+            <span>Oscilador {showVolumeOscillator ? 'ON' : 'OFF'}</span>
+            <span className={`text-[9px] px-1 py-0.2 rounded font-black ${
+              volumeOsc.oscillatorPct >= 0 
+                ? 'bg-emerald-500/20 text-emerald-300' 
+                : 'bg-rose-500/20 text-rose-300'
+            }`}>
+              {volumeOsc.oscillatorPct >= 0 ? '+' : ''}{volumeOsc.oscillatorPct.toFixed(1)}%
+            </span>
           </button>
 
           {/* CVD Mode Selector (when active) */}
@@ -1423,6 +1464,189 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
           </div>
         )}
       </div>
+
+      {/* Volume Oscillator Indicator at Bottom of Widget */}
+      {showVolumeOscillator && (
+        <div className="bg-[#090b10] border border-purple-500/25 rounded-xl p-3.5 space-y-3 shadow-xl">
+          {/* Header & Metric Bar */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 border-b border-white/10 pb-2.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="p-1.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-400">
+                <Gauge className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-white font-mono uppercase tracking-wider">
+                    Volume Oscillator (Momentum CVD Delta)
+                  </span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded font-black font-mono border ${
+                    volumeOsc.momentumState === 'EXPANDING_BULLISH'
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : volumeOsc.momentumState === 'FADING_BULLISH'
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                      : volumeOsc.momentumState === 'EXPANDING_BEARISH'
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                      : volumeOsc.momentumState === 'FADING_BEARISH'
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      : 'bg-neutral-800 text-neutral-400 border-white/10'
+                  }`}>
+                    {volumeOsc.trendLabel}
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400 font-sans mt-0.5">
+                  {volumeOsc.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Controls & Current Stats */}
+            <div className="flex items-center gap-3 font-mono text-xs">
+              <div className="flex items-center bg-[#050505] p-0.5 rounded-lg border border-purple-500/30">
+                <button
+                  onClick={() => setOscillatorPreset('fast')}
+                  className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                    oscillatorPreset === 'fast'
+                      ? 'bg-purple-600 text-white font-extrabold shadow'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                  title="Configuração Rápida: EMA 5 vs EMA 14"
+                >
+                  Rápido (5/14)
+                </button>
+                <button
+                  onClick={() => setOscillatorPreset('standard')}
+                  className={`px-2 py-0.5 rounded text-[9.5px] font-bold transition ${
+                    oscillatorPreset === 'standard'
+                      ? 'bg-purple-600 text-white font-extrabold shadow'
+                      : 'text-neutral-400 hover:text-white'
+                  }`}
+                  title="Configuração Padrão: EMA 10 vs EMA 21"
+                >
+                  Padrão (10/21)
+                </button>
+              </div>
+
+              <div className="text-right border-l border-white/10 pl-3">
+                <div className="text-[9.5px] text-neutral-400">Oscilador %</div>
+                <div className={`text-xs font-black ${
+                  volumeOsc.oscillatorPct >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
+                  {volumeOsc.oscillatorPct >= 0 ? '+' : ''}{volumeOsc.oscillatorPct.toFixed(1)}%
+                </div>
+              </div>
+
+              <div className="text-right border-l border-white/10 pl-3">
+                <div className="text-[9.5px] text-neutral-400">Velocidade</div>
+                <div className="text-xs font-bold text-purple-300">
+                  {volumeOsc.velocityScore}/100
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Visual Mini Subchart for Volume Oscillator Histogram & Curve */}
+          <div className="w-full h-24 bg-[#050507] rounded-lg border border-white/5 p-2 relative overflow-hidden flex flex-col justify-between">
+            {/* Reference Grid lines */}
+            <div className="absolute inset-0 flex flex-col justify-between p-2 pointer-events-none opacity-20">
+              <div className="border-b border-dashed border-emerald-500 w-full" />
+              <div className="border-b border-solid border-white/40 w-full" />
+              <div className="border-b border-dashed border-rose-500 w-full" />
+            </div>
+
+            {/* Zero reference label */}
+            <div className="absolute top-1/2 -translate-y-1/2 right-2 text-[8.5px] font-mono text-neutral-500 pointer-events-none">
+              0.0% Linha Base
+            </div>
+
+            {/* Histogram Bars & Sparkline */}
+            <div className="w-full h-full flex items-center justify-between gap-1 z-10 pt-1 pb-1">
+              {oscSeries.map((pt, idx) => {
+                const heightPct = Math.min(46, Math.max(6, Math.abs(pt.oscillatorValue) * 1.5));
+                const isPositive = pt.oscillatorValue >= 0;
+
+                return (
+                  <div 
+                    key={idx}
+                    className="flex-1 h-full flex flex-col justify-center items-center group relative cursor-crosshair"
+                  >
+                    {/* Bar above zero */}
+                    <div className="w-full h-1/2 flex items-end justify-center">
+                      {isPositive && (
+                        <div 
+                          className={`w-full max-w-[6px] rounded-t-sm transition-all ${
+                            pt.color === 'emerald'
+                              ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]'
+                              : pt.color === 'cyan'
+                              ? 'bg-cyan-400/80'
+                              : 'bg-emerald-600/70'
+                          }`}
+                          style={{ height: `${heightPct}%` }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Bar below zero */}
+                    <div className="w-full h-1/2 flex items-start justify-center">
+                      {!isPositive && (
+                        <div 
+                          className={`w-full max-w-[6px] rounded-b-sm transition-all ${
+                            pt.color === 'rose'
+                              ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.5)]'
+                              : pt.color === 'amber'
+                              ? 'bg-amber-400/80'
+                              : 'bg-rose-600/70'
+                          }`}
+                          style={{ height: `${heightPct}%` }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Tooltip on hover */}
+                    <div className="hidden group-hover:block absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-[#0c0d12] border border-purple-500/40 px-2 py-1 rounded text-[9px] font-mono whitespace-nowrap shadow-xl z-30 pointer-events-none">
+                      <span className="text-neutral-400">{pt.timeLabel}:</span>{' '}
+                      <strong className={pt.oscillatorValue >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {pt.oscillatorValue >= 0 ? '+' : ''}{pt.oscillatorValue.toFixed(1)}%
+                      </strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Bottom Diagnostic Breakdown Footer */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10.5px] font-mono pt-1">
+            <div className="bg-[#0c0f16] p-2 rounded border border-white/5 flex flex-col">
+              <span className="text-neutral-400 text-[9.5px]">Fast EMA Delta</span>
+              <span className="text-emerald-400 font-bold">
+                ${(volumeOsc.fastEma / 1_000_000).toFixed(2)}M
+              </span>
+            </div>
+            <div className="bg-[#0c0f16] p-2 rounded border border-white/5 flex flex-col">
+              <span className="text-neutral-400 text-[9.5px]">Slow EMA Delta</span>
+              <span className="text-neutral-300 font-bold">
+                ${(volumeOsc.slowEma / 1_000_000).toFixed(2)}M
+              </span>
+            </div>
+            <div className="bg-[#0c0f16] p-2 rounded border border-white/5 flex flex-col">
+              <span className="text-neutral-400 text-[9.5px]">Spread Momentum</span>
+              <span className={`font-bold ${
+                volumeOsc.histogram >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}>
+                {volumeOsc.histogram >= 0 ? '+' : ''}${(volumeOsc.histogram / 1_000_000).toFixed(2)}M
+              </span>
+            </div>
+            <div className="bg-[#0c0f16] p-2 rounded border border-white/5 flex flex-col">
+              <span className="text-neutral-400 text-[9.5px]">Sinal Taker</span>
+              <span className="text-purple-300 font-black">
+                {volumeOsc.signal.replace(/_/g, ' ')}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+

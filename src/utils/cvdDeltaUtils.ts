@@ -413,3 +413,239 @@ export function computeMultiTierOBI(
   };
 }
 
+export type CvdMomentumState = 
+  | 'BULLISH_ACCELERATION'
+  | 'BULLISH_DECELERATION'
+  | 'BEARISH_ACCELERATION'
+  | 'BEARISH_DECELERATION'
+  | 'NEUTRAL_CONVERGENCE';
+
+export interface VolumeOscillatorDataPoint {
+  timestamp: number;
+  timeLabel: string;
+  oscillator: number;      // % momentum difference
+  signal: number;          // smoothed signal line
+  histogram: number;       // oscillator - signal
+  deltaUsd: number;        // raw delta for bucket
+  takerBuyUsd: number;
+  takerSellUsd: number;
+  fastMa: number;
+  slowMa: number;
+  state: CvdMomentumState;
+  color: string;
+}
+
+export interface VolumeOscillatorResult {
+  currentOscillator: number;
+  currentSignal: number;
+  currentHistogram: number;
+  previousHistogram: number;
+  momentumState: CvdMomentumState;
+  momentumStateLabel: string;
+  momentumStateDescription: string;
+  trendDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  momentumIntensity: number; // 0 to 100%
+  velocityUsdPerMin: number;
+  fastPeriod: number;
+  slowPeriod: number;
+  signalPeriod: number;
+  series: VolumeOscillatorDataPoint[];
+}
+
+/**
+ * Calculates exponential moving average array.
+ */
+function calculateEMA(values: number[], period: number): number[] {
+  if (!values || values.length === 0) return [];
+  const k = 2 / (period + 1);
+  const ema: number[] = [];
+  let prev = values[0];
+  for (let i = 0; i < values.length; i++) {
+    if (i === 0) {
+      prev = values[0];
+    } else {
+      prev = values[i] * k + prev * (1 - k);
+    }
+    ema.push(prev);
+  }
+  return ema;
+}
+
+/**
+ * Classifies the momentum state based on current oscillator, signal, and histogram changes.
+ */
+export function classifyCvdMomentum(
+  oscillator: number,
+  signal: number,
+  histogram: number,
+  prevHistogram: number
+): {
+  state: CvdMomentumState;
+  label: string;
+  description: string;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  intensity: number;
+  color: string;
+} {
+  const isPositiveOsc = oscillator >= 0;
+  const isExpandingHist = Math.abs(histogram) >= Math.abs(prevHistogram);
+
+  if (Math.abs(oscillator) < 0.2 && Math.abs(histogram) < 0.1) {
+    return {
+      state: 'NEUTRAL_CONVERGENCE',
+      label: 'Convergência Neutra',
+      description: 'Delta taker e oscilador em equilíbrio de fluxo com momentum estagnado.',
+      direction: 'NEUTRAL',
+      intensity: 10,
+      color: '#94a3b8'
+    };
+  }
+
+  if (isPositiveOsc) {
+    if (histogram >= 0 && (histogram >= prevHistogram || isExpandingHist)) {
+      return {
+        state: 'BULLISH_ACCELERATION',
+        label: 'Aceleração Compradora Forte',
+        description: 'Pressão taker compradora em franca expansão de momentum (impulso institucional positivo).',
+        direction: 'BULLISH',
+        intensity: Math.min(100, Math.round(Math.abs(oscillator) * 12 + Math.abs(histogram) * 15)),
+        color: '#10b981'
+      };
+    } else {
+      return {
+        state: 'BULLISH_DECELERATION',
+        label: 'Exaustão Compradora (Desaceleração)',
+        description: 'Fluxo ainda positivo, mas momentum comprador enfraquecendo e convergindo para venda.',
+        direction: 'BULLISH',
+        intensity: Math.max(20, Math.min(80, Math.round(Math.abs(oscillator) * 8))),
+        color: '#0d9488'
+      };
+    }
+  } else {
+    if (histogram <= 0 && (histogram <= prevHistogram || isExpandingHist)) {
+      return {
+        state: 'BEARISH_ACCELERATION',
+        label: 'Aceleração Vendedora Forte',
+        description: 'Pressão taker vendedora acelerando rapidamente (despejo ativo a mercado).',
+        direction: 'BEARISH',
+        intensity: Math.min(100, Math.round(Math.abs(oscillator) * 12 + Math.abs(histogram) * 15)),
+        color: '#f43f5e'
+      };
+    } else {
+      return {
+        state: 'BEARISH_DECELERATION',
+        label: 'Exaustão Vendedora (Desaceleração)',
+        description: 'Fluxo em território negativo, porém com perda de ímpeto vendedor e absorção iminente.',
+        direction: 'BEARISH',
+        intensity: Math.max(20, Math.min(80, Math.round(Math.abs(oscillator) * 8))),
+        color: '#f97316'
+      };
+    }
+  }
+}
+
+/**
+ * Computes the CVD Volume Oscillator indicator measuring the momentum behind taker delta shifts.
+ */
+export function computeCvdVolumeOscillator(
+  series: CvdDeltaDataPoint[],
+  fastPeriod: number = 5,
+  slowPeriod: number = 12,
+  signalPeriod: number = 5
+): VolumeOscillatorResult {
+  if (!series || series.length === 0) {
+    return {
+      currentOscillator: 0,
+      currentSignal: 0,
+      currentHistogram: 0,
+      previousHistogram: 0,
+      momentumState: 'NEUTRAL_CONVERGENCE',
+      momentumStateLabel: 'Convergência Neutra',
+      momentumStateDescription: 'Sem dados suficientes para calcular oscilador de volume.',
+      trendDirection: 'NEUTRAL',
+      momentumIntensity: 0,
+      velocityUsdPerMin: 0,
+      fastPeriod,
+      slowPeriod,
+      signalPeriod,
+      series: []
+    };
+  }
+
+  const deltas = series.map(d => d.deltaUsd);
+  const totalVolumes = series.map(d => Math.max(1000, (d.takerBuyUsd + d.takerSellUsd)));
+
+  const fastEma = calculateEMA(deltas, fastPeriod);
+  const slowEma = calculateEMA(deltas, slowPeriod);
+  const volEma = calculateEMA(totalVolumes, slowPeriod);
+
+  // Raw oscillator = (FastEMA - SlowEMA) / VolEMA * 100
+  const rawOscillators: number[] = [];
+  for (let i = 0; i < series.length; i++) {
+    const vol = volEma[i] > 0 ? volEma[i] : 1000;
+    const diff = fastEma[i] - slowEma[i];
+    const oscVal = Number(((diff / vol) * 100).toFixed(2));
+    rawOscillators.push(oscVal);
+  }
+
+  const signalLine = calculateEMA(rawOscillators, signalPeriod);
+
+  const oscillatorSeries: VolumeOscillatorDataPoint[] = [];
+
+  for (let i = 0; i < series.length; i++) {
+    const osc = rawOscillators[i];
+    const sig = signalLine[i];
+    const hist = Number((osc - sig).toFixed(2));
+    const prevHist = i > 0 ? oscillatorSeries[i - 1].histogram : hist;
+
+    const classification = classifyCvdMomentum(osc, sig, hist, prevHist);
+
+    oscillatorSeries.push({
+      timestamp: series[i].timestamp,
+      timeLabel: series[i].timeLabel,
+      oscillator: osc,
+      signal: Number(sig.toFixed(2)),
+      histogram: hist,
+      deltaUsd: series[i].deltaUsd,
+      takerBuyUsd: series[i].takerBuyUsd,
+      takerSellUsd: series[i].takerSellUsd,
+      fastMa: Number(fastEma[i].toFixed(2)),
+      slowMa: Number(slowEma[i].toFixed(2)),
+      state: classification.state,
+      color: classification.color
+    });
+  }
+
+  const last = oscillatorSeries[oscillatorSeries.length - 1];
+  const secondLast = oscillatorSeries.length > 1 ? oscillatorSeries[oscillatorSeries.length - 2] : last;
+
+  const currentClassification = classifyCvdMomentum(
+    last.oscillator,
+    last.signal,
+    last.histogram,
+    secondLast.histogram
+  );
+
+  // Delta momentum velocity in USD/min
+  const deltaShift = Math.abs(last.deltaUsd - secondLast.deltaUsd);
+  const velocityUsdPerMin = Math.round(deltaShift / 5);
+
+  return {
+    currentOscillator: last.oscillator,
+    currentSignal: last.signal,
+    currentHistogram: last.histogram,
+    previousHistogram: secondLast.histogram,
+    momentumState: currentClassification.state,
+    momentumStateLabel: currentClassification.label,
+    momentumStateDescription: currentClassification.description,
+    trendDirection: currentClassification.direction,
+    momentumIntensity: currentClassification.intensity,
+    velocityUsdPerMin,
+    fastPeriod,
+    slowPeriod,
+    signalPeriod,
+    series: oscillatorSeries
+  };
+}
+
+

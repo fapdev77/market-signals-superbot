@@ -5,8 +5,11 @@ import {
   generateCvdDeltaSeries,
   computeOrderBookImbalance,
   computeMultiTierOBI,
+  computeCvdVolumeOscillator,
+  classifyCvdMomentum,
   type CvdDeltaMetrics,
-  type OrderBookImbalanceResult
+  type OrderBookImbalanceResult,
+  type VolumeOscillatorResult
 } from '../src/utils/cvdDeltaUtils.js';
 import type { TickerData, OrderBookLevel } from '../src/types.js';
 
@@ -250,4 +253,75 @@ describe('CVD Delta Overlay & Real-Time Taker Aggression (TDD)', () => {
       expect(tiers['0.5%'].imbalancePct).toBeGreaterThan(0); // 995 vs 502.5 -> positive
     });
   });
+
+  describe('computeCvdVolumeOscillator (Momentum Trend Indicator)', () => {
+    it('computes fast vs slow delta EMA oscillator, signal line and histogram correctly', () => {
+      const ticker = makeMockTicker({
+        price: 65000,
+        cvd: 45000000,
+        takerBuyRatio: 0.58
+      });
+
+      const series = generateCvdDeltaSeries(ticker, 24);
+      const oscResult: VolumeOscillatorResult = computeCvdVolumeOscillator(series, 5, 12, 5);
+
+      expect(oscResult).toBeDefined();
+      expect(oscResult.series).toHaveLength(24);
+      expect(typeof oscResult.currentOscillator).toBe('number');
+      expect(typeof oscResult.currentSignal).toBe('number');
+      expect(typeof oscResult.currentHistogram).toBe('number');
+      expect(oscResult.fastPeriod).toBe(5);
+      expect(oscResult.slowPeriod).toBe(12);
+      expect(oscResult.signalPeriod).toBe(5);
+
+      // Check datapoint structure
+      const sample = oscResult.series[10];
+      expect(sample).toHaveProperty('oscillator');
+      expect(sample).toHaveProperty('signal');
+      expect(sample).toHaveProperty('histogram');
+      expect(sample).toHaveProperty('color');
+      expect(sample).toHaveProperty('state');
+      expect(sample.histogram).toBeCloseTo(sample.oscillator - sample.signal, 1);
+    });
+
+    it('classifies BULLISH_ACCELERATION when momentum is positive and histogram is expanding', () => {
+      const classification = classifyCvdMomentum(5.2, 3.1, 2.1, 1.4);
+      expect(classification.state).toBe('BULLISH_ACCELERATION');
+      expect(classification.direction).toBe('BULLISH');
+      expect(classification.label).toContain('Aceleração Compradora');
+      expect(classification.color).toBe('#10b981');
+    });
+
+    it('classifies BULLISH_DECELERATION when momentum is positive but histogram is weakening', () => {
+      const classification = classifyCvdMomentum(4.0, 3.8, 0.2, 1.1);
+      expect(classification.state).toBe('BULLISH_DECELERATION');
+      expect(classification.direction).toBe('BULLISH');
+      expect(classification.label).toContain('Exaustão Compradora');
+      expect(classification.color).toBe('#0d9488');
+    });
+
+    it('classifies BEARISH_ACCELERATION when momentum is negative and histogram is expanding', () => {
+      const classification = classifyCvdMomentum(-6.5, -4.0, -2.5, -1.2);
+      expect(classification.state).toBe('BEARISH_ACCELERATION');
+      expect(classification.direction).toBe('BEARISH');
+      expect(classification.label).toContain('Aceleração Vendedora');
+      expect(classification.color).toBe('#f43f5e');
+    });
+
+    it('classifies BEARISH_DECELERATION when momentum is negative but selling impulse is fading', () => {
+      const classification = classifyCvdMomentum(-5.0, -4.8, -0.2, -1.5);
+      expect(classification.state).toBe('BEARISH_DECELERATION');
+      expect(classification.direction).toBe('BEARISH');
+      expect(classification.label).toContain('Exaustão Vendedora');
+      expect(classification.color).toBe('#f97316');
+    });
+
+    it('handles empty series gracefully with neutral convergence', () => {
+      const emptyResult = computeCvdVolumeOscillator([]);
+      expect(emptyResult.currentOscillator).toBe(0);
+      expect(emptyResult.momentumState).toBe('NEUTRAL_CONVERGENCE');
+      expect(emptyResult.series).toHaveLength(0);
+    });
+  });
 });
+
