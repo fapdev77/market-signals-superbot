@@ -145,7 +145,7 @@ async function startServer() {
   const portIdx = args.indexOf('--port');
   const cliPort = portIdx !== -1 && args[portIdx + 1] ? Number(args[portIdx + 1]) : undefined;
 
-  const PORT = cliPort || (process.env.NODE_ENV !== 'production' ? 3000 : (Number(process.env.PORT) || 3000));
+  const PORT = cliPort || (Number(process.env.PORT) || 3000);
   // M4.1: Host binding security guard (defaults to 0.0.0.0 in dev for container ingress, 127.0.0.1 in prod)
   const defaultDevHost = process.env.NODE_ENV !== 'production' ? '0.0.0.0' : undefined;
   const HOST = resolveServerHost(cliHost || process.env.HOST || defaultDevHost);
@@ -274,7 +274,7 @@ async function startServer() {
       // R-2: o motor enxerga todas as origens — se ele gerou um sinal DEMO, tem que gerenciá-lo.
       const openSignals = await getActiveSignals('ALL');
       // 6.5.2: mantém os filtros do exchange quentes (TTL interno de 1h; no-op barato).
-      void refreshSymbolFilters().catch(() => {});
+      void refreshSymbolFilters().catch(() => { });
       const tradingHalted = isTradingHalted();
 
       // 1. Fetch live Binance Futures 24h Tickers
@@ -602,7 +602,7 @@ async function startServer() {
                   } catch (pendingErr) {
                     console.warn(`[pending-entry] Falha ao avaliar pendentes de ${symbol} (segue no próximo tick):`, getErrorMessage(pendingErr));
                   }
-                  }
+                }
                 if (activeOnlyForCategory.length > 0 && activeTradeGate.allow) {
                   // Monitor active trades for targets, stop-loss or breakeven updates
                   // Phase 2.5.1: decision logic lives in the unit-tested TickProcessor module.
@@ -646,7 +646,7 @@ async function startServer() {
                       }).catch(e => console.error('Ledger event PARTIAL error:', getErrorMessage(e)));
                     }
                   }
-                  }
+                }
               }
             }
           } catch (itemErr) {
@@ -744,7 +744,7 @@ async function startServer() {
           if (ok) console.log('🗓️ Calendário de trading da exchange carregado (cache diário).');
           else console.warn('⚠️ tradingSchedule indisponível — TradFi usando relógio America/New_York (sem feriados).');
         })
-        .catch(() => {}); // refreshTradingSchedule não propaga, mas o loop não pode morrer
+        .catch(() => { }); // refreshTradingSchedule não propaga, mas o loop não pode morrer
     };
     refreshScheduleLoop();
     setInterval(refreshScheduleLoop, 6 * 60 * 60 * 1000).unref(); // re-tenta a cada 6h (TTL 24h
