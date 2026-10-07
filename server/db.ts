@@ -1628,7 +1628,8 @@ export async function factoryResetDatabase(
   const database = dbOverride || (await getDb());
   console.log('🔄 [FACTORY RESET] Performing global database reset to factory defaults...');
 
-  // 1. Clear dynamic tables (M3.1 / CA-3.1: signal_ledger and signal_events are preserved!)
+  // 1. Clear dynamic tables (M3.1 / CA-3.1: signal_ledger — auditoria — é preservado;
+  // os signal_events órfãos dos sinais removidos são higienizados abaixo).
   const safeRun = (sql: string, params?: any[]) => {
     try {
       database.run(sql, params);
@@ -1641,6 +1642,15 @@ export async function factoryResetDatabase(
   safeRun(`DELETE FROM ticker_snapshots;`);
   safeRun(`DELETE FROM ai_audits;`);
   safeRun(`DELETE FROM watched_symbols;`);
+
+  // M3.1 / CA-3.1: signal_ledger (auditoria append-only) é preservado. Os
+  // signal_events dos sinais removidos, porém, virariam órfãos (invariante
+  // 7.3.3), então são higienizados junto com o reset.
+  try {
+    deleteOrphanSignalEvents(database);
+  } catch {
+    /* safe fallback if tables do not exist in testing isolation */
+  }
 
   // 2. Reset strategy weights to factory defaults
   const now = Date.now();
@@ -2227,10 +2237,45 @@ export function getActiveStrategyProfile(weights: IndicatorWeights): string {
 // 6.2.4 — Reconciliação do ledger com os sinais (roda no boot; idempotente)
 // ============================================================================
 
+/**
+ * 7.3.3 — Remove eventos órfãos do ledger: `signal_events` cujo `signal_id`
+ * não existe mais em `trade_signals` (p.ex. sinais removidos no factory reset).
+ * A tabela é append-only (trigger da migração 008), então o gatilho de
+ * exclusão é suspenso apenas durante a limpeza e recriado no `finally`.
+ * Retorna o número de eventos removidos.
+ */
+export function deleteOrphanSignalEvents(database: Database): number {
+  const trigRes = database.exec(
+    `SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='signal_events_no_delete'`
+  );
+  const triggerExisted =
+    trigRes.length > 0 && trigRes[0].values.length > 0 && Number(trigRes[0].values[0][0]) > 0;
+  if (triggerExisted) {
+    database.run('DROP TRIGGER signal_events_no_delete;');
+  }
+  try {
+    database.run(
+      `DELETE FROM signal_events
+       WHERE NOT EXISTS (SELECT 1 FROM trade_signals s WHERE s.id = signal_id)`
+    );
+    return database.getRowsModified();
+  } finally {
+    if (triggerExisted) {
+      database.run(`CREATE TRIGGER IF NOT EXISTS signal_events_no_delete
+        BEFORE DELETE ON signal_events
+        BEGIN
+          SELECT RAISE(FAIL, 'signal_events is append-only');
+        END;`);
+    }
+  }
+}
+
 export interface LedgerReconcileSummary {
   terminalSignals: number;
   alreadyConsistent: number;
   created: number;
+  /** 7.3.3+: eventos órfãos (sinal inexistente) removidos na autocura. */
+  orphansCleaned: number;
 }
 
 const TERMINAL_EVENT_BY_STATUS: Record<string, string> = {
@@ -2247,7 +2292,7 @@ const TERMINAL_EVENT_BY_STATUS: Record<string, string> = {
  */
 export async function reconcileLedgerWithSignals(dbOverride?: Database): Promise<LedgerReconcileSummary> {
   const database = dbOverride || (await getDb());
-  const summary: LedgerReconcileSummary = { terminalSignals: 0, alreadyConsistent: 0, created: 0 };
+  const summary: LedgerReconcileSummary = { terminalSignals: 0, alreadyConsistent: 0, created: 0, orphansCleaned: 0 };
 
   const res = database.exec(
     `SELECT id, symbol, current_price, entry_min, status, expiration_reason, created_at
@@ -2317,7 +2362,16 @@ export async function reconcileLedgerWithSignals(dbOverride?: Database): Promise
     );
   }
 
-  // 7.3.3: após a reconciliação, qualquer invariante violada é reportada.
+  // 7.3.3+: autocura do invariante (b) — eventos cujo sinal não existe mais são
+  // removidos. O signal_ledger (auditoria) permanece intacto (CA-3.1); apenas o
+  // cache operacional de eventos é higienizado.
+  const orphansCleaned = deleteOrphanSignalEvents(database);
+  if (orphansCleaned > 0) {
+    summary.orphansCleaned = orphansCleaned;
+    console.log(`🧹 [LEDGER RECONCILE] ${orphansCleaned} evento(s) órfão(s) removido(s) (sinal inexistente).`);
+  }
+
+  // 7.3.3: após a reconciliação e limpeza, qualquer invariante violada é reportada.
   const violations = await getLedgerInvariantViolations(database);
   if (violations.total > 0) {
     await emitOperationalAlert(

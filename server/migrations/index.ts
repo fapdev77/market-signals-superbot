@@ -56,12 +56,37 @@ function addColumnIfMissing(
   }
 }
 
-/** One-time purge of fabricated HIST-* signals (Phase 1 decision 3: no backup). */
+/**
+ * One-time purge of fabricated HIST-* signals (Phase 1 decision 3: no backup).
+ * Invariante 7.3.3: os signal_events dos sinais HIST-* também são removidos,
+ * para não deixar eventos órfãos (sinal inexistente) no ledger. O gatilho
+ * append-only de signal_events (migração 008) é suspenso apenas se já existir
+ * e recriado no `finally`.
+ */
 export function purgeHistSignals(db: Database): number {
   if (!tableExists(db, 'trade_signals')) return 0;
   const before = db.exec(`SELECT count(*) FROM trade_signals WHERE id LIKE 'HIST-%'`);
   const count = before.length && before[0].values.length ? Number(before[0].values[0][0]) : 0;
   if (count > 0) {
+    const trigRes = tableExists(db, 'signal_events')
+      ? db.exec(`SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name='signal_events_no_delete'`)
+      : [];
+    const triggerExisted =
+      trigRes.length > 0 && trigRes[0].values.length > 0 && Number(trigRes[0].values[0][0]) > 0;
+    if (triggerExisted) db.run('DROP TRIGGER signal_events_no_delete;');
+    try {
+      if (tableExists(db, 'signal_events')) {
+        exec(db, `DELETE FROM signal_events WHERE signal_id LIKE 'HIST-%';`);
+      }
+    } finally {
+      if (triggerExisted) {
+        db.run(`CREATE TRIGGER IF NOT EXISTS signal_events_no_delete
+          BEFORE DELETE ON signal_events
+          BEGIN
+            SELECT RAISE(FAIL, 'signal_events is append-only');
+          END;`);
+      }
+    }
     exec(db, `DELETE FROM trade_signals WHERE id LIKE 'HIST-%';`);
   }
   return count;

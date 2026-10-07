@@ -14,6 +14,7 @@ import {
   getDb,
   reconcileLedgerWithSignals,
   getLedgerInvariantViolations,
+  deleteOrphanSignalEvents,
   signalLedgerDao
 } from '../server/db.js';
 
@@ -68,9 +69,10 @@ describe('7.3.3 / CA-3.3 — invariantes do ledger', () => {
 
     const after = await getLedgerInvariantViolations();
     expect(after.terminalSignalsMissingEvent).toBe(0);
-    // O evento órfão não é resolvido pela reconciliação (não há sinal para casar).
-    expect(after.orphanEvents).toBe(1);
-    expect(after.total).toBe(1);
+    // 7.3.3+: a reconciliação remove o evento órfão (autocura do invariante).
+    expect(summary.orphansCleaned).toBe(1);
+    expect(after.orphanEvents).toBe(0);
+    expect(after.total).toBe(0);
   });
 
   it('rodar a reconciliação duas vezes não duplica eventos', async () => {
@@ -84,5 +86,30 @@ describe('7.3.3 / CA-3.3 — invariantes do ledger', () => {
 
     const stopEvents = (await signalLedgerDao.getRawEvents('inv-stop')).filter(e => e.eventType === 'STOP');
     expect(stopEvents).toHaveLength(1);
+  });
+
+  it('deleteOrphanSignalEvents remove só os órfãos e mantém o gatilho append-only', async () => {
+    const db = await getDb();
+    // Evento órfão: sinal não existe em trade_signals.
+    db.run(
+      `INSERT INTO signal_events (signal_id, event_type, price, timestamp, metadata) VALUES (?, ?, ?, ?, ?)`,
+      ['ghost-cleanup', 'EXPIRED', 100, 2000, null]
+    );
+
+    const removed = deleteOrphanSignalEvents(db);
+    expect(removed).toBe(1);
+
+    const violations = await getLedgerInvariantViolations();
+    expect(violations.orphanEvents).toBe(0);
+
+    // O gatilho append-only continua ativo após a limpeza: insere um evento
+    // novo (num sinal existente) e tenta apagá-lo — o trigger deve falhar.
+    db.run(
+      `INSERT INTO signal_events (signal_id, event_type, price, timestamp, metadata) VALUES (?, ?, ?, ?, ?)`,
+      ['inv-exp', 'TARGET2', 110, 2001, null]
+    );
+    expect(() =>
+      db.run(`DELETE FROM signal_events WHERE signal_id = 'inv-exp'`)
+    ).toThrow(/append-only/);
   });
 });
