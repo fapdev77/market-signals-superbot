@@ -190,7 +190,14 @@ describe('R-10 walk-forward rolante', () => {
     }, false);
 
     beforeAll(async () => {
-      asOf = alignedNow();
+      // Âncora FIXA (não `alignedNow()`): as asserções deste bloco comparam
+      // CONTAGENS de trades entre janelas, e o gerador sintético deriva o stream de
+      // (symbol, startTime). Com `alignedNow()` o stream — e a distribuição dos trades
+      // entre treino e OOS — mudava a cada 15 min, então `full` e o subconjunto
+      // truncado podiam coincidir por acaso: falha de RELÓGIO, não de lógica (o
+      // invariante anti-vazamento sempre passou). `END` é a linha do tempo fixa que
+      // os testes puros deste mesmo arquivo já usam.
+      asOf = END;
       const start = asOf - DAYS * DAY;
       await historicalKlinesDao.deleteBySymbol(SYM);
       await HistoricalDataService.seedSyntheticKlines(SYM, start, asOf);

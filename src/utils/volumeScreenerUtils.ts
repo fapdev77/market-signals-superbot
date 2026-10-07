@@ -71,8 +71,8 @@ export function calculateTimeframeVolumeMetrics(
   let rvol4h = raw4hUsd / Math.max(1, baseline4hUsd);
   rvol4h = parseFloat(rvol4h.toFixed(2));
 
-  const takerRatio = ticker.takerBuyRatio || 0.50;
-  const deltaPressure1h = takerRatio >= 0.52 ? 'BUY' : takerRatio <= 0.48 ? 'SELL' : 'NEUTRAL';
+  const takerRatio = ticker.takerBuyRatio ?? null;
+  const deltaPressure1h = takerRatio == null ? 'UNKNOWN' : takerRatio >= 0.52 ? 'BUY' : takerRatio <= 0.48 ? 'SELL' : 'NEUTRAL';
   const deltaPressure4h = ticker.cvdDirection || deltaPressure1h;
   const deltaPressure1d = (ticker.priceChangePercent24h || 0) >= 0.5 ? 'BUY' : (ticker.priceChangePercent24h || 0) <= -0.5 ? 'SELL' : 'NEUTRAL';
 
@@ -143,8 +143,8 @@ export function detectVolumeSpikeAlert(
   else if (m1d.rvol >= m1h.rvol && m1d.rvol >= m4h.rvol) dominantTimeframe = '1d';
 
   const priceChange = ticker.priceChangePercent24h || 0;
-  const isCvdBuy = ticker.cvdDirection === 'BUY' || m1h.takerRatio > 0.52;
-  const isCvdSell = ticker.cvdDirection === 'SELL' || m1h.takerRatio < 0.48;
+  const isCvdBuy = ticker.cvdDirection === 'BUY' || (m1h.takerRatio != null && m1h.takerRatio > 0.52);
+  const isCvdSell = ticker.cvdDirection === 'SELL' || (m1h.takerRatio != null && m1h.takerRatio < 0.48);
   const inGoldenPocket = ticker.fibonacci?.inGoldenPocket;
   const isNearHigh = ticker.high24h ? (ticker.price / ticker.high24h >= 0.985) : false;
   const isNearLow = ticker.low24h ? (ticker.price / ticker.low24h <= 1.015) : false;
@@ -168,7 +168,7 @@ export function detectVolumeSpikeAlert(
     anomalyType = 'BREAKOUT_SURGE';
     anomalyTitle = 'Surto de Rompimento (Breakout Surge)';
     anomalyDescription = `Forte fluxo de ordens a mercado impulsionando o preço com ${m1h.rvol}x do volume esperado em 1h.`;
-    confluenceFactors.push(`Delta CVD comprador e ${Math.round(m1h.takerRatio * 100)}% de ordens de agressão de compra.`);
+    confluenceFactors.push(m1h.takerRatio != null ? `Delta CVD comprador e ${Math.round(m1h.takerRatio * 100)}% de ordens de agressão de compra.` : 'Delta CVD comprador (razão taker não medida no feed — % de agressão n/d).');
     confluenceFactors.push('Quebra de resistências dinâmicas com volume de confirmação.');
     investigationChecklist.push('Verificar se o rompimento possui alvo em resistência R1 ou FVG superior.');
     investigationChecklist.push('Confirmar continuação do Open Interest para evitar falso breakout.');
@@ -176,7 +176,7 @@ export function detectVolumeSpikeAlert(
     anomalyType = 'PANIC_DUMP';
     anomalyTitle = 'Pressão Vendedora / Despejo Institucional';
     anomalyDescription = `Despejo agressivo a mercado com ${m1h.rvol}x o volume normal em 1h e delta de venda dominante.`;
-    confluenceFactors.push(`Agressores vendedores com ${Math.round((1 - m1h.takerRatio) * 100)}% das ordens a mercado.`);
+    confluenceFactors.push(m1h.takerRatio != null ? `Agressores vendedores com ${Math.round((1 - m1h.takerRatio) * 100)}% das ordens a mercado.` : 'Agressores vendedores (razão taker não medida no feed — % de agressão n/d).');
     confluenceFactors.push('Perda de suportes e Value Area Low (VAL).');
     investigationChecklist.push('Procurar suportes do Golden Pocket para possível repique.');
     investigationChecklist.push('Evitar compras contra a tendência até que o CVD vendedora desacelere.');

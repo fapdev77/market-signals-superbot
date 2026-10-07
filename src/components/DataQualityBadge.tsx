@@ -9,59 +9,89 @@ interface DataQualityBadgeProps {
   compact?: boolean;
 }
 
+/**
+ * FASE 0 (A-07): o selo agora DERIVA a afirmação do dado real.
+ *
+ * Antes ele afirmava estaticamente "DADOS REAIS / Feed 100% verificado / Zero
+ * fabricação de preço" mesmo quando o `dataQuality` estava ausente ou o feed era
+ * SYNTHETIC. Agora:
+ *  - sem `dataQuality` ⇒ proveniência DESCONHECIDA (nunca "real");
+ *  - `source === 'SYNTHETIC'` ⇒ rótulo de dado sintético;
+ *  - `unavailableFactors` ⇒ listados explicitamente (o fator não foi medido).
+ */
 export const DataQualityBadge: React.FC<DataQualityBadgeProps> = ({ ticker, className = '', compact = false }) => {
   if (!ticker) return null;
 
-  const quality = ticker.dataQuality || {
-    isLive: true,
-    isDegraded: false,
-    lastPriceAgeMs: Math.max(0, Date.now() - (ticker.updatedAt || Date.now())),
-    source: 'WS'
-  };
-
+  const quality = ticker.dataQuality ?? null;
   const ageSeconds = Math.round((Date.now() - (ticker.updatedAt || Date.now())) / 1000);
   const isStale = ageSeconds > 45;
+
+  const source = quality?.source ?? 'DESCONHECIDO';
+  const unavailable = quality?.unavailableFactors ?? [];
+  const hasUnavailable = unavailable.length > 0;
+  const isSynthetic = source === 'SYNTHETIC';
+  const needsAttention = isStale || isSynthetic || hasUnavailable || quality?.isDegraded === true;
+
+  const provenanceLine = quality
+    ? `Fonte do feed: ${source}. Idade do dado: ${ageSeconds}s.`
+    : `Proveniência do feed desconhecida (sem registro de dataQuality). Idade do dado: ${ageSeconds}s.`;
+
+  const unavailableLine = hasUnavailable
+    ? ` Fatores indisponíveis neste tick: ${unavailable.join('; ')}.`
+    : '';
+
+  const tooltipContent = `${provenanceLine}${unavailableLine} Dados sem registro são tratados como não verificados.`;
 
   if (compact) {
     return (
       <Tooltip
         position="top"
         title="Proveniência & Integridade dos Dados"
-        badge={quality.source}
-        content={`Feed 100% verificado da Binance Futures (${quality.source}). Idade do dado: ${ageSeconds}s. Zero fabricação de preço.`}
+        badge={source}
+        content={tooltipContent}
       >
         <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold font-mono cursor-help ${
-          isStale 
-            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' 
+          needsAttention
+            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
             : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
         } ${className}`}>
-          <Radio className={`h-2.5 w-2.5 ${isStale ? 'text-amber-400' : 'text-emerald-400 animate-pulse'}`} />
-          <span>{quality.source}</span>
+          <Radio className={`h-2.5 w-2.5 ${needsAttention ? 'text-amber-400' : 'text-emerald-400 animate-pulse'}`} />
+          <span>{source}</span>
           <span className="text-[8px] opacity-75">{ageSeconds}s</span>
         </span>
       </Tooltip>
     );
   }
 
+  const label = isSynthetic
+    ? 'Dado Sintético'
+    : hasUnavailable
+    ? `Parcial (${unavailable.length} n/d)`
+    : isStale
+    ? `Feed Lento (${ageSeconds}s)`
+    : quality?.isDegraded
+    ? 'Feed Degradado'
+    : `Fonte ${source}`;
+
   return (
     <Tooltip
       position="bottom"
-      title="Integridade & Proveniência de Mercado (Fase 1)"
-      badge="DADOS REAIS"
-      content={`Ativo alimentado por WebSocket e REST oficial da Binance Futures. Critério D2/D3: sinais e avaliações de stops bloqueados automaticamente caso a idade do dado ultrapasse 60s.`}
+      title="Integridade & Proveniência de Mercado (Fase 0)"
+      badge={source}
+      content={tooltipContent}
     >
       <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-bold cursor-help transition ${
-        isStale
+        needsAttention
           ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30'
           : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
       } ${className}`}>
-        {isStale ? (
+        {needsAttention ? (
           <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
         ) : (
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
         )}
         <span className="text-[10px] uppercase tracking-wider">
-          {isStale ? `Feed Lento (${ageSeconds}s)` : `Dados Reais (${quality.source})`}
+          {label}
         </span>
         <span className="text-[9px] text-neutral-400 font-normal">
           {ageSeconds}s atrás

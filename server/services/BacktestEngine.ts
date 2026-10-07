@@ -1,4 +1,4 @@
-import { historicalKlinesDao, backtestResultsDao, historicalFundingDao, type HistoricalKlineRow } from '../backtest_db/index.js';
+import { historicalKlinesDao, backtestResultsDao, historicalFundingDao, rowToKlineCandle, type HistoricalKlineRow } from '../backtest_db/index.js';
 import crypto from 'crypto';
 import { HistoricalDataService } from './HistoricalDataService';
 import { IndicatorWeights, TradingProfile, BacktestConfig, BacktestResult, AutoTuneResult, AutoTuneIteration, BacktestDiagnostic, EquityPoint, KlineCandle, StrategyCategory, WalkForwardOptions } from '../../src/types.js';
@@ -664,16 +664,11 @@ export class BacktestEngine {
     let isBreakevenActive = false;
     let partialTaken = false;
 
-    // Map DB klines to KlineCandle format
-    const candleObjects: KlineCandle[] = klines.map(k => ({
-      timestamp: k.openTime,
-      open: k.open,
-      high: k.high,
-      low: k.low,
-      close: k.close,
-      volume: k.volume,
-      takerBuyVolume: k.takerBuyBaseVolume || k.volume * 0.50
-    }));
+    // Map DB klines to KlineCandle format — A-06: a conversão vive na DAO
+    // (rowToKlineCandle) e NÃO fabrica taker volume. O `|| volume * 0.50` de
+    // antes punha metade do CVD do backtest fora da realidade enquanto o live
+    // era honesto: paridade de parâmetros (A-05) não compensa dado divergente.
+    const candleObjects: KlineCandle[] = klines.map(k => rowToKlineCandle(k));
 
     const strategyCat: StrategyCategory = profile === 'scalp' ? 'SCALP' : profile === 'swing' ? 'SWING' : 'DAY_TRADE';
 
@@ -870,10 +865,13 @@ export class BacktestEngine {
             windowSlice,
             preset.targetRiskRatio,
             strategyCat,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
+            undefined, // customTimeframe (o rótulo vem do preset no caminho de backtest)
+            undefined, // ttlSettings
+            // A-05 (FASE 1): o backtest passa o MESMO objeto de weights do live. Antes ia
+            // `undefined`, então `maxStopLossAtrMultiple`/`minConfluenceScore` nunca
+            // chegavam ao motor e os dois caminhos decidiam com parâmetros diferentes.
+            weights,
+            undefined, // filters: backtest não tem tickSize de exchange (diferença declarada)
             undefined,
             { klines1m: windowSlice, klines5m: mtf5mSlice }
           );

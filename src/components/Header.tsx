@@ -64,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [soundOn, setSoundOn] = useState(true);
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [networkPing, setNetworkPing] = useState<number>(14);
+  const [networkPing, setNetworkPing] = useState<number | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const quickActionsRef = useRef<HTMLDivElement>(null);
   const themeMenuRef = useRef<HTMLDivElement>(null);
@@ -73,11 +73,27 @@ export const Header: React.FC<HeaderProps> = ({
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
 
   useEffect(() => {
-    // Simulate slight natural ping variation 12-24ms
-    const interval = setInterval(() => {
-      setNetworkPing(12 + Math.floor(Math.random() * 14));
-    }, 4000);
-    return () => clearInterval(interval);
+    // FASE 0 (C-05): latência REAL — RTT medido contra o /api/health do próprio
+    // servidor. Sem `Math.random()`. Se a sonda falhar, o valor é `null` e a UI
+    // exibe "—" em vez de um número inventado.
+    let cancelled = false;
+    const probe = async () => {
+      const started = performance.now();
+      try {
+        const res = await fetch('/api/health', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`health ${res.status}`);
+        await res.json();
+        if (!cancelled) setNetworkPing(Math.round(performance.now() - started));
+      } catch {
+        if (!cancelled) setNetworkPing(null);
+      }
+    };
+    probe();
+    const interval = setInterval(probe, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -333,7 +349,7 @@ export const Header: React.FC<HeaderProps> = ({
           id: 'binance_logs',
           label: 'Logs API & WebSocket',
           icon: Wifi,
-          badge: `${networkPing}ms`,
+          badge: networkPing === null ? '—' : `${networkPing}ms`,
           desc: 'Monitor de conexão WebSocket em tempo real, latência de pacotes e stream de eventos.'
         }
       ]
@@ -694,11 +710,11 @@ export const Header: React.FC<HeaderProps> = ({
             position="bottom-right"
             title="Latência do WebSocket Binance"
             badge="PRO FEED"
-            content={`Conexão de baixa latência ativa com feed Binance Futures. Ping estimado: ${networkPing}ms.`}
+            content={`Latência real medida (RTT) contra o servidor da aplicação. ${networkPing === null ? 'Indisponível no momento.' : `Ping: ${networkPing}ms.`}`}
           >
             <div className="hidden 2xl:flex items-center gap-1 px-2 py-1.5 rounded-lg bg-neutral-900 border border-white/5 text-[10px] font-mono text-neutral-400 tabular-nums">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              <span className="text-white font-bold">{networkPing}ms</span>
+              <span className={`h-1.5 w-1.5 rounded-full ${networkPing === null ? 'bg-neutral-500' : 'bg-emerald-400'}`} />
+              <span className="text-white font-bold">{networkPing === null ? '—' : `${networkPing}ms`}</span>
             </div>
           </Tooltip>
 
@@ -1006,7 +1022,7 @@ export const Header: React.FC<HeaderProps> = ({
                     Ações Rápidas
                   </span>
                   <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">
-                    {networkPing}ms FEED
+                    {networkPing === null ? '— FEED' : `${networkPing}ms FEED`}
                   </span>
                 </div>
 

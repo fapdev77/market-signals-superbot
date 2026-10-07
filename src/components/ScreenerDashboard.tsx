@@ -30,14 +30,39 @@ const SUGGESTED_STABLECOINS = [
   { symbol: 'USDCTUSD', name: 'USDC / TUSD' }
 ];
 
+/**
+ * FASE 0 (C-04) — resolução de seleção do Screener SEM dados sintéticos.
+ *
+ * `RESOLVED` carrega o objeto EXATO do feed ao vivo (identidade, não uma cópia
+ * reconstruída). `UNAVAILABLE` significa que o símbolo ainda não chegou ao feed:
+ * o chamador avisa o operador e nada é estimado — antes uma cópia manual do
+ * `TickerData` era fabricada com CVD=0, OI=0, taker 0.5 e Fibonacci aproximado.
+ *
+ * Função pura exportada para que o contrato seja testável fora do React.
+ */
+export type AssetSelection =
+  | { status: 'RESOLVED'; ticker: TickerData }
+  | { status: 'UNAVAILABLE'; symbol: string };
+
+export function resolveAssetSelection(
+  liveTickers: TickerData[],
+  symbol: string
+): AssetSelection {
+  const ticker = liveTickers.find(t => t.symbol === symbol);
+  return ticker ? { status: 'RESOLVED', ticker } : { status: 'UNAVAILABLE', symbol };
+}
+
 interface ScreenerDashboardProps {
   onSelectTicker?: (ticker: TickerData) => void;
   onNavigateToTab?: (tab: string) => void;
+  /** Feed ao vivo real (ex.: /api/tickers). Usado para resolver o símbolo selecionado sem sintetizar dados. */
+  liveTickers?: TickerData[];
 }
 
 export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
   onSelectTicker,
-  onNavigateToTab
+  onNavigateToTab,
+  liveTickers = []
 }) => {
   const [assets, setAssets] = useState<ScreenerAsset[]>([]);
   const [summary, setSummary] = useState<ScreenerScanSummary | null>(null);
@@ -78,6 +103,27 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
   useEffect(() => {
     loadData();
   }, []);
+
+  /**
+   * C-04 (FASE 0): o Screener cobre um universo mais amplo que o feed ao vivo.
+   * Para NÃO injetar um `TickerData` sintético (CVD=0, OI=0, Fibonacci aproximado…),
+   * a seleção passa por `resolveAssetSelection`: ou devolve o MESMO objeto do
+   * feed ao vivo (identidade preservada), ou devolve ausência — nunca uma
+   * reconstrução parcial estimada.
+   */
+  const handleSelectAsset = (asset: ScreenerAsset, navigate: boolean = false) => {
+    const selection = resolveAssetSelection(liveTickers, asset.symbol);
+    if (selection.status !== 'RESOLVED') {
+      showToast(
+        'info',
+        'Dados ao vivo indisponíveis',
+        `${asset.symbol} ainda não está no feed ao vivo (universo monitorado). Nenhum valor é estimado.`
+      );
+      return;
+    }
+    if (onSelectTicker) onSelectTicker(selection.ticker);
+    if (navigate && onNavigateToTab) onNavigateToTab('chart');
+  };
 
   const handleToggleFavorite = async (symbol: string, currentStatus: boolean, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -514,42 +560,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
                           ? 'bg-rose-950/15 hover:bg-rose-950/25 border-l-2 border-l-rose-500/80' 
                           : 'hover:bg-slate-800/40'
                       }`}
-                      onClick={() => {
-                        if (onSelectTicker) {
-                          onSelectTicker({
-                            symbol: asset.symbol,
-                            baseAsset: asset.baseAsset,
-                            quoteAsset: asset.quoteAsset,
-                            name: asset.name,
-                            marketType: 'crypto_futures',
-                            price: asset.price,
-                            priceChangePercent24h: asset.priceChangePercent24h,
-                            high24h: asset.high24h,
-                            low24h: asset.low24h,
-                            volume24h: asset.volume24h,
-                            quoteVolume24h: asset.quoteVolume24h,
-                            openInterest: asset.openInterest ?? 0,
-                            openInterestChange24h: asset.openInterestChange24h ?? 0,
-                            openInterestChange1h: asset.openInterestChange1h ?? 0,
-                            fundingRate: asset.fundingRate ?? 0,
-                            fundingRateDaily: (asset.fundingRate ?? 0) * 3,
-                            fundingRateAnnualized: asset.fundingRateAnnualized ?? 0,
-                            cvd: 0,
-                            cvdDelta: 0,
-                            cvdDeltaPercent: 0,
-                            cvdDirection: 'NEUTRAL',
-                            takerBuyRatio: 0.5,
-                            fibonacci: { fib50: asset.price, fib618: asset.price * 0.995, fib68: asset.price * 0.992, swingHigh: asset.high24h, swingLow: asset.low24h, inGoldenPocket: false },
-                            rangeProfile: { vah: asset.price * 1.01, val: asset.price * 0.99, poc: asset.price, inValueArea: true },
-                            keyLevels: { support1: asset.price * 0.98, support2: asset.price * 0.96, resistance1: asset.price * 1.02, resistance2: asset.price * 1.04, structureBreak: 'NONE', hasSinglePrintFVG: false },
-                            confluenceScore: asset.compositeScore,
-                            signalType: 'NEUTRAL',
-                            signalReason: 'Carregado via Screener institucional.',
-                            confluenceFactors: ['Screener Radar'],
-                            updatedAt: asset.lastScannedAt
-                          });
-                        }
-                      }}
+                      onClick={() => handleSelectAsset(asset)}
                     >
                       {/* Favorite Button */}
                       <td className="py-3 px-4 text-center">
@@ -692,45 +703,7 @@ export const ScreenerDashboard: React.FC<ScreenerDashboardProps> = ({
                         <div className="flex items-center justify-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => {
-                              if (onSelectTicker) {
-                                onSelectTicker({
-                                  symbol: asset.symbol,
-                                  baseAsset: asset.baseAsset,
-                                  quoteAsset: asset.quoteAsset,
-                                  name: asset.name,
-                                  marketType: 'crypto_futures',
-                                  price: asset.price,
-                                  priceChangePercent24h: asset.priceChangePercent24h,
-                                  high24h: asset.high24h,
-                                  low24h: asset.low24h,
-                                  volume24h: asset.volume24h,
-                                  quoteVolume24h: asset.quoteVolume24h,
-                                  openInterest: asset.openInterest ?? 0,
-                                  openInterestChange24h: asset.openInterestChange24h ?? 0,
-                                  openInterestChange1h: asset.openInterestChange1h ?? 0,
-                                  fundingRate: asset.fundingRate ?? 0,
-                                  fundingRateDaily: (asset.fundingRate ?? 0) * 3,
-                                  fundingRateAnnualized: asset.fundingRateAnnualized ?? 0,
-                                  cvd: 0,
-                                  cvdDelta: 0,
-                                  cvdDeltaPercent: 0,
-                                  cvdDirection: 'NEUTRAL',
-                                  takerBuyRatio: 0.5,
-                                  fibonacci: { fib50: asset.price, fib618: asset.price * 0.995, fib68: asset.price * 0.992, swingHigh: asset.high24h, swingLow: asset.low24h, inGoldenPocket: false },
-                                  rangeProfile: { vah: asset.price * 1.01, val: asset.price * 0.99, poc: asset.price, inValueArea: true },
-                                  keyLevels: { support1: asset.price * 0.98, support2: asset.price * 0.96, resistance1: asset.price * 1.02, resistance2: asset.price * 1.04, structureBreak: 'NONE', hasSinglePrintFVG: false },
-                                  confluenceScore: asset.compositeScore,
-                                  signalType: 'NEUTRAL',
-                                  signalReason: 'Selecionado para análise.',
-                                  confluenceFactors: ['Screener'],
-                                  updatedAt: asset.lastScannedAt
-                                });
-                              }
-                              if (onNavigateToTab) {
-                                onNavigateToTab('chart');
-                              }
-                            }}
+                            onClick={() => handleSelectAsset(asset, true)}
                             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-cyan-500 hover:text-slate-950 text-slate-300 font-semibold transition inline-flex items-center gap-1 cursor-pointer"
                             title="Abrir Gráfico"
                           >

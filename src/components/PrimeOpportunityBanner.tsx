@@ -49,10 +49,15 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
   // Pre-set threshold levels for fast switching
   const presetThresholds = [60, 70, 75, 80];
 
-  // Deriving Order Book Imbalance metrics
-  // Taker buy ratio gives exact order flow aggression balance.
-  // Bid/Ask volume approximation from taker buy ratio & 24h volume:
-  const buyRatio = ticker.takerBuyRatio ?? 0.52;
+  // Deriving Order Book Imbalance metrics — FASE 0:
+  // sem `takerBuyRatio` medido não há desequilíbrio a afirmar. O default antigo
+  // (0.52) injetava um viés de +2% para o comprador e ainda rotulava o estado
+  // como "LIVRO EQUILIBRADO" — era dado fabricado, não empate medido.
+  const measuredRatio = typeof ticker.takerBuyRatio === 'number' && Number.isFinite(ticker.takerBuyRatio)
+    ? Math.max(0, Math.min(1, ticker.takerBuyRatio))
+    : null;
+  const ratioMeasured = measuredRatio !== null;
+  const buyRatio = measuredRatio ?? 0.5;
   const sellRatio = Math.max(0, 1 - buyRatio);
   
   // Imbalance Ratio: ratio of buyer power to seller power
@@ -61,9 +66,20 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
   const isBuyerDominant = buyRatio >= 0.50;
 
   // Imbalance depth interpretation
-  const imbalanceLevel = 
-    Math.abs(imbalancePct) >= 20 ? 'FORTE DESEQUILÍBRIO' : 
+  const imbalanceLevel = !ratioMeasured
+    ? 'RATIO NÃO MEDIDO'
+    : Math.abs(imbalancePct) >= 20 ? 'FORTE DESEQUILÍBRIO' : 
     Math.abs(imbalancePct) >= 8 ? 'DESEQUILÍBRIO MODERADO' : 'LIVRO EQUILIBRADO';
+
+  // FASE 0: rotulos só afirmam o que foi medido — sem ratio, mostra "n/d".
+  const bookBadge = ratioMeasured
+    ? `Book: ${imbalanceRatio.toFixed(2)}x ${isBuyerDominant ? 'Comprador' : 'Vendedor'}`
+    : 'Book: n/d';
+  const ratioLabel = ratioMeasured
+    ? `${imbalanceRatio.toFixed(2)}:1 (${isBuyerDominant ? 'Comprador' : 'Vendedor'})`
+    : 'n/d (taker ratio não medido)';
+  const bidPctLabel = ratioMeasured ? `${(buyRatio * 100).toFixed(1)}%` : 'n/d';
+  const askPctLabel = ratioMeasured ? `${(sellRatio * 100).toFixed(1)}%` : 'n/d';
 
   // Funding Rate Trend & APR
   const fundingRateRaw = ticker.fundingRate ?? 0.0001;
@@ -198,12 +214,14 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
 
               {/* Quick glance micro-badges */}
               <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border hidden sm:inline-flex items-center gap-1 ${
-                isBuyerDominant 
+                !ratioMeasured
+                  ? 'bg-neutral-500/10 text-neutral-300 border-neutral-500/30'
+                  : isBuyerDominant 
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
                   : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
               }`}>
                 <Scale className="w-2.5 h-2.5" />
-                Book: {imbalanceRatio.toFixed(2)}x {isBuyerDominant ? 'Comprador' : 'Vendedor'}
+                {bookBadge}
               </span>
 
               <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border hidden md:inline-flex items-center gap-1 ${
@@ -268,16 +286,16 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between items-center">
                 <span className="text-neutral-400 text-[10px]">Ratio Compra / Venda:</span>
-                <span className={`font-extrabold ${isBuyerDominant ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {imbalanceRatio.toFixed(2)}:1 ({isBuyerDominant ? 'Comprador' : 'Vendedor'})
+                <span className={`font-extrabold ${!ratioMeasured ? 'text-neutral-400' : isBuyerDominant ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {ratioLabel}
                 </span>
               </div>
 
               {/* Visual Balance Bar */}
               <div className="space-y-1">
                 <div className="flex justify-between text-[9px] text-neutral-400">
-                  <span className="text-emerald-400 font-bold">Bids: {(buyRatio * 100).toFixed(1)}%</span>
-                  <span className="text-rose-400 font-bold">Asks: {(sellRatio * 100).toFixed(1)}%</span>
+                  <span className="text-emerald-400 font-bold">Bids: {bidPctLabel}</span>
+                  <span className="text-rose-400 font-bold">Asks: {askPctLabel}</span>
                 </div>
                 <div className="w-full bg-neutral-900 h-2 rounded-full overflow-hidden flex">
                   <div 
@@ -294,7 +312,7 @@ export const PrimeOpportunityBanner: React.FC<PrimeOpportunityBannerProps> = ({
               <div className="pt-1 flex items-center justify-between text-[10px] text-neutral-300">
                 <span className="text-neutral-500">Status do Livro:</span>
                 <span className={`font-bold uppercase ${
-                  isBuyerDominant ? 'text-emerald-400' : 'text-rose-400'
+                  !ratioMeasured ? 'text-neutral-400' : isBuyerDominant ? 'text-emerald-400' : 'text-rose-400'
                 }`}>
                   {imbalanceLevel}
                 </span>

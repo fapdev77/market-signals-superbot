@@ -170,7 +170,7 @@ export const VolumeSpikeInspectorModal: React.FC<VolumeSpikeInspectorModalProps>
                       <div className="flex justify-between">
                         <span>Delta Agressão:</span>
                         <strong className={metric.deltaPressure === 'BUY' ? 'text-emerald-400' : metric.deltaPressure === 'SELL' ? 'text-rose-400' : 'text-neutral-400'}>
-                          {metric.deltaPressure === 'BUY' ? 'Comprador (Taker)' : metric.deltaPressure === 'SELL' ? 'Vendedor (Taker)' : 'Equilibrado'}
+                          {metric.deltaPressure === 'UNKNOWN' ? 'n/d (não medido)' : metric.deltaPressure === 'BUY' ? 'Comprador (Taker)' : metric.deltaPressure === 'SELL' ? 'Vendedor (Taker)' : 'Equilibrado'}
                         </strong>
                       </div>
                     </div>

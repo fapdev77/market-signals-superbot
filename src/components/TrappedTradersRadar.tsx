@@ -58,41 +58,21 @@ export const TrappedTradersRadar: React.FC<TrappedTradersRadarProps> = ({
     );
   }
 
-  const trapped = currentTicker.trappedTraders || {
-    status: 'BALANCED' as const,
-    trappedIndex: 35,
-    trappedSide: 'NONE' as const,
-    trappedPriceZone: [currentTicker.price * 0.995, currentTicker.price * 1.005] as [number, number],
-    trappedPocPrice: currentTicker.price,
-    trappedVolumeUSD: 15000000,
-    absorptionRatio: 30,
-    divergenceType: 'NONE' as const,
-    crowdSentiment: 'NEUTRAL' as const,
-    smartMoneyBias: 'NEUTRAL' as const,
-    confluenceVerdict: 'Fluxo em consolidação equilibrada. Sem divergências extremas de absorção.',
-    liquidationsSummary: {
-      totalBuyLiqUSD: 120000,
-      totalSellLiqUSD: 150000,
-      netLiqUSD: -30000,
-      recentEvents: []
-    },
-    updatedAt: Date.now()
-  };
+  // FASE 0 (C-06): sem dado real de posicionamento/liquidação não há radar —
+  // não inventamos números. Exibimos um estado explícito de indisponibilidade.
+  const trapped = currentTicker.trappedTraders;
+  const ls = currentTicker.longShortData;
 
-  const ls = currentTicker.longShortData || {
-    symbol: currentTicker.symbol,
-    globalRatio: 1.15,
-    longAccountPct: 53.5,
-    shortAccountPct: 46.5,
-    topTraderAccountRatio: 1.10,
-    topTraderPositionRatio: 0.95,
-    topTraderLongPositionPct: 48.7,
-    topTraderShortPositionPct: 51.3,
-    takerRatio: 1.05,
-    takerBuyVolUsd: 12000000,
-    takerSellVolUsd: 11400000,
-    timestamp: Date.now()
-  };
+  if (!trapped || !ls) {
+    return (
+      <div className="bg-neutral-950/80 backdrop-blur-md border border-amber-800/50 rounded-2xl p-6 text-center font-mono text-sm space-y-1">
+        <div className="font-bold text-amber-300">Fluxo institucional indisponível</div>
+        <div className="text-neutral-400 text-xs">
+          Sem dados de Trapped Traders / Long-Short para {currentTicker.symbol}. Nenhum valor é estimado.
+        </div>
+      </div>
+    );
+  }
 
   const isTrappedLongs = trapped.status === 'TRAPPED_LONGS';
   const isTrappedShorts = trapped.status === 'TRAPPED_SHORTS';

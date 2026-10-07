@@ -1,6 +1,8 @@
 import { historicalKlinesDao, type HistoricalKlineRow } from '../backtest_db/index.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { requestJsonLimited } from '../utils/httpClient.js';
+// A-06: parsing com proveniência compartilhado com o ingest de klines do live.
+import { parseMeasuredNumber } from '../utils/klineParsing.js';
 import { BinanceRateLimiter } from '../utils/binanceRateLimiter.js';
 // R-2: a geração de candles fabricados foi movida para server/demo/.
 import { generateSynthetic1mKlineRows } from '../demo/syntheticKlines.js';
@@ -13,6 +15,41 @@ export interface SyncProgress {
 }
 
 const syncStates: Record<string, SyncProgress> = {};
+
+/**
+ * A-06 (FASE 1) — converte uma kline crua da exchange em linha do histórico
+ * preservando a PROVENIÊNCIA do taker volume.
+ *
+ * Antes: `parseFloat(k[9]) || parseFloat(k[5]) * 0.5` — campo ausente virava
+ * "50% de compra taker" e o backtest decidia sobre CVD fabricado, enquanto o
+ * live já marcava a ausência. A paridade live↔backtest (A-05) exige que os dois
+ * lados apliquem a MESMA regra: a de `parseMeasuredNumber`, em um só lugar.
+ *
+ * `takerBuyVolumeAvailable: false` = valor gravado como 0 POR AUSÊNCIA.
+ */
+export function toHistoricalKlineRow(symbol: string, k: any): HistoricalKlineRow {
+  const volume = parseMeasuredNumber(k[5]) ?? 0;
+  const quoteAssetVolume = parseMeasuredNumber(k[7]) ?? 0;
+  const takerBuyBaseVolume = parseMeasuredNumber(k[9]);
+  const takerBuyQuoteVolume = parseMeasuredNumber(k[10]);
+
+  return {
+    symbol,
+    interval: '1m',
+    openTime: k[0],
+    closeTime: k[6],
+    open: parseFloat(k[1]),
+    high: parseFloat(k[2]),
+    low: parseFloat(k[3]),
+    close: parseFloat(k[4]),
+    volume,
+    quoteAssetVolume,
+    trades: parseInt(k[8]) || 100,
+    takerBuyBaseVolume: takerBuyBaseVolume ?? 0,
+    takerBuyQuoteVolume: takerBuyQuoteVolume ?? 0,
+    takerBuyVolumeAvailable: takerBuyBaseVolume !== null
+  };
+}
 
 export class HistoricalDataService {
   static getSyncState(symbol: string): SyncProgress {
@@ -103,21 +140,9 @@ export class HistoricalDataService {
           continue;
         }
 
-        const rowsToInsert: HistoricalKlineRow[] = fetchedData.map((k: any) => ({
-          symbol,
-          interval: '1m',
-          openTime: k[0],
-          closeTime: k[6],
-          open: parseFloat(k[1]),
-          high: parseFloat(k[2]),
-          low: parseFloat(k[3]),
-          close: parseFloat(k[4]),
-          volume: parseFloat(k[5]),
-          quoteAssetVolume: parseFloat(k[7]),
-          trades: parseInt(k[8]) || 100,
-          takerBuyBaseVolume: parseFloat(k[9]) || parseFloat(k[5]) * 0.5,
-          takerBuyQuoteVolume: parseFloat(k[10]) || parseFloat(k[7]) * 0.5,
-        }));
+        const rowsToInsert: HistoricalKlineRow[] = fetchedData.map((k: any) =>
+          toHistoricalKlineRow(symbol, k)
+        );
 
         // R-2: candles baixados da Binance são proveniência LIVE.
         await historicalKlinesDao.insertMany(rowsToInsert, 'LIVE');

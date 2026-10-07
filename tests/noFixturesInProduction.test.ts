@@ -33,7 +33,14 @@ describe('7.1.1 / CA-1.3 — sem fixtures em produção', () => {
     const offenders: string[] = [];
     for (const file of files) {
       const content = fs.readFileSync(file, 'utf8');
-      if (/\btests\//.test(content) || /fixtures/i.test(content)) {
+      // Referência real = caminho/assinatura (`tests/`, 'fixtures/…', '…fixtures').
+      // Menção em prosa de comentário ("fixtures antigas") não é dependência de
+      // dados de teste — o regex amplo `/fixtures/i` dava falso positivo nisso.
+      const referencesTestAssets =
+        /\btests\//.test(content) ||
+        /fixtures[\\/'"]/i.test(content) ||
+        /[\\/'"]fixtures/i.test(content);
+      if (referencesTestAssets) {
         offenders.push(path.relative(ROOT, file).replace(/\\/g, '/'));
       }
     }

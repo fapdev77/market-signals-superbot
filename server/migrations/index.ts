@@ -374,6 +374,18 @@ export const MIGRATIONS: Migration[] = [
       exec(db, 'DROP TABLE backtest_results;');
       exec(db, 'ALTER TABLE backtest_results_new RENAME TO backtest_results;');
     }
+  },
+  {
+    version: 14,
+    id: '014-historical-klines-taker-volume-provenance',
+    description:
+      'A-06: proveniência do taker volume no histórico de backtest — declara se `taker_buy_base_volume` veio medido da exchange. Antes do sinal, um campo ausente era reescrito como 50% do volume e o backtest rodava sobre CVD fabricado, divergindo do live.',
+    // Aditiva e barata: só informa a proveniência do valor já existente. Colunas
+    // novas nascem com `1` porque as linhas atuais vieram do fetch da Binance
+    // (que sempre traz o campo); ingest sem o campo grava `0` explicitamente.
+    up: db => {
+      addColumnIfMissing(db, 'historical_klines', 'taker_buy_volume_available', 'INTEGER NOT NULL DEFAULT 1');
+    }
   }
 ];
 

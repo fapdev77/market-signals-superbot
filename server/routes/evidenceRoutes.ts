@@ -11,6 +11,7 @@ import { calculateBootstrapConfidenceInterval } from '../services/autoTuneOptimi
 import { getAuditActor } from '../middleware/auth.js';
 // SDD Fase 9 / S2 — calibracao do score contra a base rate do ledger.
 import { calibrateScore, MIN_SAMPLE_FOR_CALIBRATION } from '../services/scoreCalibration.js';
+import { loadCalibrationInput } from '../services/calibrationGate.js';
 
 export function createEvidenceRouter(): Router {
   const router = Router();
@@ -53,30 +54,13 @@ export function createEvidenceRouter(): Router {
   router.get('/calibration', async (req: Request, res: Response) => {
     try {
       const origin = parseOriginFilter(req.query.origin, 'LIVE');
-      const closedSignals = await signalLedgerDao.getClosedSignalsEvidence(origin);
-      const summary = generateEvidenceSummary(closedSignals, { origin });
-
-      const input = {
-        overall: {
-          n: summary.totalSignals,
-          wins: summary.wins,
-          losses: summary.losses,
-          winRate: summary.winRate,
-          wilsonInterval: summary.wilsonInterval,
-          rExpectancy: summary.rExpectancy,
-          avgMfe: summary.avgMfe,
-          avgMae: summary.avgMae,
-          // M2: `aggregateMetrics` já soma os netR (EvidenceService.ts:390). A
-          // rota descartava o resultado e escrevia 0, propagando uma métrica que
-          // parecia medida e não era.
-          cumulativeR: summary.cumulativeR,
-          maxDrawdownR: summary.maxDrawdownR
-        },
-        byScoreTier: summary.byScoreTier
-      };
+      // A-08 (FASE 2): fonte única do payload — o MESMO loader alimenta o gate
+      // de emissão em server.ts; dois construtores à mão é como os dois lados
+      // passam a ler bases diferentes sem ninguém acusar.
+      const input = await loadCalibrationInput(origin);
 
       const tiers: Record<string, unknown> = {};
-      for (const tierKey of Object.keys(summary.byScoreTier)) {
+      for (const tierKey of Object.keys(input.byScoreTier ?? {})) {
         const probe = calibrateScore(Number(tierKey.split('-')[0]) || 0, input);
         tiers[tierKey] = probe;
       }
@@ -85,7 +69,7 @@ export function createEvidenceRouter(): Router {
         success: true,
         origin,
         priorR: calibrateScore(0, input).expectancyR,
-        priorSampleSize: summary.totalSignals,
+        priorSampleSize: input.overall?.n ?? 0,
         minSampleForCalibration: MIN_SAMPLE_FOR_CALIBRATION,
         tiers
       });

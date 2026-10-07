@@ -271,7 +271,6 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
 
   const chartData: ChartDataItem[] = useMemo(() => {
     if (!klines.length) return [];
-    let currentOI = ticker.openInterest ?? 1000000;
     let currentCVD = ticker.cvd ?? 0;
     
     const data: ChartDataItem[] = klines.map(k => {
@@ -296,22 +295,22 @@ export const ChartAndProfile: React.FC<ChartAndProfileProps> = ({
         takerSellUSD: takerSell * k.close,
         delta: delta,
         deltaUSD: delta * k.close,
-        openInterest: 0,
+        // FASE 0 (C-03): NÃO existe série histórica real de Open Interest por vela.
+        // `null` explícito — a UI mostra "OI histórico indisponível" em vez de uma
+        // curva fabricada. O OI atual (snapshot real) vive no card de Order Flow.
+        openInterest: null,
         cvd: 0
       };
     });
 
-    // Backward accumulate OI and CVD to finish exactly at the current ticker values
+    // CVD retroacumulado a partir dos deltas REAIS de cada vela (taker buy/sell).
     for (let i = data.length - 1; i >= 0; i--) {
-      data[i].openInterest = currentOI;
       data[i].cvd = currentCVD;
-      const delta = data[i].delta;
-      currentOI -= (Math.abs(delta) * (Math.random() * 2 - 0.5));
-      currentCVD -= delta;
+      currentCVD -= data[i].delta;
     }
 
     return data;
-  }, [klines, ticker.openInterest, ticker.cvd]);
+  }, [klines, ticker.cvd]);
 
   useEffect(() => {
     if (chartData.length > 0) {

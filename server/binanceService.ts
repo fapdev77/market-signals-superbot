@@ -7,6 +7,8 @@ import { getErrorMessage, getHttpStatus, getErrorHeaders } from './utils/errors.
 // R-13: health por feed — todo caminho de fetch grava sucesso/falha no registro central.
 import { recordFeedSuccess, recordFeedFailure } from './services/feedHealth.js';
 import { incrementMetric } from './utils/metrics.js';
+// A-06: parsing com proveniência — campo ausente NÃO vira volume fabricado.
+import { parseMeasuredNumber } from './utils/klineParsing.js';
 import { computeUnifiedVolumeProfile } from './utils/volumeProfileCore.js';
 // R-2: os geradores sintéticos vivem todos em server/demo/.
 import { generateFallbackKlines } from './demo/syntheticKlines.js';
@@ -1418,6 +1420,29 @@ const klineCache: Record<string, { candles: KlineCandle[]; timestamp: number; is
  * Fail-closed: Never returns synthetic data silently.
  * Synthetic fallback is only activated if explicitly allowed via ALLOW_SYNTHETIC_DATA='true'.
  */
+/**
+ * A-06 (FASE 1): converte uma kline crua da exchange preservando a proveniência do
+ * `takerBuyVolume`. Um `0` real continua `0`; campo ausente/inválido é marcado como
+ * INDISPONÍVEL — antes o `parseFloat(k[9]) || parseFloat(k[5]) * 0.52` inventava
+ * "52% de compra taker" e contaminava CVD/delta/`cvdDirection` em cascata.
+ */
+export function mapRawKlineToCandle(k: unknown[]): KlineCandle {
+  // A-06: regra de proveniência compartilhada com o ingest do histórico de backtest.
+  const volume = parseMeasuredNumber(k[5]) ?? 0;
+  const takerBuyVolume = parseMeasuredNumber(k[9]);
+
+  return {
+    timestamp: Number(k[0]) || 0,
+    open: parseFloat(String(k[1])),
+    high: parseFloat(String(k[2])),
+    low: parseFloat(String(k[3])),
+    close: parseFloat(String(k[4])),
+    volume,
+    takerBuyVolume: takerBuyVolume ?? 0,
+    takerBuyVolumeAvailable: takerBuyVolume !== null
+  };
+}
+
 export async function fetchKlines(
   symbol: string,
   interval: string = '15m',
@@ -1435,15 +1460,7 @@ export async function fetchKlines(
     );
 
     if (Array.isArray(data) && data.length > 0) {
-      const candles: KlineCandle[] = data.map((k: any) => ({
-        timestamp: k[0],
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        takerBuyVolume: parseFloat(k[9]) || parseFloat(k[5]) * 0.52
-      }));
+      const candles: KlineCandle[] = data.map((k: any) => mapRawKlineToCandle(k));
       klineCache[cacheKey] = { candles, timestamp: now, isSynthetic: false };
       recordFeedSuccess('klines');
       return candles;
@@ -1478,6 +1495,116 @@ export function calculateVolumeProfile(klines: KlineCandle[], binsCount: number 
   return computeUnifiedVolumeProfile(klines, binsCount, 0.70);
 }
 
+export interface FractalPivot {
+  index: number;
+  price: number;
+  type: 'HIGH' | 'LOW';
+}
+
+/** A-04 (FASE 1): rótulos canônicos de intervalo, para traduzir o intervalo MEDIDO das velas. */
+export const KLINE_INTERVAL_LABELS: ReadonlyArray<{ ms: number; label: string }> = [
+  { ms: 60_000, label: '1m' },
+  { ms: 300_000, label: '5m' },
+  { ms: 900_000, label: '15m' },
+  { ms: 1_800_000, label: '30m' },
+  { ms: 3_600_000, label: '1h' },
+  { ms: 14_400_000, label: '4h' },
+  { ms: 86_400_000, label: '1D' }
+];
+
+/**
+ * A-04 (FASE 1): intervalo REAL entre velas, medido pelo `timestamp`.
+ * É a única fonte confiável do timeframe — o rótulo anterior vinha de uma
+ * configuração de Volume Profile que nem sempre casava com as velas recebidas.
+ */
+export function inferKlineIntervalMs(klines: KlineCandle[]): number | null {
+  if (!Array.isArray(klines) || klines.length < 2) return null;
+  const delta = klines[1].timestamp - klines[0].timestamp;
+  return delta > 0 ? delta : null;
+}
+
+export function inferKlineIntervalLabel(klines: KlineCandle[]): string | null {
+  const ms = inferKlineIntervalMs(klines);
+  if (ms == null) return null;
+  let best = KLINE_INTERVAL_LABELS[0];
+  for (const entry of KLINE_INTERVAL_LABELS) {
+    if (Math.abs(entry.ms - ms) < Math.abs(best.ms - ms)) best = entry;
+  }
+  return best.label;
+}
+
+export interface MaWindowResult {
+  average: number;
+  /** Span REAL coberto pelas velas usadas (horas). */
+  windowHours: number;
+  /** `true` quando a série cobre a janela pedida por inteiro. */
+  complete: boolean;
+  candlesUsed: number;
+}
+
+/**
+ * A-04 (FASE 1): média móvel sobre uma janela de tempo REAL (default 24h).
+ * Antes o `ma24h` era a média da série inteira (60 velas de 15m = 15h) rotulada
+ * como "24h" — e 60 minutos no backtest. Aqui a janela é medida por `timestamp`
+ * e a cobertura é declarada (`windowHours`/`complete`).
+ */
+export function computeMaOverWindow(klines: KlineCandle[], windowHours: number = 24): MaWindowResult | null {
+  const usable = (klines || []).filter(k => Number.isFinite(k?.close));
+  if (usable.length === 0) return null;
+
+  const lastTs = usable[usable.length - 1].timestamp;
+  const windowMs = windowHours * 3_600_000;
+  const cutoff = lastTs - windowMs;
+
+  let inWindow = usable.filter(k => k.timestamp >= cutoff);
+  if (inWindow.length === 0) inWindow = [usable[usable.length - 1]];
+
+  const average = inWindow.reduce((acc, k) => acc + k.close, 0) / inWindow.length;
+  const spanMs = Math.max(0, lastTs - inWindow[0].timestamp);
+  const seriesSpanMs = Math.max(0, lastTs - usable[0].timestamp);
+
+  return {
+    average,
+    windowHours: Number((spanMs / 3_600_000).toFixed(2)),
+    complete: seriesSpanMs >= windowMs,
+    candlesUsed: inWindow.length
+  };
+}
+
+/**
+ * A-03 (FASE 1): detecta pivôs por FRACTAL (mínimo/máximo local com `leftBars` e
+ * `rightBars` vizinhos estritamente menores/maiores). Mesma família de
+ * `findMarketPivots` (Wilder RSI), sem a dependência da série de RSI.
+ */
+export function findFractalPivots(
+  klines: KlineCandle[],
+  leftBars: number = 2,
+  rightBars: number = 2
+): FractalPivot[] {
+  const pivots: FractalPivot[] = [];
+
+  for (let i = leftBars; i < klines.length - rightBars; i++) {
+    const { high, low } = klines[i];
+    let isHigh = true;
+    let isLow = true;
+
+    for (let j = 1; j <= leftBars && (isHigh || isLow); j++) {
+      if (klines[i - j].high >= high) isHigh = false;
+      if (klines[i - j].low <= low) isLow = false;
+    }
+    for (let j = 1; j <= rightBars && (isHigh || isLow); j++) {
+      if (klines[i + j].high >= high) isHigh = false;
+      if (klines[i + j].low <= low) isLow = false;
+    }
+
+    // Um candle pode ser topo E fundo (barra interna) — ambos são registrados.
+    if (isHigh) pivots.push({ index: i, price: high, type: 'HIGH' });
+    if (isLow) pivots.push({ index: i, price: low, type: 'LOW' });
+  }
+
+  return pivots;
+}
+
 /**
  * Calculates Fibonacci Retracements (0.0, 0.236, 0.382, 0.5, 0.618, 0.68, 0.786, 1.0)
  * According to TradingView market structure rules:
@@ -1498,6 +1625,8 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
       swingHigh: 0,
       swingLow: 0,
       inGoldenPocket: false,
+      structure: 'RANGE' as const,
+      structureSource: 'INSUFFICIENT_PIVOTS' as const,
       trend: 'UP' as const,
       point1Price: 0,
       point0Price: 0,
@@ -1508,21 +1637,52 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
     };
   }
 
-  let swingHigh = -Infinity;
-  let swingLow = Infinity;
-  let hhIndex = 0;
-  let llIndex = 0;
+  // A-03 (FASE 1): âncoras por PIVÔS FRACTAIS (mesma família de `findMarketPivots`),
+  // não pelos extremos de toda a janela. Um extremo isolado de 60 velas pode estar
+  // a 15h de distância e não descrever o swing que o preço está respeitando agora.
+  const pivots = findFractalPivots(klines);
+  const highPivots = pivots.filter(p => p.type === 'HIGH');
+  const lowPivots = pivots.filter(p => p.type === 'LOW');
 
-  klines.forEach((c, idx) => {
-    if (c.high > swingHigh) {
-      swingHigh = c.high;
-      hhIndex = idx;
-    }
-    if (c.low < swingLow) {
-      swingLow = c.low;
-      llIndex = idx;
-    }
-  });
+  let structureSource: 'FRACTAL_PIVOTS' | 'INSUFFICIENT_PIVOTS' = 'FRACTAL_PIVOTS';
+  let lastHigh: FractalPivot | undefined = highPivots[highPivots.length - 1];
+  let prevHigh: FractalPivot | undefined = highPivots[highPivots.length - 2];
+  let lastLow: FractalPivot | undefined = lowPivots[lowPivots.length - 1];
+  let prevLow: FractalPivot | undefined = lowPivots[lowPivots.length - 2];
+
+  if (!lastHigh || !lastLow) {
+    // Sem pivô fractal confiável (ex.: série monotônica ou plana) usamos os extremos
+    // da janela APENAS como geometria e declaramos a proveniência: nenhuma estrutura
+    // direcional é afirmada e nenhum Golden Pocket é reportado.
+    structureSource = 'INSUFFICIENT_PIVOTS';
+    let fallbackHigh: FractalPivot = { index: 0, price: -Infinity, type: 'HIGH' };
+    let fallbackLow: FractalPivot = { index: 0, price: Infinity, type: 'LOW' };
+    klines.forEach((c, idx) => {
+      if (c.high > fallbackHigh.price) fallbackHigh = { index: idx, price: c.high, type: 'HIGH' };
+      if (c.low < fallbackLow.price) fallbackLow = { index: idx, price: c.low, type: 'LOW' };
+    });
+    lastHigh = fallbackHigh;
+    lastLow = fallbackLow;
+    prevHigh = undefined;
+    prevLow = undefined;
+  }
+
+  const swingHigh = lastHigh.price;
+  const swingLow = lastLow.price;
+  const hhIndex = lastHigh.index;
+  const llIndex = lastLow.index;
+
+  // A-03 (FASE 1): direção por ESTRUTURA (topos/fundos ascendentes ou descendentes),
+  // não pela ordem cronológica em que os extremos apareceram.
+  let structure: 'UPTREND' | 'DOWNTREND' | 'RANGE' = 'RANGE';
+  if (prevHigh && prevLow) {
+    const higherHighs = lastHigh.price > prevHigh.price;
+    const higherLows = lastLow.price > prevLow.price;
+    const lowerHighs = lastHigh.price < prevHigh.price;
+    const lowerLows = lastLow.price < prevLow.price;
+    if (higherHighs && higherLows) structure = 'UPTREND';
+    else if (lowerHighs && lowerLows) structure = 'DOWNTREND';
+  }
 
   const diff = swingHigh - swingLow;
   if (diff <= 0) {
@@ -1538,6 +1698,8 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
       swingHigh,
       swingLow,
       inGoldenPocket: false,
+      structure: 'RANGE' as const,
+      structureSource: 'INSUFFICIENT_PIVOTS' as const,
       trend: 'UP' as const,
       point1Price: swingLow,
       point0Price: swingHigh,
@@ -1555,7 +1717,10 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
   // If LL occurred before HH (llIndex < hhIndex):
   // The impulse moved UP from LL (1) to HH (0).
   // Retracement pulls back from 0 (HH) downwards towards 1 (LL).
-  const isDownTrend = hhIndex < llIndex;
+  // 0/1: a retração é medida do último pivô (0) para o pivô anterior (1).
+  // Downtrend ⇒ 0 no fundo; Uptrend ⇒ 0 no topo; RANGE ⇒ 0 no pivô mais recente
+  // (determinístico pela estrutura, não pela ordem de aparição dos extremos).
+  const isDownTrend = structure === 'DOWNTREND' || (structure === 'RANGE' && hhIndex <= llIndex);
 
   let f0 = 0;
   let f236 = 0;
@@ -1591,7 +1756,10 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
   // Golden Pocket zone: between 0.618 and 0.68 retracement
   const goldenTop = Math.max(f618, f68);
   const goldenBottom = Math.min(f618, f68);
-  const inGoldenPocket = currentPrice >= goldenBottom * 0.998 && currentPrice <= goldenTop * 1.002;
+  // A-03: sem pivôs não há swing definido — não afirmamos Golden Pocket.
+  const inGoldenPocket = structureSource === 'FRACTAL_PIVOTS'
+    && currentPrice >= goldenBottom * 0.998
+    && currentPrice <= goldenTop * 1.002;
 
   return {
     fib0: f0,
@@ -1605,6 +1773,8 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
     swingHigh,
     swingLow,
     inGoldenPocket,
+    structure,
+    structureSource,
     trend: isDownTrend ? ('DOWN' as const) : ('UP' as const),
     point1Price: isDownTrend ? swingHigh : swingLow,
     point0Price: isDownTrend ? swingLow : swingHigh,
@@ -1616,13 +1786,32 @@ export function calculateFibonacci(klines: KlineCandle[], currentPrice: number) 
 }
 
 /**
- * Detects Fair Value Gaps (FVG) / Single Prints
+ * A-02 (FASE 1): janela de validade do FVG, em velas.
+ *
+ * Antes o detector varria a série inteira (até 60 velas ≈ 15h no feed canônico
+ * de 15m) e um gap de horas atrás pontuava igual a um gap recém-formado.
+ * Default explícito ≈ 3h no feed de 15m; configurável por `fvgMaxAgeCandles`.
  */
-export function detectFVG(klines: KlineCandle[]) {
+export const FVG_DEFAULT_MAX_AGE_CANDLES = 12;
+
+/**
+ * Detects Fair Value Gaps (FVG) / Single Prints, respeitando uma janela de validade.
+ * A idade do gap é reportada em `ageCandles` (0 = gap formado na última vela).
+ */
+export function detectFVG(
+  klines: KlineCandle[],
+  maxAgeCandles: number = FVG_DEFAULT_MAX_AGE_CANDLES
+): {
+  hasSinglePrintFVG: boolean;
+  fvgZone?: { top: number; bottom: number; type: 'BULLISH' | 'BEARISH' };
+  ageCandles?: number;
+} {
   if (klines.length < 3) return { hasSinglePrintFVG: false };
 
-  // Look at last 5 candles for FVG
-  for (let i = klines.length - 2; i >= 2; i--) {
+  const lastIndex = klines.length - 1;
+  const oldestAllowed = Math.max(2, lastIndex - Math.max(0, Math.floor(maxAgeCandles)));
+
+  for (let i = lastIndex; i >= oldestAllowed; i--) {
     const c1 = klines[i - 2];
     const c3 = klines[i];
 
@@ -1630,14 +1819,16 @@ export function detectFVG(klines: KlineCandle[]) {
     if (c3.low > c1.high) {
       return {
         hasSinglePrintFVG: true,
-        fvgZone: { top: c3.low, bottom: c1.high, type: 'BULLISH' as const }
+        fvgZone: { top: c3.low, bottom: c1.high, type: 'BULLISH' as const },
+        ageCandles: lastIndex - i
       };
     }
     // Bearish FVG: C3 High < C1 Low
     if (c3.high < c1.low) {
       return {
         hasSinglePrintFVG: true,
-        fvgZone: { top: c1.low, bottom: c3.high, type: 'BEARISH' as const }
+        fvgZone: { top: c1.low, bottom: c3.high, type: 'BEARISH' as const },
+        ageCandles: lastIndex - i
       };
     }
   }
@@ -1652,7 +1843,8 @@ function processDepthData(
   symbol: string,
   rawBids: string[][],
   rawAsks: string[][],
-  timestamp: number
+  timestamp: number,
+  source: 'EXCHANGE' | 'SIMULATED' = 'EXCHANGE'
 ): OrderBookDepthData {
   const parsedBids = rawBids.map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })).filter(b => b.price > 0 && b.qty > 0);
   const parsedAsks = rawAsks.map(([p, q]) => ({ price: parseFloat(p), qty: parseFloat(q) })).filter(a => a.price > 0 && a.qty > 0);
@@ -1744,6 +1936,7 @@ function processDepthData(
   return {
     symbol,
     timestamp,
+    source,
     bids,
     asks,
     spread,
@@ -1820,7 +2013,7 @@ export function generateSimulatedDepth(
     rawAsks.push([askPrice.toFixed(midPrice > 10 ? 2 : 5), askQty.toFixed(2)]);
   }
 
-  return processDepthData(symbol, rawBids, rawAsks, timestamp);
+  return processDepthData(symbol, rawBids, rawAsks, timestamp, 'SIMULATED');
 }
 
 /**

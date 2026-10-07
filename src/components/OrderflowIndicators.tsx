@@ -13,7 +13,8 @@ export interface ChartDataItem {
   takerBuy: number;
   takerSell: number;
   delta: number;
-  openInterest: number;
+  /** FASE 0 (C-03): OI histórico por vela não é medido — `null` quando indisponível. */
+  openInterest: number | null;
   cvd: number;
   volume?: number;
   quoteVolume?: number;
@@ -33,6 +34,9 @@ export const OrderflowIndicators: React.FC<OrderflowIndicatorsProps> = React.mem
   ticker,
 }) => {
   const baseAsset = ticker.baseAsset || (ticker.symbol ? ticker.symbol.replace(/USDT|BUSD|USDC/g, '') : 'ATIVO');
+
+  // FASE 0 (C-03): só plota a curva de OI quando existe série real (não-nula).
+  const hasRealOpenInterest = slicedData.some(d => d.openInterest !== null && d.openInterest !== undefined);
 
   // Custom Tooltip for Volume Aggression (Taker Buy / Sell) - Passo 2
   const VolumeAggressionTooltip: React.FC<any> = ({ active, payload, label }) => {
@@ -192,31 +196,39 @@ export const OrderflowIndicators: React.FC<OrderflowIndicatorsProps> = React.mem
         <span className="absolute top-1 left-2 text-[9px] font-bold text-neutral-500 uppercase z-10 group-hover:text-white transition">
           Open Interest (Contratos Abertos)
         </span>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
-            <XAxis dataKey="time" hide />
-            <YAxis
-              domain={['auto', 'auto']}
-              orientation="right"
-              width={65}
-              stroke="#404040"
-              tick={{ fontSize: 8, fill: '#737373' }}
-              tickFormatter={(val) => `$${formatCompactNumber(val)}`}
-            />
-            <Tooltip
-              content={<OITooltip />}
-              cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }}
-            />
-            <Line
-              type="monotone"
-              dataKey="openInterest"
-              name="Open Interest"
-              stroke="#06b6d4"
-              strokeWidth={1.5}
-              dot={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+        {hasRealOpenInterest ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart syncId="cryptoSniperChart" data={slicedData} margin={{ top: 15, right: 10, left: 10, bottom: 0 }}>
+              <XAxis dataKey="time" hide />
+              <YAxis
+                domain={['auto', 'auto']}
+                orientation="right"
+                width={65}
+                stroke="#404040"
+                tick={{ fontSize: 8, fill: '#737373' }}
+                tickFormatter={(val) => `$${formatCompactNumber(val)}`}
+              />
+              <Tooltip
+                content={<OITooltip />}
+                cursor={{ stroke: '#f97316', strokeWidth: 1, strokeDasharray: '3 3' }}
+              />
+              <Line
+                type="monotone"
+                dataKey="openInterest"
+                name="Open Interest"
+                stroke="#06b6d4"
+                strokeWidth={1.5}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-full w-full flex items-center justify-center">
+            <span className="text-[10px] font-mono text-neutral-500">
+              OI histórico por vela indisponível — o OI atual (snapshot) é exibido no card de Order Flow & Funding.
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

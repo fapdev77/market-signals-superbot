@@ -137,7 +137,9 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     for (let i = 0; i < limit; i++) {
       const distPct = 0.0002 + (i / limit) * 0.025;
       const price = bestBid * (1 - distPct);
-      let qty = (baseUnitQty * (1 + i * 0.3)) * (0.8 + Math.random() * 0.4) * (1 + bias);
+      // FASE 0 (C-07): determinístico (sin do seed do símbolo) — sem Math.random().
+      const noiseBid = Math.abs(Math.sin(seed * 1.3 + i * 1.7));
+      let qty = (baseUnitQty * (1 + i * 0.3)) * (0.8 + noiseBid * 0.4) * (1 + bias);
       const isWall = i === 8 || i === 19;
       if (isWall) qty *= 3.2;
 
@@ -164,7 +166,8 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     for (let i = 0; i < limit; i++) {
       const distPct = 0.0002 + (i / limit) * 0.025;
       const price = bestAsk * (1 + distPct);
-      let qty = (baseUnitQty * (1 + i * 0.3)) * (0.8 + Math.random() * 0.4) * (1 - bias);
+      const noiseAsk = Math.abs(Math.sin(seed * 2.1 + i * 1.3));
+      let qty = (baseUnitQty * (1 + i * 0.3)) * (0.8 + noiseAsk * 0.4) * (1 - bias);
       const isWall = i === 7 || i === 21;
       if (isWall) qty *= 3.2;
 
@@ -208,6 +211,7 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
     return {
       symbol,
       timestamp: now,
+      source: 'SIMULATED' as const,
       bids: parsedBids,
       asks: parsedAsks,
       spread,
@@ -819,6 +823,22 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
                 <span className="text-[10px] bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded border border-cyan-500/30 font-mono font-bold flex items-center gap-1">
                   <Activity className="w-3 h-3 animate-pulse" />
                   CVD Ativo
+                </span>
+              )}
+              {/* C-07: procedência do livro de ofertas — nunca deixar um book sintético passar por real. */}
+              {depthData?.source === 'SIMULATED' ? (
+                <Tooltip content="O snapshot do livro não pôde ser obtido da exchange. A profundidade exibida é um MODELO sintético e não representa ordens reais.">
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/40 font-mono font-bold">
+                    LIVRO SINTÉTICO
+                  </span>
+                </Tooltip>
+              ) : depthData?.source === 'EXCHANGE' ? (
+                <span className="text-[10px] bg-emerald-500/15 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30 font-mono font-bold">
+                  LIVRO REAL ({depthData.bids.length + depthData.asks.length} níveis)
+                </span>
+              ) : (
+                <span className="text-[10px] bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded border border-white/10 font-mono font-bold">
+                  LIVRO NÃO MEDIDO
                 </span>
               )}
             </div>
@@ -1501,6 +1521,13 @@ export const LiquidityDepth: React.FC<LiquidityDepthProps> = ({
                 <span className="text-rose-400 font-bold">
                   Sell: ${((cvdMetrics.takerSellVolumeUsd) / 1_000_000).toFixed(1)}M ({cvdMetrics.takerSellRatioPct.toFixed(0)}%)
                 </span>
+              </div>
+              {/* FASE 0: a magnitude em USD é escala por PREMISSA declarada — o share
+                  taker de 24h não é medível no ticker. A proporção acima é medida. */}
+              <div className="text-[9px] text-neutral-500 leading-tight">
+                {cvdMetrics.volumeBasis === 'ABSENT'
+                  ? 'Volume 24h ausente — magnitude em USD indisponível.'
+                  : `Magnitude ≈ volume 24h × ${(cvdMetrics.assumedTakerShareOfQuoteVolume * 100).toFixed(0)}% (premissa taker); proporção medida.`}
               </div>
             </div>
 

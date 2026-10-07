@@ -2,20 +2,10 @@ import React from 'react';
 import { CheckCircle2, TrendingUp, Award } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { GoldenPocketOutcomesChart } from './GoldenPocketOutcomesChart';
+import type { GoldenPocketStats } from '../utils/goldenPocketStats';
 
-export interface GoldenPocketStats {
-  symbol: string;
-  totalAlerts: number;
-  profitableCount: number;
-  stoppedCount: number;
-  activeCount: number;
-  winRate: number;
-  recentOutcomes: Array<{
-    profitable: boolean;
-    pnlPct: number;
-    timestamp: number;
-  }>;
-}
+/** FASE 0 (C-02): o contrato (e a lógica) moram na utilidade pura — re-exportado. */
+export type { GoldenPocketStats } from '../utils/goldenPocketStats';
 
 interface GoldenPocketSparklineProps {
   stats: GoldenPocketStats;
@@ -49,9 +39,11 @@ export const GoldenPocketSparkline: React.FC<GoldenPocketSparklineProps> = ({ st
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
 
-  const isNetPositive = winRate >= 50;
-  const lineColor = isNetPositive ? '#10b981' : '#f43f5e';
-  const fillColor = isNetPositive ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
+  // C-02 (FASE 0): sem amostra não há cor de "desempenho" — cinza neutro.
+  const hasSample = winRate != null;
+  const isNetPositive = hasSample && (winRate as number) >= 50;
+  const lineColor = !hasSample ? '#6b7280' : isNetPositive ? '#10b981' : '#f43f5e';
+  const fillColor = !hasSample ? 'rgba(107, 114, 128, 0.15)' : isNetPositive ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)';
 
   const areaPoints = `${padding},${height - padding} ${polyPoints} ${width - padding},${height - padding}`;
 
@@ -59,12 +51,17 @@ export const GoldenPocketSparkline: React.FC<GoldenPocketSparklineProps> = ({ st
     <Tooltip
       position="bottom"
       title={`Estatísticas Golden Pocket: ${stats.symbol}`}
-      badge={`${winRate}% HIT-RATE`}
+      badge={hasSample ? `${winRate}% HIT-RATE` : 'SEM AMOSTRA'}
       content={
         <div className="space-y-2 text-xs">
           <p className="text-neutral-300">
             Histórico recente de alertas Golden Pocket (Fibo 0.618 - 0.68) para <strong>{stats.symbol}</strong>.
           </p>
+          {!hasSample && (
+            <p className="text-amber-300/90 text-[10px] leading-snug">
+              Sem alertas resolvidos registrados para este ativo ainda. Nenhuma estatística é estimada.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
             <div>
               <span className="text-neutral-400 block text-[10px]">Trades com Lucro</span>
@@ -72,7 +69,7 @@ export const GoldenPocketSparkline: React.FC<GoldenPocketSparklineProps> = ({ st
             </div>
             <div>
               <span className="text-neutral-400 block text-[10px]">Assertividade</span>
-              <span className="text-white font-bold">{winRate}%</span>
+              <span className="text-white font-bold">{hasSample ? `${winRate}%` : 'n/d'}</span>
             </div>
           </div>
 
@@ -131,7 +128,7 @@ export const GoldenPocketSparkline: React.FC<GoldenPocketSparklineProps> = ({ st
             </span>
           </div>
           <span className="text-[9px] text-amber-300 font-semibold font-mono mt-0.5">
-            {winRate}% assertivo
+            {hasSample ? `${winRate}% assertivo` : 'sem histórico'}
           </span>
         </div>
       </div>

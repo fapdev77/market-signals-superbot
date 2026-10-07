@@ -13,10 +13,11 @@ import {
   enrichPosition, 
   simulatePortfolioShock, 
   convertSignalToPosition, 
-  getInitialSeedPositions,
   getAssetSectorAndBeta 
 } from '../utils/riskCalculations';
 import { formatPrice, formatPercent } from '../utils/formatters';
+import { apiClient } from '../services/apiClient';
+import { computeDailyRealizedVol } from '../utils/realizedVolatility';
 import { useToast } from './Toast';
 import { Tooltip } from './Tooltip';
 import { 
@@ -59,6 +60,16 @@ interface RiskExposureDashboardProps {
 const STORAGE_KEY_POSITIONS = 'superbot_portfolio_positions';
 const STORAGE_KEY_EQUITY = 'superbot_portfolio_equity';
 
+/**
+ * FASE 0 (C-08): fonte da volatilidade REALIZADA que substitui a premissa do VaR.
+ * A base do cálculo é a vol diária de BTC (`ASSUMED_DAILY_BTC_VOL` em
+ * `riskCalculations`), então é BTC que medimos — em vez de assumir 3,5%/dia.
+ */
+const VOL_REFERENCE_SYMBOL = 'BTCUSDT';
+const VOL_KLINE_INTERVAL = '15m';
+const VOL_KLINE_LIMIT = 96; // 24h de velas de 15m
+const VOL_REFRESH_MS = 5 * 60 * 1000;
+
 export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
   tickers,
   signals,
@@ -96,7 +107,10 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
     } catch {
       // ignore
     }
-    return getInitialSeedPositions(tickers);
+    // FASE 0 (C-09): portfólio começa VAZIO. Nenhuma posição de demonstração é
+    // apresentada como se fosse do operador. As posições entram por cadastro
+    // manual ou por `convertSignalToPosition` (origin = 'SIGNAL').
+    return [];
   });
 
   // Aggregation View Mode
@@ -178,10 +192,40 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
     return [...enrichedPositions, ...uniqueSignals];
   }, [aggregationMode, enrichedPositions, signalDerivedPositions]);
 
+  // FASE 0 (C-08): vol diária REALIZADA (medida sobre 24h de velas de BTC).
+  // Sem série disponível o valor fica `null` e o VaR segue rotulado como
+  // PARAMETRIC_ASSUMED — a premissa nunca é promovida a medição por acaso.
+  const [measuredDailyVol, setMeasuredDailyVol] = useState<number | null>(null);
+  const hasPositions = activeEffectivePositions.length > 0;
+
+  useEffect(() => {
+    if (!hasPositions) {
+      setMeasuredDailyVol(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const klines = await apiClient.getKlines(VOL_REFERENCE_SYMBOL, VOL_KLINE_INTERVAL, VOL_KLINE_LIMIT);
+        const measured = computeDailyRealizedVol(klines);
+        if (!cancelled) setMeasuredDailyVol(measured ? measured.dailyVol : null);
+      } catch {
+        // Sem série não há medição — o VaR continua declarado como paramétrico.
+        if (!cancelled) setMeasuredDailyVol(null);
+      }
+    };
+    void load();
+    const id = setInterval(load, VOL_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [hasPositions]);
+
   // Comprehensive portfolio risk metrics
   const riskSummary: PortfolioRiskSummary = useMemo(() => {
-    return calculatePortfolioRisk(activeEffectivePositions, portfolioEquity);
-  }, [activeEffectivePositions, portfolioEquity]);
+    return calculatePortfolioRisk(activeEffectivePositions, portfolioEquity, measuredDailyVol);
+  }, [activeEffectivePositions, portfolioEquity, measuredDailyVol]);
 
   // Filtered positions for the table
   const displayedPositions = useMemo(() => {
@@ -340,11 +384,10 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
     showToast('info', 'Posição Encerrada', `Posição em ${symbol} removida do portfolio.`);
   };
 
-  // Reset to Seed Positions
+  // Clear Portfolio (FASE 0 / C-09: sem posições-semente fictícias)
   const handleResetToSeed = () => {
-    const seed = getInitialSeedPositions(tickers);
-    persistPositions(seed);
-    showToast('success', 'Portfolio Resetado', 'Carteira redefinida para os ativos padrão de referência quantitativa.');
+    persistPositions([]);
+    showToast('info', 'Portfólio Limpo', 'Todas as posições foram removidas. Nenhum dado de demonstração é inserido.');
   };
 
   // Export JSON Report
@@ -625,7 +668,7 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
           <div className="bg-[#090909] p-3.5 rounded-xl border border-white/5 relative overflow-hidden group hover:border-cyan-500/30 transition">
             <div className="flex items-center justify-between text-[10px] text-neutral-400 uppercase font-mono">
               <span>VaR 95% (1 Dia)</span>
-              <Tooltip content="Perda máxima estatística esperada em 1 dia sob condições normais de mercado com 95% de confiança quantitativa.">
+              <Tooltip content="Dado paramétrico: perda máxima esperada em 1 dia com 95% de confiança, calculada sobre a volatilidade indicada abaixo. Não é um backtest de perdas realizadas.">
                 <Info className="w-3 h-3 text-neutral-600 group-hover:text-neutral-400" />
               </Tooltip>
             </div>
@@ -640,6 +683,14 @@ export const RiskExposureDashboard: React.FC<RiskExposureDashboardProps> = ({
             <div className="mt-1.5 flex items-center justify-between text-[10px] font-mono text-neutral-400 border-t border-white/5 pt-1.5">
               <span>VaR 99% Stress:</span>
               <span className="font-bold text-rose-400">-${riskSummary.var99DailyUsd.toFixed(0)}</span>
+            </div>
+            {/* C-08: a volatilidade é uma PREMISSA declarada — nunca apresentada como medida. */}
+            <div className="mt-1 text-[9px] font-mono leading-tight">
+              {riskSummary.varBasis === 'MEASURED' ? (
+                <span className="text-emerald-400/80">Vol. realizada: {(riskSummary.varDailyVolUsed * 100).toFixed(2)}%/dia</span>
+              ) : (
+                <span className="text-amber-400/80">Paramétrico — vol. assumida {(riskSummary.varDailyVolUsed * 100).toFixed(2)}%/dia (não medida)</span>
+              )}
             </div>
           </div>
 

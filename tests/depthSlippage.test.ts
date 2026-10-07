@@ -24,6 +24,7 @@ function depth(params: { asks?: [number, number][]; bids?: [number, number][]; m
   return {
     symbol: 'TESTUSDT',
     timestamp: Date.now(),
+    source: 'EXCHANGE',
     bids,
     asks,
     spread,

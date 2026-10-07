@@ -1,5 +1,5 @@
 import { TickerData, TradeSignal, IndicatorWeights, KlineCandle, StrategyCategory, LongShortRatioData, TrappedTradersData, SignalTtlSettings } from '../src/types.js';
-import { calculateVolumeProfile, calculateFibonacci, detectFVG, calculateTrappedTradersAnalysis, getTradfiAsset, isTradfiMarketOpen, canGenerateSignalsForAsset } from './binanceService.js';
+import { calculateVolumeProfile, calculateFibonacci, detectFVG, FVG_DEFAULT_MAX_AGE_CANDLES, computeMaOverWindow, inferKlineIntervalLabel, calculateTrappedTradersAnalysis, getTradfiAsset, isTradfiMarketOpen, canGenerateSignalsForAsset } from './binanceService.js';
 import { scanRSIDivergence } from '../src/utils/rsiDivergenceUtils.js';
 import { calculateEffectiveTtlMinutes, DEFAULT_SIGNAL_TTL_SETTINGS } from '../src/utils/signalTtlUtils.js';
 // 6.5.1/CA-5.2: cálculo de preço/risco usa decimal exato; toFixed fica só na apresentação.
@@ -18,6 +18,100 @@ import { isPendingEntryEnabled } from './services/pendingEntryLifecycle.js';
  * Defines standard 60-candle history lookback for indicator calculation across live and backtest.
  */
 export const SIGNAL_LOOKBACK_CANDLES = 60;
+
+/**
+ * A-01 (FASE 1) — modelo de pontuação de confluência, versionado.
+ *
+ * O trecho LINEAR (`slope`/`intercept`) preserva o mapeamento histórico até o
+ * joelho, de modo que o significado de `minConfluenceScore` / `minConfluence`
+ * (58..74 hoje) não mude. Acima do joelho a curva vira LOGARÍTMICA: continua
+ * estritamente crescente (forças diferentes permanecem ranqueáveis) e nunca
+ * colapsa em 100 — era exatamente esse colapso (`|netScore| ≥ 62,5 ⇒ 100`) que
+ * tornava sinais de forças diferentes indistinguíveis.
+ */
+export const SCORING_MODEL = {
+  version: 1,
+  slope: 1.2,
+  intercept: 25,
+  knee: 45,
+  logGain: 8,
+  /** Tetos/limites matemáticos — não são bandas: só evitam estourar 0..100. */
+  maxScore: 99
+} as const;
+
+export const DEFAULT_MAX_STOP_LOSS_ATR_MULTIPLE = 2.5;
+
+export interface SignalContextInput {
+  weights?: IndicatorWeights;
+  minRiskRewardRatio?: number;
+  strategyCategory?: StrategyCategory;
+  customTimeframe?: string;
+  ttlSettings?: SignalTtlSettings;
+  filters?: SymbolFilters | null;
+  riskParams?: { equity?: number; riskPerTradePct?: number };
+}
+
+export interface ResolvedSignalContext extends SignalContextInput {
+  strategyCategory: StrategyCategory;
+  minRiskRewardRatio: number;
+  /** A-05: múltiplo efetivo do cap de stop — resolvido em UM único lugar. */
+  stopCapMultiple: number;
+  /** A-05: diferenças de paridade live↔backtest que permanecem (nunca silenciosas). */
+  parityWarnings: string[];
+}
+
+/**
+ * A-05 (FASE 1): contexto único de sinal.
+ *
+ * Live e backtest devem montar o MESMO contexto a partir desta função. Antes o
+ * live passava `filters` e o backtest não, e `weights` era `undefined` nos dois
+ * caminhos — o que deixava knobs tipados (`maxStopLossAtrMultiple`) e validados
+ * inertes e fazia os dois lados decidirem com parâmetros diferentes.
+ */
+export function buildSignalContext(input: SignalContextInput = {}): ResolvedSignalContext {
+  const { weights } = input;
+  const parityWarnings: string[] = [];
+
+  if (!weights) {
+    parityWarnings.push('weights ausente: knobs (minRiskRewardRatio, maxStopLossAtrMultiple, minConfluenceScore) caem nos defaults.');
+  }
+  if (!input.filters) {
+    parityWarnings.push('filters ausente: stop/entrada não são alinhados ao tickSize do exchange.');
+  }
+
+  return {
+    ...input,
+    strategyCategory: input.strategyCategory ?? 'INTRADAY',
+    minRiskRewardRatio: input.minRiskRewardRatio ?? weights?.minRiskRewardRatio ?? 2.5,
+    ttlSettings: input.ttlSettings ?? weights?.signalTtlSettings,
+    stopCapMultiple: weights?.maxStopLossAtrMultiple ?? DEFAULT_MAX_STOP_LOSS_ATR_MULTIPLE,
+    parityWarnings
+  };
+}
+
+export interface ConfluenceScore {
+  /** Força de confluência (0..99). Nunca satura em 100. */
+  score: number;
+  /** Direção do desequilíbrio — a magnitude fica em `score` (o score é só força). */
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  /** Pontuação bruta (`bullishPoints - bearishPoints`) que originou o score. */
+  netPoints: number;
+}
+
+export function scoreConfluence(netPoints: number): ConfluenceScore {
+  const { slope, intercept, knee, logGain, maxScore } = SCORING_MODEL;
+  const magnitude = Math.abs(netPoints);
+  const kneeScore = slope * knee + intercept;
+
+  const score = magnitude <= knee
+    ? Math.round(slope * magnitude + intercept)
+    : Math.min(maxScore, Math.round(kneeScore + logGain * Math.log(magnitude / knee)));
+
+  const direction: ConfluenceScore['direction'] =
+    netPoints > 0 ? 'BULLISH' : netPoints < 0 ? 'BEARISH' : 'NEUTRAL';
+
+  return { score, direction, netPoints };
+}
 
 export function normalizePricePrecision(value: number | null | undefined): number {
   if (value === null || value === undefined || isNaN(value)) return 0;
@@ -41,6 +135,72 @@ export function formatPriceString(value: number | null | undefined): string {
   const leadingZeros = Math.floor(-Math.log10(abs));
   const decimals = Math.min(12, Math.max(5, leadingZeros + 4));
   return String(dRound(value, decimals));
+}
+
+export interface CvdMetrics {
+  cvd: number;
+  cvdDelta: number;
+  cvdDeltaPercent: number;
+  takerBuyRatio: number;
+  cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL';
+  /** `false` = nenhuma vela com `takerBuyVolume` medido — CVD não é afirmável. */
+  available: boolean;
+  /** Quantas velas entraram no cálculo (as demais não tinham taker volume). */
+  candlesUsed: number;
+  totalBuyVolume: number;
+  totalSellVolume: number;
+}
+
+/**
+ * A-06 (FASE 1): CVD calculado SÓ sobre velas com `takerBuyVolume` medido.
+ *
+ * Antes, uma vela sem o campo era contada como venda integral do volume (viés
+ * fabricado para o lado vendedor) quando o valor não era o 52% inventado pelo
+ * mapper. Aqui uma vela não medida é simplesmente excluída; se nenhuma sobrar, o
+ * resultado se declara INDISPONÍVEL em vez de fingir neutralidade.
+ */
+export function computeCvdMetrics(klines: KlineCandle[], price: number): CvdMetrics {
+  const usable = klines.filter(c => c.takerBuyVolumeAvailable !== false);
+  const recentCount = Math.min(5, usable.length);
+
+  let totalBuyVolume = 0;
+  let totalSellVolume = 0;
+  let recentBuyVolume = 0;
+  let recentSellVolume = 0;
+
+  usable.forEach((c, idx) => {
+    const sell = Math.max(0, c.volume - c.takerBuyVolume);
+    totalBuyVolume += c.takerBuyVolume;
+    totalSellVolume += sell;
+    if (idx >= usable.length - recentCount) {
+      recentBuyVolume += c.takerBuyVolume;
+      recentSellVolume += sell;
+    }
+  });
+
+  const available = usable.length > 0;
+  const cvd = (totalBuyVolume - totalSellVolume) * price;
+  const cvdDelta = (recentBuyVolume - recentSellVolume) * price;
+  const totalRecentVol = (recentBuyVolume + recentSellVolume) || 1;
+  const cvdDeltaPercent = available
+    ? Number((((recentBuyVolume - recentSellVolume) / totalRecentVol) * 100).toFixed(2))
+    : 0;
+  const takerBuyRatio = available ? totalBuyVolume / (totalBuyVolume + totalSellVolume || 1) : 0;
+  const cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL' = available
+    ? (takerBuyRatio > 0.53 ? 'BUY' : takerBuyRatio < 0.47 ? 'SELL' : 'NEUTRAL')
+    : 'NEUTRAL';
+
+  return {
+    cvd,
+    cvdDelta,
+    cvdDeltaPercent,
+    takerBuyRatio,
+    cvdDirection,
+    available,
+    candlesUsed: usable.length,
+    totalBuyVolume,
+    totalSellVolume
+  };
 }
 
 export function processTickerState(
@@ -86,12 +246,19 @@ export function processTickerState(
   const quoteVolume24h = parseFloat(rawTicker.quoteVolume || (volume24h * price).toFixed(0));
 
   // Compute 24h Moving Average (from available klines or estimate from 24h high, low, open, close)
+  // A-04 (FASE 1): média móvel em janela de 24h REAL (medida por `timestamp`), com a
+  // cobertura declarada. O fallback usa o OHLC de 24h da exchange (não a série inteira).
+  const maWindow = computeMaOverWindow(klines, 24);
   let ma24h = price;
-  if (klines && klines.length > 0) {
-    const sumCloses = klines.reduce((acc, k) => acc + (k.close || price), 0);
-    ma24h = sumCloses / klines.length;
+  let ma24hWindowHours = 24;
+  let ma24hComplete = true;
+  let ma24hSource: 'KLINES_24H' | 'KLINES_PARTIAL' | 'EXCHANGE_24H_OHLC' = 'EXCHANGE_24H_OHLC';
+  if (maWindow) {
+    ma24h = maWindow.average;
+    ma24hWindowHours = maWindow.windowHours;
+    ma24hComplete = maWindow.complete;
+    ma24hSource = maWindow.complete ? 'KLINES_24H' : 'KLINES_PARTIAL';
   } else {
-    // If no klines yet, synthesize from 24h open and price range
     const open24h = price / (1 + (priceChangePercent24h / 100));
     ma24h = (open24h + high24h + low24h + price) / 4;
   }
@@ -110,27 +277,17 @@ export function processTickerState(
   // Compute Fibonacci (0.5, 0.618, 0.68)
   const fibonacci = calculateFibonacci(klines, price);
 
-  // Compute CVD (Cumulative Volume Delta) & Short-term Delta
-  let totalBuyVol = 0;
-  let totalSellVol = 0;
-  let recentBuyVol = 0;
-  let recentSellVol = 0;
-  const recentCount = Math.min(5, klines.length);
-  klines.forEach((c, idx) => {
-    totalBuyVol += c.takerBuyVolume;
-    totalSellVol += Math.max(0, c.volume - c.takerBuyVolume);
-    if (idx >= klines.length - recentCount) {
-      recentBuyVol += c.takerBuyVolume;
-      recentSellVol += Math.max(0, c.volume - c.takerBuyVolume);
-    }
-  });
-  const cvd = (totalBuyVol - totalSellVol) * price;
-  const cvdDelta = (recentBuyVol - recentSellVol) * price;
-  const totalRecentVol = (recentBuyVol + recentSellVol) || 1;
-  const cvdDeltaPercent = Number((((recentBuyVol - recentSellVol) / totalRecentVol) * 100).toFixed(2));
-  const takerBuyRatio = totalBuyVol / (totalBuyVol + totalSellVol || 1);
-  const cvdDirection: 'BUY' | 'SELL' | 'NEUTRAL' =
-    takerBuyRatio > 0.53 ? 'BUY' : takerBuyRatio < 0.47 ? 'SELL' : 'NEUTRAL';
+  // Compute CVD (Cumulative Volume Delta) & Short-term Delta — A-06 (FASE 1).
+  const cvdMetrics = computeCvdMetrics(klines, price);
+  const cvd = cvdMetrics.cvd;
+  const cvdDelta = cvdMetrics.cvdDelta;
+  const cvdDeltaPercent = cvdMetrics.cvdDeltaPercent;
+  const takerBuyRatio = cvdMetrics.takerBuyRatio;
+  const cvdDirection = cvdMetrics.cvdDirection;
+  if (!cvdMetrics.available) {
+    // Sem taker volume medido o CVD não é afirmável — o fator entra como INDISPONÍVEL.
+    unavailableFactors.push('Volume Taker (klines sem takerBuyVolume)');
+  }
 
   // Real Open Interest % change from exchange endpoint (no synthetic estimation)
   const openInterestChange24h = typeof realOiChange?.change24h === 'number'
@@ -140,8 +297,9 @@ export function processTickerState(
     ? realOiChange.change1h
     : 0;
 
-  // Single Prints & FVG
-  const fvg = detectFVG(klines);
+  // Single Prints & FVG — A-02 (FASE 1): janela de validade explícita e configurável,
+  // em vez de varrer a série inteira e pontuar gaps antigos como se fossem novos.
+  const fvg = detectFVG(klines, weights.fvgMaxAgeCandles ?? FVG_DEFAULT_MAX_AGE_CANDLES);
 
   // Support & Resistance
   const support1 = Math.min(rangeProfile.val, fibonacci.fib618);
@@ -275,13 +433,17 @@ export function processTickerState(
     confluenceFactors.push('Market Structure Break (BOS) Bearish Candle');
   }
 
+  // A-02 (FASE 1): o FVG entrou no sistema de pesos (antes o literal `10` ficava
+  // fora do Auto-Tuner e o operador não conseguia desligá-lo ou calibrá-lo).
+  const fvgWeight = weights.fvgWeight ?? 10;
+  const fvgAgeLabel = typeof fvg.ageCandles === 'number' ? ` · ${fvg.ageCandles} velas atrás` : '';
   if (fvg.hasSinglePrintFVG && fvg.fvgZone) {
     if (fvg.fvgZone.type === 'BULLISH') {
-      bullishPoints += 10;
-      confluenceFactors.push(`Bullish Fair Value Gap (FVG) at ${formatPriceString(fvg.fvgZone.bottom)} - ${formatPriceString(fvg.fvgZone.top)}`);
+      bullishPoints += fvgWeight;
+      confluenceFactors.push(`Bullish Fair Value Gap (FVG) at ${formatPriceString(fvg.fvgZone.bottom)} - ${formatPriceString(fvg.fvgZone.top)}${fvgAgeLabel}`);
     } else {
-      bearishPoints += 10;
-      confluenceFactors.push(`Bearish Fair Value Gap (FVG) at ${formatPriceString(fvg.fvgZone.bottom)} - ${formatPriceString(fvg.fvgZone.top)}`);
+      bearishPoints += fvgWeight;
+      confluenceFactors.push(`Bearish Fair Value Gap (FVG) at ${formatPriceString(fvg.fvgZone.bottom)} - ${formatPriceString(fvg.fvgZone.top)}${fvgAgeLabel}`);
     }
   }
 
@@ -352,10 +514,11 @@ export function processTickerState(
     ma24hDeviationPct
   };
 
-  let divTimeframe = '1h';
-  if (weights.volumeProfileTimeframe === '15m') divTimeframe = '15m';
-  else if (weights.volumeProfileTimeframe === '4h') divTimeframe = '4h';
-  else if (weights.volumeProfileTimeframe === '1d' || weights.volumeProfileTimeframe === '1D') divTimeframe = '1D';
+  // A-04 (FASE 1): o rótulo da divergência é o intervalo REALMENTE medido nas velas
+  // que alimentam o RSI. Antes vinha de `volumeProfileTimeframe` (default '30m', que
+  // não casava com nenhum ramo ⇒ rótulo '1h' sobre velas de 15m).
+  const measuredInterval = inferKlineIntervalLabel(klines);
+  const divTimeframe = measuredInterval ?? '1h';
 
   const rsiDivItem = scanRSIDivergence(partialTickerForDivergence, divTimeframe, klines);
   const rsiDivWeight = weights.rsiDivergenceWeight ?? 20;
@@ -376,7 +539,9 @@ export function processTickerState(
 
   // Determine Signal Type & Confluence Score
   const netScore = bullishPoints - bearishPoints;
-  const confluenceScore = Math.min(100, Math.round(Math.abs(netScore) * 1.2 + 25));
+  // A-01 (FASE 1): força sem saturação e direção separada da magnitude.
+  const scoring = scoreConfluence(netScore);
+  const confluenceScore = scoring.score;
 
   let signalType: 'STRONG_LONG' | 'LONG' | 'NEUTRAL' | 'SHORT' | 'STRONG_SHORT' = 'NEUTRAL';
   let signalReason = 'Consolidating in range. Awaiting directional volume breakout.';
@@ -442,6 +607,11 @@ export function processTickerState(
     quoteVolume24h,
     ma24h,
     ma24hDeviationPct,
+    // A-04 (FASE 1): procedência/cobertura da média e intervalo medido das velas.
+    ma24hWindowHours,
+    ma24hComplete,
+    ma24hSource,
+    measuredInterval: measuredInterval ?? undefined,
     openInterest,
     openInterestChange24h,
     openInterestChange1h,
@@ -469,6 +639,10 @@ export function processTickerState(
     longShortData: fallbackLsData,
     trappedTraders,
     confluenceScore,
+    // A-01 (FASE 1): proveniência do score — direção separada da magnitude.
+    scoreDirection: scoring.direction,
+    netConfluencePoints: scoring.netPoints,
+    scoringModelVersion: SCORING_MODEL.version,
     signalType,
     signalReason,
     confluenceFactors,
@@ -532,7 +706,11 @@ export function buildTradeSignal(
   /** CRÍTICO-2: velas REAIS de 1m/5m para a validação multi-timeframe. */
   validationKlines?: ValidationKlines
 ): TradeSignal | null {
-  if (ticker.signalType === 'NEUTRAL' || ticker.confluenceScore < 50) {
+  // A-01 (FASE 1): o gate `confluenceScore < 50` era MORTO — `signalType` só sai de
+  // NEUTRAL com `|netScore| ≥ 35`, o que já implica score ≥ 67 sob o modelo atual.
+  // Removido para não dar falsa sensação de proteção. A barreira real de força é o
+  // limiar de `netScore` no motor + `minRiskRewardRatio` + `enforceStopCap` abaixo.
+  if (ticker.signalType === 'NEUTRAL') {
     return null;
   }
 
@@ -642,7 +820,9 @@ export function buildTradeSignal(
   // sit arbitrarily far away, silently inflating risk per trade. The cap keeps
   // the stop structural (it still sits beyond the price) but bounded, and the
   // R:R is recomputed AFTER the cap below.
-  const capMultiple = weights?.maxStopLossAtrMultiple ?? 2.5;
+  // A-05 (FASE 1): o default vem de `DEFAULT_MAX_STOP_LOSS_ATR_MULTIPLE` (fonte única
+  // compartilhada com `buildSignalContext`), não de um literal duplicado.
+  const capMultiple = weights?.maxStopLossAtrMultiple ?? DEFAULT_MAX_STOP_LOSS_ATR_MULTIPLE;
   if (Array.isArray(klines) && klines.length >= 5 && capMultiple > 0) {
     const lookbackAtr = klines.slice(-15);
     const trueRanges = lookbackAtr.map((k, idx) => {
@@ -811,7 +991,14 @@ export function buildTradeSignal(
     if (spikeDetected) {
       validationStatus = 'REJECTED_SPIKE';
       validationStage = `REJEITADO: ${rejectionReason}`;
-    } else if (candle1mConfirmed && candle5mConfirmed && ticker.confluenceScore >= 60) {
+    } else if (
+      candle1mConfirmed &&
+      candle5mConfirmed &&
+      // A-01 (FASE 1): o literal `>= 60` era SEMPRE verdadeiro quando havia sinal
+      // (score mínimo 67). Agora respeita o limiar configurado pelo operador — o gate
+      // é vivo e o knob `minConfluenceScore` realmente influencia a validação MTF.
+      ticker.confluenceScore >= (weights?.minConfluenceScore ?? 60)
+    ) {
       validationStatus = 'CONFIRMED';
       validationStage = 'VALIDADO: vela de 1m sustenta a direção + tendência de 5m confirmada';
     } else if (candle1mConfirmed || candle5mConfirmed) {

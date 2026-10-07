@@ -172,6 +172,7 @@ export function enrichPosition(
     maxLossAtStopUsd,
     openedAt: pos.openedAt || Date.now(),
     isSyntheticFromSignal: pos.isSyntheticFromSignal,
+    origin: pos.origin,
     notes: pos.notes
   };
 }
@@ -181,7 +182,13 @@ export function enrichPosition(
  */
 export function calculatePortfolioRisk(
   positions: PortfolioPosition[],
-  portfolioEquity: number = 10000
+  portfolioEquity: number = 10000,
+  /**
+   * C-08 (FASE 0): volatilidade diária REALIZADA (fração, ex.: 0.028 = 2.8%/dia).
+   * Quando ausente/ inválida, o VaR usa a premissa paramétrica (`ASSUMED_DAILY_BTC_VOL`)
+   * e marca `varBasis: 'PARAMETRIC_ASSUMED'` — a suposição nunca é apresentada como medida.
+   */
+  measuredDailyVol?: number | null
 ): PortfolioRiskSummary {
   const equity = Math.max(100, portfolioEquity);
   
@@ -202,6 +209,8 @@ export function calculatePortfolioRisk(
       gammaRiskLevel: 'LOW',
       var95DailyUsd: 0,
       var99DailyUsd: 0,
+      varBasis: 'PARAMETRIC_ASSUMED',
+      varDailyVolUsed: 0,
       directionalBias: 'NEUTRAL',
       sectorBreakdown: []
     };
@@ -278,10 +287,15 @@ export function calculatePortfolioRisk(
     ? Math.abs(betaWeightedDeltaUsd / (netDeltaUsd || 1))
     : 1.0;
 
-  // Parametric Value at Risk (1-day)
-  // Assuming BTC daily vol ~ 3.5%, portfolio daily vol = 3.5% * portfolioBeta
-  const assumedDailyBtcVol = 0.035;
-  const portfolioDailyVol = assumedDailyBtcVol * Math.max(0.2, portfolioBeta);
+  // Parametric Value at Risk (1-day).
+  // C-08 (FASE 0): a volatilidade é uma PREMISSA declarada, não um dado medido.
+  // Usamos a vol. realizada quando fornecida; caso contrário assumimos
+  // BTC ~3.5%/dia e rotulamos a procedência em `varBasis` para chegar à UI.
+  const ASSUMED_DAILY_BTC_VOL = 0.035;
+  const hasMeasuredVol = typeof measuredDailyVol === 'number' && Number.isFinite(measuredDailyVol) && measuredDailyVol > 0;
+  const baseDailyVol = hasMeasuredVol ? (measuredDailyVol as number) : ASSUMED_DAILY_BTC_VOL;
+  const varBasis: PortfolioRiskSummary['varBasis'] = hasMeasuredVol ? 'MEASURED' : 'PARAMETRIC_ASSUMED';
+  const portfolioDailyVol = baseDailyVol * Math.max(0.2, portfolioBeta);
   // VaR 95% = 1.645 * Vol * Net Delta; VaR 99% = 2.326 * Vol * Net Delta
   const absDelta = Math.abs(betaWeightedDeltaUsd);
   const var95DailyUsd = absDelta * portfolioDailyVol * 1.645;
@@ -344,6 +358,8 @@ export function calculatePortfolioRisk(
     gammaRiskLevel,
     var95DailyUsd,
     var99DailyUsd,
+    varBasis,
+    varDailyVolUsed: portfolioDailyVol,
     directionalBias,
     sectorBreakdown
   };
@@ -458,113 +474,7 @@ export function convertSignalToPosition(
     takeProfit2: signal.target2,
     openedAt: signal.createdAt || Date.now(),
     isSyntheticFromSignal: true,
+    origin: 'SIGNAL',
     notes: `Gerado a partir do Sinal ${signal.signalType} (${signal.timeframe} · Confluência ${signal.confluenceScore}/100)`
-  });
-}
-
-/**
- * Default initial sample positions for demonstration and testing if user has no positions yet
- */
-export function getInitialSeedPositions(tickers: TickerData[]): PortfolioPosition[] {
-  const getPrice = (sym: string, fallback: number) => {
-    const t = tickers.find(i => i.symbol === sym);
-    return t ? t.price : fallback;
-  };
-
-  const seedConfigs: Array<{
-    symbol: string;
-    direction: 'LONG' | 'SHORT';
-    entryRatio: number;
-    margin: number;
-    leverage: number;
-    stopOffsetPct: number;
-    tp1OffsetPct: number;
-    notes: string;
-  }> = [
-    {
-      symbol: 'BTCUSDT',
-      direction: 'LONG',
-      entryRatio: 0.988,
-      margin: 1000,
-      leverage: 10,
-      stopOffsetPct: 0.02,
-      tp1OffsetPct: 0.04,
-      notes: 'Hedge core spot & rompimento de POC institucional'
-    },
-    {
-      symbol: 'ETHUSDT',
-      direction: 'LONG',
-      entryRatio: 0.992,
-      margin: 500,
-      leverage: 10,
-      stopOffsetPct: 0.025,
-      tp1OffsetPct: 0.05,
-      notes: 'Reversão em Golden Pocket Fibo 0.618'
-    },
-    {
-      symbol: 'SOLUSDT',
-      direction: 'LONG',
-      entryRatio: 0.985,
-      margin: 400,
-      leverage: 8,
-      stopOffsetPct: 0.03,
-      tp1OffsetPct: 0.065,
-      notes: 'Acúmulo de CVD positivo e expansão de Open Interest'
-    },
-    {
-      symbol: 'LINKUSDT',
-      direction: 'SHORT',
-      entryRatio: 1.015,
-      margin: 300,
-      leverage: 5,
-      stopOffsetPct: 0.028,
-      tp1OffsetPct: 0.05,
-      notes: 'Hedge tático de setor DeFi contra resistência semanal'
-    },
-    {
-      symbol: 'PEPEUSDT',
-      direction: 'LONG',
-      entryRatio: 0.978,
-      margin: 200,
-      leverage: 5,
-      stopOffsetPct: 0.045,
-      tp1OffsetPct: 0.09,
-      notes: 'Scalp de momentum de alta beta com rompimento de VAH'
-    },
-    {
-      symbol: 'NEARUSDT',
-      direction: 'SHORT',
-      entryRatio: 1.02,
-      margin: 250,
-      leverage: 6,
-      stopOffsetPct: 0.035,
-      tp1OffsetPct: 0.06,
-      notes: 'Arbitragem de Funding Rate extremo e divergência de CVD'
-    }
-  ];
-
-  return seedConfigs.map((cfg, idx) => {
-    const curPrice = getPrice(cfg.symbol, 100);
-    const entryPrice = curPrice * cfg.entryRatio;
-    const notional = cfg.margin * cfg.leverage;
-    const quantity = notional / entryPrice;
-
-    const isLong = cfg.direction === 'LONG';
-    const stopLoss = isLong ? entryPrice * (1 - cfg.stopOffsetPct) : entryPrice * (1 + cfg.stopOffsetPct);
-    const takeProfit1 = isLong ? entryPrice * (1 + cfg.tp1OffsetPct) : entryPrice * (1 - cfg.tp1OffsetPct);
-
-    return enrichPosition({
-      id: `seed-pos-${idx + 1}-${cfg.symbol.toLowerCase()}`,
-      symbol: cfg.symbol,
-      direction: cfg.direction,
-      entryPrice,
-      currentPrice: curPrice,
-      quantity,
-      leverage: cfg.leverage,
-      stopLoss,
-      takeProfit1,
-      openedAt: Date.now() - (idx + 1) * 3600000 * 4,
-      notes: cfg.notes
-    });
   });
 }

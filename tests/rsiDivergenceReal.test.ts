@@ -54,6 +54,10 @@ describe('Épico I2: Detecção de Divergências com Pivôs Fractais Reais e RSI
     expect(analysis.divergenceType).toBe('REGULAR_BULLISH');
     expect(analysis.bias).toBe('BULLISH');
     expect(analysis.confidence).toBeGreaterThanOrEqual(65);
+    // Com 30 velas o RSI é medido; `null` aqui seria regressão do fail-closed.
+    if (analysis.rsiCurrent == null || analysis.rsiPrevSwing == null) {
+      throw new Error('RSI de Wilder deveria estar medido com 30 velas');
+    }
     expect(analysis.rsiCurrent).toBeGreaterThan(analysis.rsiPrevSwing);
     expect(analysis.priceCurrent).toBeLessThan(analysis.pricePrevSwing);
   });
@@ -73,6 +77,10 @@ describe('Épico I2: Detecção de Divergências com Pivôs Fractais Reais e RSI
     expect(analysis.divergenceType).toBe('REGULAR_BEARISH');
     expect(analysis.bias).toBe('BEARISH');
     expect(analysis.confidence).toBeGreaterThanOrEqual(65);
+    // Com 30 velas o RSI é medido; `null` aqui seria regressão do fail-closed.
+    if (analysis.rsiCurrent == null || analysis.rsiPrevSwing == null) {
+      throw new Error('RSI de Wilder deveria estar medido com 30 velas');
+    }
     expect(analysis.rsiCurrent).toBeLessThan(analysis.rsiPrevSwing);
     expect(analysis.priceCurrent).toBeGreaterThan(analysis.pricePrevSwing);
   });

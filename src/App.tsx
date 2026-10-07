@@ -22,6 +22,7 @@ import { Zap, Flame, ShieldCheck, RefreshCw, Activity, ArrowUpRight, Database } 
 import { playSignalTone, sendDesktopNotification } from './utils/soundAlerts';
 import { formatPrice } from './utils/formatters';
 import { GoldenPocketSparkline, GoldenPocketStats } from './components/GoldenPocketSparkline';
+import { computeGoldenPocketStats } from './utils/goldenPocketStats';
 import { MarketCorrelationMatrix } from './components/MarketCorrelationMatrix';
 import { PrimeOpportunityBanner } from './components/PrimeOpportunityBanner';
 import { MarketHeatmap } from './components/MarketHeatmap';
@@ -335,65 +336,9 @@ export default function App() {
       (s.confluenceFactors?.some(f => f.toLowerCase().includes('pocket') || f.toLowerCase().includes('fibo')) || s.timeframe === '15m')
     );
 
-    // If signals exist in state, compute real outcomes
-    let profitableCount = 0;
-    let stoppedCount = 0;
-    let activeCount = 0;
-    const recentOutcomes: Array<{ profitable: boolean; pnlPct: number; timestamp: number }> = [];
-
-    symbolSignals.forEach(s => {
-      const entry = s.entryZone ? (s.entryZone[0] + s.entryZone[1]) / 2 : s.currentPrice;
-      const isLong = s.direction === 'LONG';
-      const pnlPct = isLong 
-        ? ((s.currentPrice - entry) / entry) * 100 
-        : ((entry - s.currentPrice) / entry) * 100;
-
-      const isProfitable = s.status === 'TARGET_REACHED' || pnlPct >= 1.2;
-      const isStopped = s.status === 'STOPPED_OUT' || pnlPct <= -1.0;
-
-      if (isProfitable) profitableCount++;
-      else if (isStopped) stoppedCount++;
-      else activeCount++;
-
-      recentOutcomes.push({
-        profitable: isProfitable,
-        pnlPct: parseFloat(pnlPct.toFixed(2)),
-        timestamp: s.createdAt
-      });
-    });
-
-    // Provide baseline sample size if fewer than 5 trades are stored locally
-    const baselineAlerts = Math.max(symbolSignals.length, 7);
-    const baselineProfitable = symbolSignals.length >= 4 
-      ? profitableCount 
-      : Math.round(baselineAlerts * (0.70 + ((topGoldenPocketTicker.confluenceScore - 60) * 0.003)));
-
-    const effectiveTotal = Math.max(baselineAlerts, profitableCount + stoppedCount);
-    const effectiveProfitable = Math.min(effectiveTotal, Math.max(profitableCount, baselineProfitable));
-    const winRate = effectiveTotal > 0 ? Math.round((effectiveProfitable / effectiveTotal) * 100) : 74;
-
-    // Synthetic trend curve if sparse local signals
-    const outcomesSeries = recentOutcomes.length >= 5 
-      ? recentOutcomes.slice(-8)
-      : [
-          { profitable: true, pnlPct: 2.4, timestamp: Date.now() - 6 * 86400000 },
-          { profitable: true, pnlPct: 1.8, timestamp: Date.now() - 5 * 86400000 },
-          { profitable: false, pnlPct: -1.1, timestamp: Date.now() - 4 * 86400000 },
-          { profitable: true, pnlPct: 3.1, timestamp: Date.now() - 3 * 86400000 },
-          { profitable: true, pnlPct: 2.2, timestamp: Date.now() - 2 * 86400000 },
-          { profitable: false, pnlPct: -0.9, timestamp: Date.now() - 1 * 86400000 },
-          { profitable: true, pnlPct: 2.6, timestamp: Date.now() - 4 * 3600000 }
-        ];
-
-    return {
-      symbol,
-      totalAlerts: effectiveTotal,
-      profitableCount: effectiveProfitable,
-      stoppedCount: effectiveTotal - effectiveProfitable,
-      activeCount,
-      winRate,
-      recentOutcomes: outcomesSeries
-    };
+    // FASE 0 (C-02): a contagem é pura, testada em `goldenPocketStats.test.ts` e
+    // não pode inventar amostra — sem desfecho resolvido, `winRate` é `null`.
+    return computeGoldenPocketStats(symbol, symbolSignals);
   }, [topGoldenPocketTicker, signals]);
 
   return (
@@ -647,6 +592,7 @@ export default function App() {
 
         {activeTab === 'screener' && (
           <ScreenerDashboard
+            liveTickers={tickers}
             onSelectTicker={(t) => {
               setSelectedTicker(t);
               setSelectedSignal(null);

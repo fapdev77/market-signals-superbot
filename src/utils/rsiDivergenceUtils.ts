@@ -24,8 +24,9 @@ export interface RSIDivergenceAnalysis {
   divergenceType: RSIDivergenceType;
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   confidence: number;
-  rsiCurrent: number;
-  rsiPrevSwing: number;
+  /** `null` quando não há velas suficientes — nunca injetar um RSI neutro fabricado (50). */
+  rsiCurrent: number | null;
+  rsiPrevSwing: number | null;
   priceCurrent: number;
   pricePrevSwing: number;
   verdict: string;
@@ -110,8 +111,8 @@ export function detectRSIDivergencesFromKlines(
       divergenceType: 'NO_DIVERGENCE',
       bias: 'NEUTRAL',
       confidence: 50,
-      rsiCurrent: 50,
-      rsiPrevSwing: 50,
+      rsiCurrent: null,
+      rsiPrevSwing: null,
       priceCurrent: klines?.[klines.length - 1]?.close ?? 0,
       pricePrevSwing: klines?.[klines.length - 1]?.close ?? 0,
       verdict: 'Dados insuficientes para cálculo de RSI de Wilder.',
@@ -234,42 +235,43 @@ export function detectRSIDivergencesFromKlines(
 }
 
 /**
- * Fallback estimation only when klines are completely absent
+ * FASE 0 (C-01): item "sem dados" — RSI não medido e plano com nulos.
+ * Nenhum nível direcional é derivado do preço quando não há histórico de velas.
  */
-export function estimateRSI(ticker: TickerData, timeframe: string = '1h'): { current: number; prevSwing: number } {
-  const changePct = ticker.priceChangePercent24h || 0;
-  const devPct = ticker.ma24hDeviationPct || (changePct * 0.4);
-  const cvdDir = ticker.cvdDirection;
-  const inGP = ticker.fibonacci?.inGoldenPocket;
-
-  let tfMultiplier = 1.0;
-  if (timeframe === '15m') tfMultiplier = 1.25;
-  if (timeframe === '4h') tfMultiplier = 0.85;
-  if (timeframe === '1D') tfMultiplier = 0.70;
-
-  let rawRsi = 50 + (changePct * 2.8 * tfMultiplier) + (devPct * 1.5);
-  if (cvdDir === 'BUY') rawRsi += 3.5;
-  if (cvdDir === 'SELL') rawRsi -= 3.5;
-  if (inGP && changePct < 0) rawRsi -= 4;
-  if (inGP && changePct > 0) rawRsi += 4;
-
-  const currentRsi = Math.max(8, Math.min(92, Math.round(rawRsi * 10) / 10));
-
-  let prevSwingRsi = 50;
-  if (currentRsi >= 65) {
-    prevSwingRsi = Math.min(95, currentRsi + (changePct > 2 ? 8 : -6));
-  } else if (currentRsi <= 35) {
-    prevSwingRsi = Math.max(5, currentRsi + (changePct < -2 ? -8 : 7));
-  } else {
-    prevSwingRsi = Math.max(10, Math.min(90, 50 - (changePct * 1.2)));
-  }
-
-  return { current: currentRsi, prevSwing: Math.round(prevSwingRsi * 10) / 10 };
+function buildNoDataRsiItem(ticker: TickerData, timeframe: string, price: number): RSIDivergenceItem {
+  return {
+    id: `${ticker.symbol}_${timeframe}`,
+    symbol: ticker.symbol,
+    ticker,
+    timeframe,
+    divergenceType: 'NO_DIVERGENCE',
+    bias: 'NEUTRAL',
+    confidence: 0,
+    rsiCurrent: null,
+    rsiPrevSwing: null,
+    priceCurrent: price,
+    pricePrevSwing: price,
+    divergenceSlope: 0,
+    status: 'ACTIVE',
+    isOverbought: false,
+    isOversold: false,
+    entryZone: null,
+    stopLoss: null,
+    target1: null,
+    target2: null,
+    riskRewardRatio: null,
+    confluences: [],
+    verdict: 'RSI indisponível: sem histórico de velas suficientes para o cálculo de Wilder. Nenhuma divergência é reportada.',
+    detectedAt: Date.now()
+  };
 }
 
 /**
- * Scans an asset for Regular or Hidden RSI Divergences using real Wilder RSI
- * when klines are supplied, or fallback estimation when klines are absent.
+ * Scans an asset for Regular or Hidden RSI Divergences using real Wilder RSI.
+ *
+ * FASE 0 (C-01): quando não há velas, o RSI NÃO é estimado. Retornamos
+ * `NO_DIVERGENCE` com `rsiCurrent`/`rsiPrevSwing` nulos — a UI exibe
+ * "indisponível" em vez de um número sintético rotulado como "RSI (14)".
  */
 export function scanRSIDivergence(
   ticker: TickerData,
@@ -285,6 +287,13 @@ export function scanRSIDivergence(
   // Prefer canonical Wilder RSI from real candlestick history
   if (Array.isArray(klines) && klines.length >= 15) {
     const analysis = detectRSIDivergencesFromKlines(klines, 14);
+
+    // FASE 0 (C-01): fronteira explícita — sem RSI de Wilder medido não há
+    // como classificar sobrecompra/sobrevenda nem derivar um plano direcional;
+    // reusamos a mesma saída de "sem velas" (nada é estimado).
+    if (analysis.rsiCurrent == null || analysis.rsiPrevSwing == null) {
+      return buildNoDataRsiItem(ticker, timeframe, price);
+    }
 
     let confidence = analysis.confidence;
     const confluences = [...analysis.confluences];
@@ -355,66 +364,9 @@ export function scanRSIDivergence(
     };
   }
 
-  // Fallback path when klines are not provided
-  const { current: rsiCurrent, prevSwing: rsiPrevSwing } = estimateRSI(ticker, timeframe);
-  const changePct = ticker.priceChangePercent24h || 0;
-  const swingH = fib?.swingHigh || ticker.high24h || price * 1.04;
-  const swingL = fib?.swingLow || ticker.low24h || price * 0.96;
-
-  let divergenceType: RSIDivergenceType = 'NO_DIVERGENCE';
-  let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-  let confidence = 50;
-  const confluences: string[] = [];
-  let verdict = 'Sem divergência de momentum significativa no momento.';
-
-  let priceCurrent = price;
-  let pricePrevSwing = price;
-
-  const isNearSupportOrGP = (price <= (fib?.fib618 || swingL * 1.02)) || (key?.support1 && price <= key.support1 * 1.015);
-  if ((isNearSupportOrGP || changePct < -0.8) && rsiCurrent > rsiPrevSwing && rsiPrevSwing <= 38) {
-    divergenceType = 'REGULAR_BULLISH';
-    bias = 'BULLISH';
-    pricePrevSwing = swingL * 1.01;
-    confidence = 72;
-    verdict = 'Divergência Altista Regular: Preço testando fundo enquanto o RSI forma fundo ascendente (Exaustão Vendedora).';
-    confluences.push('Fundo ascendente no RSI (14) em zona de sobrevenda.');
-  } else if ((price >= (fib?.fib236 || swingH * 0.985) || changePct > 0.8) && rsiCurrent < rsiPrevSwing && rsiPrevSwing >= 62) {
-    divergenceType = 'REGULAR_BEARISH';
-    bias = 'BEARISH';
-    pricePrevSwing = swingH * 0.99;
-    confidence = 74;
-    verdict = 'Divergência Baixista Regular: Preço renovando topo sem confirmação de momentum no RSI (Exaustão Compradora).';
-    confluences.push('Topo descendente no RSI (14) em região de sobrecompra.');
-  }
-
-  const targetPrice = bias === 'BULLISH' ? (key?.resistance1 || price * 1.03) : (key?.support1 || price * 0.97);
-  const stopLossPrice = bias === 'BULLISH' ? (key?.support1 ? key.support1 * 0.99 : price * 0.985) : (key?.resistance1 ? key.resistance1 * 1.01 : price * 1.015);
-
-  return {
-    id: `${ticker.symbol}_${timeframe}`,
-    symbol: ticker.symbol,
-    ticker,
-    timeframe,
-    divergenceType,
-    bias,
-    confidence,
-    rsiCurrent,
-    rsiPrevSwing,
-    priceCurrent,
-    pricePrevSwing,
-    divergenceSlope: parseFloat((Math.abs(rsiCurrent - rsiPrevSwing) / 10).toFixed(2)),
-    status: 'ACTIVE',
-    isOverbought: rsiCurrent >= 70,
-    isOversold: rsiCurrent <= 30,
-    entryZone: [parseFloat((price * 0.998).toFixed(4)), parseFloat((price * 1.002).toFixed(4))],
-    stopLoss: stopLossPrice,
-    target1: targetPrice,
-    target2: parseFloat((targetPrice * (bias === 'BULLISH' ? 1.02 : 0.98)).toFixed(4)),
-    riskRewardRatio: calculateRiskReward(price, targetPrice, stopLossPrice),
-    confluences,
-    verdict,
-    detectedAt: Date.now()
-  };
+  // FASE 0 (C-01): sem velas suficientes não há RSI de Wilder — não estimamos
+  // nenhum valor (nem RSI, nem níveis de plano derivados do preço).
+  return buildNoDataRsiItem(ticker, timeframe, price);
 }
 
 export interface UniverseRSIDivergenceSummary {
@@ -424,8 +376,11 @@ export interface UniverseRSIDivergenceSummary {
   regularCount: number;
   hiddenCount: number;
   totalDivergences: number;
-  avgRSI: number;
-  marketCondition: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL';
+  /** RSI médio de Wilder apenas sobre os ativos efetivamente medidos. `null` se nenhum. */
+  avgRSI: number | null;
+  /** Quantos ativos tiveram RSI de Wilder medido — a base real do `avgRSI`. */
+  rsiMeasuredCount: number;
+  marketCondition: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL' | 'UNKNOWN';
   topOpportunity: RSIDivergenceItem | null;
 }
 
@@ -444,8 +399,9 @@ export function scanUniverseRSIDivergences(
       regularCount: 0,
       hiddenCount: 0,
       totalDivergences: 0,
-      avgRSI: 50,
-      marketCondition: 'NEUTRAL',
+      avgRSI: null,
+      rsiMeasuredCount: 0,
+      marketCondition: 'UNKNOWN',
       topOpportunity: null
     };
   }
@@ -458,10 +414,15 @@ export function scanUniverseRSIDivergences(
   const bullishCount = divergences.filter(i => i.bias === 'BULLISH').length;
   const bearishCount = divergences.filter(i => i.bias === 'BEARISH').length;
 
-  const totalRSI = items.reduce((acc, i) => acc + (i.rsiCurrent || 50), 0);
-  const avgRSI = items.length > 0 ? Math.round((totalRSI / items.length) * 10) / 10 : 50;
-  const marketCondition: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL' = 
-    avgRSI >= 65 ? 'OVERBOUGHT' : avgRSI <= 35 ? 'OVERSOLD' : 'NEUTRAL';
+  // FASE 0 (C-01): o RSI médio é calculado SÓ sobre ativos com RSI de Wilder
+  // medido. Nenhum valor neutro é injetado para ativos sem histórico — se nada
+  // foi medido, o resultado é `null` e a UI mostra "n/d" em vez de um 50 falso.
+  const measured = items.filter(i => i.rsiCurrent != null);
+  const rsiMeasuredCount = measured.length;
+  const totalRSI = measured.reduce((acc, i) => acc + (i.rsiCurrent as number), 0);
+  const avgRSI = rsiMeasuredCount > 0 ? Math.round((totalRSI / rsiMeasuredCount) * 10) / 10 : null;
+  const marketCondition: 'OVERBOUGHT' | 'OVERSOLD' | 'NEUTRAL' | 'UNKNOWN' =
+    avgRSI == null ? 'UNKNOWN' : avgRSI >= 65 ? 'OVERBOUGHT' : avgRSI <= 35 ? 'OVERSOLD' : 'NEUTRAL';
 
   const sortedByConfidence = [...divergences].sort((a, b) => b.confidence - a.confidence);
   const topOpportunity = sortedByConfidence[0] || null;
@@ -474,6 +435,7 @@ export function scanUniverseRSIDivergences(
     hiddenCount,
     totalDivergences: divergences.length,
     avgRSI,
+    rsiMeasuredCount,
     marketCondition,
     topOpportunity
   };

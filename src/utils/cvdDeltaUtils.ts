@@ -52,7 +52,24 @@ export interface CvdDeltaMetrics {
   aggressionDominanceLabel: string;
   volumeDeltaSpeedUsdPerMin: number;
   institutionalRatio: number;
+  /**
+   * FASE 0 — procedência da escala USD.
+   * `MEASURED_24H` = volume de 24h real da exchange; `ABSENT` = sem volume ⇒
+   * valores USD são 0. Antes o fallback era `|| 1000000`, ou seja, um total
+   * de US$ 1 milhão fabricado apresentado como volume taker.
+   */
+  volumeBasis: 'MEASURED_24H' | 'ABSENT';
+  /**
+   * FASE 0 — premissa usada para ESCALONAR a magnitude em USD.
+   * A Binance não expõe o taker buy agregado de 24h no ticker, então o share
+   * taker não é medível aqui: é declarado, não inventado como se fosse dado.
+   * A proporção compra/venda (que é medida) vem de `takerBuyRatio`.
+   */
+  assumedTakerShareOfQuoteVolume: number;
 }
+
+/** FASE 0 — única fonte da premissa de escala taker/24h (ver `CvdDeltaMetrics`). */
+export const ASSUMED_TAKER_SHARE_OF_QUOTE_VOLUME = 0.52;
 
 export interface OrderFlowDivergenceResult {
   divergenceType: OrderFlowDivergenceType;
@@ -90,7 +107,9 @@ export function computeCvdDeltaMetrics(ticker: TickerData): CvdDeltaMetrics {
       aggressionDominance: 'BALANCED',
       aggressionDominanceLabel: 'Equilíbrio Taker (Fluxo Neutro)',
       volumeDeltaSpeedUsdPerMin: 0,
-      institutionalRatio: 1
+      institutionalRatio: 1,
+      volumeBasis: 'ABSENT',
+      assumedTakerShareOfQuoteVolume: ASSUMED_TAKER_SHARE_OF_QUOTE_VOLUME
     };
   }
 
@@ -110,10 +129,22 @@ export function computeCvdDeltaMetrics(ticker: TickerData): CvdDeltaMetrics {
 
   const sellRatio = 1 - buyRatio;
 
-  // Approximate 24h taker trading volume (~45-55% of total quote volume is typically taker execution in crypto futures)
-  const estimatedTakerShare = 0.52;
-  const rawQuoteVol = ticker.quoteVolume24h || (ticker.volume24h ? ticker.volume24h * ticker.price : 1000000);
-  const totalTakerVolumeUsd = rawQuoteVol * estimatedTakerShare;
+  // FASE 0 — escala da magnitude em USD:
+  //  - o VOLUME vem da exchange (`quoteVolume24h`, com `volume24h * price` como
+  //    segunda escolha). Sem nenhum dos dois o total é 0 e `volumeBasis` declara
+  //    a ausência — antes um `|| 1000000` apresentava US$ 1M fabricado;
+  //  - o SHARE taker de 24h não é medível neste endpoint, então é uma premissa
+  //    declarada em `assumedTakerShareOfQuoteVolume`, não um dado disfarçado.
+  const quoteVolume = typeof ticker.quoteVolume24h === 'number' && Number.isFinite(ticker.quoteVolume24h) && ticker.quoteVolume24h > 0
+    ? ticker.quoteVolume24h
+    : 0;
+  const derivedQuoteVolume = typeof ticker.volume24h === 'number' && Number.isFinite(ticker.volume24h) && ticker.volume24h > 0
+    && typeof ticker.price === 'number' && Number.isFinite(ticker.price) && ticker.price > 0
+    ? ticker.volume24h * ticker.price
+    : 0;
+  const rawQuoteVol = quoteVolume || derivedQuoteVolume;
+  const volumeBasis: CvdDeltaMetrics['volumeBasis'] = rawQuoteVol > 0 ? 'MEASURED_24H' : 'ABSENT';
+  const totalTakerVolumeUsd = rawQuoteVol * ASSUMED_TAKER_SHARE_OF_QUOTE_VOLUME;
 
   const takerBuyVolumeUsd = totalTakerVolumeUsd * buyRatio;
   const takerSellVolumeUsd = totalTakerVolumeUsd * sellRatio;
@@ -178,7 +209,9 @@ export function computeCvdDeltaMetrics(ticker: TickerData): CvdDeltaMetrics {
     aggressionDominance,
     aggressionDominanceLabel,
     volumeDeltaSpeedUsdPerMin,
-    institutionalRatio
+    institutionalRatio,
+    volumeBasis,
+    assumedTakerShareOfQuoteVolume: ASSUMED_TAKER_SHARE_OF_QUOTE_VOLUME
   };
 }
 

@@ -422,7 +422,7 @@ export const SmartVolumeScreener: React.FC<SmartVolumeScreenerProps> = ({
                             <div className="text-[8px] opacity-75 uppercase">{tf}</div>
                             <div className="text-xs font-black">{m.rvol}x</div>
                             <div className="text-[8px] truncate">
-                              {m.deltaPressure === 'BUY' ? '▲ BUY' : m.deltaPressure === 'SELL' ? '▼ SELL' : '▬ EQ'}
+                              {m.deltaPressure === 'UNKNOWN' ? 'n/d' : m.deltaPressure === 'BUY' ? '▲ BUY' : m.deltaPressure === 'SELL' ? '▼ SELL' : '▬ EQ'}
                             </div>
                           </div>
                         );

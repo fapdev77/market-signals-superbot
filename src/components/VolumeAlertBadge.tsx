@@ -67,7 +67,7 @@ export const VolumeAlertBadge: React.FC<VolumeAlertBadgeProps> = ({
                 <div className="text-[9px] opacity-75">{tf.toUpperCase()}</div>
                 <div className="text-xs">{m.rvol}x</div>
                 <div className="text-[8px] opacity-70">
-                  {m.deltaPressure === 'BUY' ? '▲ BUY' : m.deltaPressure === 'SELL' ? '▼ SELL' : '▬'}
+                  {m.deltaPressure === 'UNKNOWN' ? 'n/d' : m.deltaPressure === 'BUY' ? '▲ BUY' : m.deltaPressure === 'SELL' ? '▼ SELL' : '▬'}
                 </div>
               </div>
             );

@@ -17,6 +17,14 @@ export interface TickerData {
   // Moving Average & Trend Deviations
   ma24h?: number;                   // 24h Simple/Weighted Moving Average price
   ma24hDeviationPct?: number;       // % deviation: ((price - ma24h) / ma24h) * 100
+  /** A-04 (FASE 1): horas REALMENTE cobertas pela janela da média (pode ser < 24). */
+  ma24hWindowHours?: number;
+  /** A-04: `true` quando a série de velas cobre 24h por inteiro. */
+  ma24hComplete?: boolean;
+  /** A-04: proveniência da média móvel (velas reais de 24h, janela parcial ou OHLC de 24h). */
+  ma24hSource?: 'KLINES_24H' | 'KLINES_PARTIAL' | 'EXCHANGE_24H_OHLC';
+  /** A-04: intervalo MEDIDO das velas que alimentaram os indicadores (ex.: '15m'). */
+  measuredInterval?: string;
   
   // Futures / Advanced Metrics
   openInterest: number;             // USDT or Contract volume
@@ -51,6 +59,10 @@ export interface TickerData {
     swingHigh: number;
     swingLow: number;
     inGoldenPocket: boolean;        // Is price in [0.618 - 0.68]
+    /** A-03: estrutura derivada de pivôs fractais (não da ordem dos extremos). */
+    structure?: 'UPTREND' | 'DOWNTREND' | 'RANGE';
+    /** A-03: proveniência das âncoras do Fibonacci. */
+    structureSource?: 'FRACTAL_PIVOTS' | 'INSUFFICIENT_PIVOTS';
     trend?: 'UP' | 'DOWN';          // 'UP' (LL 1 -> HH 0) or 'DOWN' (HH 1 -> LL 0)
     point1Price?: number;           // Price at point 1 (Swing Start)
     point0Price?: number;           // Price at point 0 (Swing End)
@@ -82,7 +94,17 @@ export interface TickerData {
   trappedTraders?: TrappedTradersData;
   
   // Confluence & Signal
-  confluenceScore: number;          // 0 to 100
+  confluenceScore: number;          // 0 to 99 — A-01: força de confluência, nunca satura em 100
+  /**
+   * A-01 (FASE 1): direção do desequilíbrio de confluência. O `confluenceScore`
+   * mede apenas FORÇA; a direção vive aqui, para que um LONG e um SHORT de mesma
+   * magnitude não sejam indistinguíveis.
+   */
+  scoreDirection?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  /** A-01: pontuação bruta (`bullishPoints - bearishPoints`) que originou o score. */
+  netConfluencePoints?: number;
+  /** A-01: versão do modelo de score (`SCORING_MODEL.version`). */
+  scoringModelVersion?: number;
   signalType: 'STRONG_LONG' | 'LONG' | 'NEUTRAL' | 'SHORT' | 'STRONG_SHORT';
   signalReason: string;
   confluenceFactors: string[];
@@ -165,6 +187,12 @@ export interface OrderBookLevel {
 export interface OrderBookDepthData {
   symbol: string;
   timestamp: number;
+  /**
+   * FASE 0 (C-07): proveniência obrigatória do livro.
+   * `EXCHANGE` = book real da Binance; `SIMULATED` = gerado (fallback) — a UI
+   * DEVE rotular, para que um livro sintético nunca passe por real.
+   */
+  source: 'EXCHANGE' | 'SIMULATED';
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
   spread: number;
@@ -191,6 +219,13 @@ export interface KlineCandle {
   close: number;
   volume: number;
   takerBuyVolume: number;
+  /**
+   * A-06 (FASE 1): proveniência do `takerBuyVolume`.
+   * `false` = o campo veio ausente/inválido da exchange — o valor NÃO foi medido
+   * (é 0 por ausência, não por dado) e não deve pontuar CVD/confluência.
+   * `undefined` é tratado como disponível, para compatibilidade com fixtures antigas.
+   */
+  takerBuyVolumeAvailable?: boolean;
   quoteVolume?: number;
 }
 
@@ -332,6 +367,10 @@ export interface IndicatorWeights {
   maxStopLossAtrMultiple?: number;  // R-7: cap da distância do stop em múltiplos do ATR% (default 2.5)
   volumeProfileTimeframe?: string;  // default '30m'
   volumeProfileCandles?: number;    // default 48 (48 * 30m = 24h)
+  /** A-02: peso do Fair Value Gap (default 10). Antes era um literal fora do Auto-Tuner. */
+  fvgWeight?: number;
+  /** A-02: idade máxima do FVG, em velas, para que ele pontue (default 12 ≈ 3h em 15m). */
+  fvgMaxAgeCandles?: number;
 }
 
 export interface AIReviewResponse {
@@ -867,6 +906,12 @@ export interface PortfolioPosition {
   maxLossAtStopUsd?: number;
   openedAt: number;
   isSyntheticFromSignal?: boolean;
+  /**
+   * FASE 0 (C-09): procedência da posição.
+   * `USER` = cadastrada pelo operador; `SIGNAL` = derivada de um sinal; `DEMO` = exemplo.
+   * Nenhuma posição de demonstração deve se apresentar como real.
+   */
+  origin?: 'USER' | 'SIGNAL' | 'DEMO';
   notes?: string;
 }
 
@@ -901,6 +946,13 @@ export interface PortfolioRiskSummary {
   gammaRiskLevel: 'LOW' | 'MODERATE' | 'ELEVATED' | 'HIGH';
   var95DailyUsd: number;
   var99DailyUsd: number;
+  /**
+   * C-08: base do VaR. `PARAMETRIC_ASSUMED` = volatilidade diária PREMISSA
+   * (não medida); `MEASURED` = volatilidade realizada fornecida pelo caller.
+   */
+  varBasis: 'PARAMETRIC_ASSUMED' | 'MEASURED';
+  /** Volatilidade diária efetivamente usada no VaR (fração, ex.: 0.035 = 3.5%/dia). */
+  varDailyVolUsed: number;
   directionalBias: 'HEAVY_LONG' | 'MODERATE_LONG' | 'NEUTRAL' | 'MODERATE_SHORT' | 'HEAVY_SHORT';
   sectorBreakdown: SectorRiskExposure[];
 }
@@ -924,8 +976,8 @@ export interface TimeframeVolumeMetrics {
   volumeUsd: number;             // Estimated volume in USD for this timeframe
   baselineAvgUsd: number;        // Normal expected volume in USD
   isAnomaly: boolean;            // Whether rvol exceeds threshold
-  deltaPressure: 'BUY' | 'SELL' | 'NEUTRAL';
-  takerRatio: number;            // 0 to 1
+  deltaPressure: 'BUY' | 'SELL' | 'NEUTRAL' | 'UNKNOWN'; // 'UNKNOWN' = razão taker não medida no feed (exibir n/d)
+  takerRatio: number | null;      // 0 to 1; null = não medido (nunca fabricar neutro 0.50)
   zScore: number;                // Statistical deviation standard deviations (e.g. +3.2σ)
   changePct: number;             // Price change in this timeframe window
 }
@@ -1027,8 +1079,9 @@ export interface RSIDivergenceItem {
   timeframe: string; // '15m' | '1h' | '4h' | '1D'
   divergenceType: RSIDivergenceType;
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  rsiCurrent: number; // 0-100
-  rsiPrevSwing: number; // 0-100
+  /** FASE 0 (C-01): `null` quando não há velas suficientes para o RSI de Wilder. */
+  rsiCurrent: number | null; // 0-100
+  rsiPrevSwing: number | null; // 0-100
   priceCurrent: number;
   pricePrevSwing: number;
   divergenceSlope: number;
@@ -1036,11 +1089,12 @@ export interface RSIDivergenceItem {
   status: RSIDivergenceStatus;
   isOverbought: boolean; // RSI >= 70
   isOversold: boolean; // RSI <= 30
-  entryZone: [number, number];
-  stopLoss: number;
-  target1: number;
-  target2: number;
-  riskRewardRatio: number;
+  /** FASE 0 (C-01): `null` quando não há setup — nenhum nível direcional é fabricado sem divergência/histórico de velas. */
+  entryZone: [number, number] | null;
+  stopLoss: number | null;
+  target1: number | null;
+  target2: number | null;
+  riskRewardRatio: number | null;
   confluences: string[];
   verdict: string;
   detectedAt: number;

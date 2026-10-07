@@ -44,6 +44,7 @@ import { marketScreener } from './server/services/MarketScreenerService.js';
 import { TickerData, BotState, IndicatorWeights, LongShortRatioData } from './src/types.js';
 import { resolveActiveStrategies, configToWeights, getDefaultIndicatorWeights } from './src/constants/strategyPresets.js';
 import { canGenerateSignals, canEvaluateActiveTrades } from './server/services/DataGate.js';
+import { evaluateCalibrationGate, loadCalibrationInput, type CalibrationGateResult } from './server/services/calibrationGate.js';
 import { resolveRawTicker, resolveMarketInputs, evaluatePositionManagement } from './server/services/TickProcessor.js';
 import { evaluatePortfolioRisk, isTradingHalted, loadAppStateFromDb, getRiskLimits } from './server/services/RiskManager.js';
 // 6.5.3: slippage estimado pela profundidade do book (limite default 0,15%).
@@ -405,6 +406,24 @@ async function startServer() {
                 // DEFAULT_RISK_LIMITS aqui ignorava `POST /api/system/risk-limits`, enquanto
                 // `/api/system/risk-status` reportava os limites customizados.
                 const risk = evaluatePortfolioRisk(openSignals, getRiskLimits(), { category: targetCategory });
+                // A-08 (FASE 2): gate de calibração — emitir SÓ com expectancyR > 0 e
+                // confidence ≠ UNCALIBRATED. Só consulta o ledger quando o score já passa
+                // do limiar mínimo (custo zero nos demais ticks). Ledger sem NENHUMA
+                // amostra ⇒ bootstrap: emite com aviso "sem base rate".
+                // Falha ao ler o ledger não pode pular o símbolo em silêncio (o
+                // allSettled engole a rejeição): gate indisponível ⇒ emissão segue com
+                // WARN — só se bloqueia quando se SABE que a expectativa não é positiva.
+                let calibrationGate: CalibrationGateResult | null = null;
+                if (processed.confluenceScore >= minScore) {
+                  try {
+                    calibrationGate = evaluateCalibrationGate(processed.confluenceScore, await loadCalibrationInput());
+                  } catch (calErr) {
+                    logJson('WARN', 'tick', 'Gate de calibração A-08 indisponível (falha ao ler ledger) — emissão segue sem gate', { symbol, category: targetCategory, error: getErrorMessage(calErr), correlationId: currentTickId });
+                  }
+                }
+                if (calibrationGate?.bootstrap) {
+                  logJson('WARN', 'tick', 'Gate de calibração A-08 em modo bootstrap (ledger sem amostras — sem base rate)', { symbol, category: targetCategory, score: processed.confluenceScore, correlationId: currentTickId });
+                }
                 if (tradingHalted && processed.confluenceScore >= minScore) {
                   // R-15 (critério 2): bloqueios do kill-switch viram métrica.
                   incrementMetric(METRIC_NAMES.signalsSuppressedKillswitch);
@@ -420,6 +439,12 @@ async function startServer() {
                 } else if (!isTradfiAllowed && processed.confluenceScore >= minScore) {
                   incrementMetric(METRIC_NAMES.tradingScheduleBlocks);
                   logJson('INFO', 'tick', 'Sinal bloqueado: mercado TradFi subjacente fechado', { symbol, category: targetCategory, correlationId: currentTickId });
+                } else if (calibrationGate && !calibrationGate.allowed) {
+                  // A-08: supressão dura — o sinal nem é construído nem salvo (mesmo
+                  // padrão dos demais gates da cadeia: métrica + log + sem emissão).
+                  incrementMetric(METRIC_NAMES.signalsSuppressedCalibration);
+                  logJson('INFO', 'tick', 'Sinal suprimido: gate de calibração A-08', { symbol, category: targetCategory, score: processed.confluenceScore, expectancyR: calibrationGate.expectancyR, confidence: calibrationGate.confidence, reason: calibrationGate.reason, correlationId: currentTickId });
+                  console.log(`⛔ [CALIBRATION GATE] Sinal ${symbol}/${targetCategory} suprimido: ${calibrationGate.reason}`);
                 } else if (gateDecision.allow && isTradfiAllowed && processed.confluenceScore >= minScore) {
                   const riskLimits = getRiskLimits();
                   const newSignal = buildTradeSignal(
@@ -429,7 +454,11 @@ async function startServer() {
                     targetCategory,
                     targetTimeframe,
                     weights.signalTtlSettings,
-                    undefined, // weights: default do R-7 preservado (como antes do 6.5)
+                    // A-05 (FASE 1): o MESMO objeto de weights do caminho de decisão vai
+                    // ao buildTradeSignal. Antes ia `undefined`, o que tornava inertes
+                    // knobs tipados/validados (maxStopLossAtrMultiple, minConfluenceScore)
+                    // e abria divergência de parâmetros contra o backtest.
+                    weights,
                     getSymbolFilters(symbol),
                     { equity: riskLimits.accountEquity, riskPerTradePct: riskLimits.riskPerTradePct },
                     { klines1m: klines1mForValidation, klines5m: klines5mForValidation }

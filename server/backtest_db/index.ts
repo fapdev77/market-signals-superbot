@@ -1,5 +1,5 @@
 import { getDb, scheduleDbSave, setDatabaseFilePathForTests } from '../db.js';
-import type { DataOrigin, OriginFilter } from '../../src/types.js';
+import type { DataOrigin, OriginFilter, KlineCandle } from '../../src/types.js';
 import { runWithRetry } from '../utils/dbRetry.js';
 
 /**
@@ -30,6 +30,33 @@ export interface HistoricalKlineRow {
   trades: number;
   takerBuyBaseVolume: number;
   takerBuyQuoteVolume: number;
+  /**
+   * A-06 — proveniência do `takerBuyBaseVolume`.
+   * `false` = o campo NÃO veio medido da exchange (o número gravado é 0 por
+   * ausência, não uma medição) e não deve pontuar CVD/entrada. Ausente em
+   * fixtures antigas é tratado como medido, igual à convenção de `KlineCandle`.
+   */
+  takerBuyVolumeAvailable?: boolean;
+}
+
+/**
+ * A-06 (FASE 1): converte uma linha do histórico em `KlineCandle` SEM fabricar
+ * taker volume. Antes era `takerBuyBaseVolume || volume * 0.50`, o que fazia o
+ * backtest rodar sobre CVD metade inventado enquanto o live era honesto — a
+ * paridade live↔backtest que A-05 declara não existe se os dados diferem.
+ */
+export function rowToKlineCandle(k: HistoricalKlineRow): KlineCandle {
+  const takerBuyVolumeAvailable = k.takerBuyVolumeAvailable !== false;
+  return {
+    timestamp: k.openTime,
+    open: k.open,
+    high: k.high,
+    low: k.low,
+    close: k.close,
+    volume: k.volume,
+    takerBuyVolume: takerBuyVolumeAvailable ? k.takerBuyBaseVolume : 0,
+    takerBuyVolumeAvailable
+  };
 }
 
 export interface BacktestResultRow {
@@ -95,12 +122,13 @@ export const historicalKlinesDao = {
           db.run(
             `INSERT OR IGNORE INTO historical_klines (
               symbol, interval, open_time, close_time, open, high, low, close,
-              volume, quote_asset_volume, trades, taker_buy_base_volume, taker_buy_quote_volume, origin
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              volume, quote_asset_volume, trades, taker_buy_base_volume, taker_buy_quote_volume, taker_buy_volume_available, origin
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               k.symbol, k.interval, k.openTime, k.closeTime, k.open, k.high, k.low,
               k.close, k.volume, k.quoteAssetVolume, k.trades,
-              k.takerBuyBaseVolume, k.takerBuyQuoteVolume, origin
+              k.takerBuyBaseVolume, k.takerBuyQuoteVolume,
+              k.takerBuyVolumeAvailable === false ? 0 : 1, origin
             ] as SqlJsStatementValues
           );
         }
@@ -131,7 +159,8 @@ export const historicalKlinesDao = {
     const db = await getDb();
     const res = db.exec(
       `SELECT symbol, interval, open_time, close_time, open, high, low, close,
-              volume, quote_asset_volume, trades, taker_buy_base_volume, taker_buy_quote_volume
+              volume, quote_asset_volume, trades, taker_buy_base_volume, taker_buy_quote_volume,
+              taker_buy_volume_available
        FROM historical_klines
        WHERE symbol = ? AND interval = ? AND open_time >= ? AND open_time <= ?${klinesOriginClause(origin)}
        ORDER BY open_time ASC`,
@@ -151,7 +180,10 @@ export const historicalKlinesDao = {
       quoteAssetVolume: num(row[9]),
       trades: num(row[10]),
       takerBuyBaseVolume: num(row[11]),
-      takerBuyQuoteVolume: num(row[12])
+      takerBuyQuoteVolume: num(row[12]),
+      // A-06: a ausência sobrevive até o consumidor (coluna nasce com 1 por
+      // default — as linhas atuais vieram do fetch da Binance, que traz o campo).
+      takerBuyVolumeAvailable: row[13] === undefined ? true : Number(row[13]) !== 0
     }));
   },
 

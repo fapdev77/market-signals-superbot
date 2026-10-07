@@ -91,11 +91,11 @@ export const RSIDivergenceMonitor: React.FC<RSIDivergenceMonitorProps> = ({
     const text = `🎯 Setup Divergência RSI (${item.symbol} - ${item.timeframe})
 Tipo: ${item.divergenceType.replace('_', ' ')}
 Preço Atual: $${formatPrice(item.priceCurrent)}
-RSI (14): ${item.rsiCurrent}
-Entrada: $${formatPrice(item.entryZone[0])} - $${formatPrice(item.entryZone[1])}
-Stop Loss: $${formatPrice(item.stopLoss)}
-Alvo 1: $${formatPrice(item.target1)} | Alvo 2: $${formatPrice(item.target2)}
-R:R: ${item.riskRewardRatio}x
+RSI (14): ${item.rsiCurrent == null ? 'n/d (histórico insuficiente)' : item.rsiCurrent}
+Entrada: ${item.entryZone ? `$${formatPrice(item.entryZone[0])} - $${formatPrice(item.entryZone[1])}` : 'n/d (sem setup)'}
+Stop Loss: ${item.stopLoss == null ? 'n/d (sem setup)' : `$${formatPrice(item.stopLoss)}`}
+Alvo 1: ${item.target1 == null ? 'n/d' : `$${formatPrice(item.target1)}`} | Alvo 2: ${item.target2 == null ? 'n/d' : `$${formatPrice(item.target2)}`}
+R:R: ${item.riskRewardRatio == null ? 'n/d (sem setup)' : `${item.riskRewardRatio}x`}
 Confluência: ${item.confidence}%`;
 
     navigator.clipboard.writeText(text);
@@ -230,12 +230,15 @@ Confluência: ${item.confidence}%`;
           </div>
           <div className="flex items-baseline gap-1.5">
             <span className={`text-xl font-bold font-mono ${
-              universeData.avgRSI >= 65 ? 'text-rose-400' : universeData.avgRSI <= 35 ? 'text-emerald-400' : 'text-cyan-300'
+              universeData.avgRSI == null ? 'text-neutral-500' : universeData.avgRSI >= 65 ? 'text-rose-400' : universeData.avgRSI <= 35 ? 'text-emerald-400' : 'text-cyan-300'
             }`}>
-              {universeData.avgRSI}
+              {universeData.avgRSI == null ? 'n/d' : universeData.avgRSI}
             </span>
             <span className="text-[10px] font-mono text-neutral-500">
-              {universeData.marketCondition === 'OVERBOUGHT' ? 'Sobrecomprado' : universeData.marketCondition === 'OVERSOLD' ? 'Sobrevendido' : 'Neutro'}
+              {universeData.marketCondition === 'OVERBOUGHT' ? 'Sobrecomprado' : universeData.marketCondition === 'OVERSOLD' ? 'Sobrevendido' : universeData.marketCondition === 'NEUTRAL' ? 'Neutro' : 'Sem RSI medido'}
+              {universeData.rsiMeasuredCount < tickers.length && (
+                <span className="text-neutral-600"> · {universeData.rsiMeasuredCount}/{tickers.length} medidos</span>
+              )}
             </span>
           </div>
         </div>
@@ -431,19 +434,19 @@ Confluência: ${item.confidence}%`;
                       <span className="text-neutral-400 flex items-center gap-1">
                         <span>RSI (14):</span>
                         <strong className={`font-bold ${
-                          item.rsiCurrent >= 70 ? 'text-rose-400' : item.rsiCurrent <= 30 ? 'text-emerald-400' : 'text-neutral-200'
+                          item.rsiCurrent == null ? 'text-neutral-500' : item.rsiCurrent >= 70 ? 'text-rose-400' : item.rsiCurrent <= 30 ? 'text-emerald-400' : 'text-neutral-200'
                         }`}>
-                          {item.rsiCurrent}
+                          {item.rsiCurrent == null ? 'n/d' : item.rsiCurrent}
                         </strong>
                         <span className="text-[10px] text-neutral-500">
-                          (Prev: {item.rsiPrevSwing})
+                          (Prev: {item.rsiPrevSwing == null ? 'n/d' : item.rsiPrevSwing})
                         </span>
                       </span>
 
                       <span className="text-neutral-400">
                         {hasDiv ? (
                           <span className="text-cyan-400 font-semibold">
-                            Confluência: {item.confidence}% • R:R {item.riskRewardRatio}
+                            Confluência: {item.confidence}% • R:R {item.riskRewardRatio ?? 'n/d'}
                           </span>
                         ) : (
                           <span className="text-neutral-500">Sem divergência ativa</span>
@@ -460,9 +463,9 @@ Confluência: ${item.confidence}%`;
                       {/* Current RSI Bar */}
                       <div 
                         className={`h-full transition-all duration-300 ${
-                          item.rsiCurrent <= 30 ? 'bg-emerald-500' : item.rsiCurrent >= 70 ? 'bg-rose-500' : 'bg-cyan-500'
+                          item.rsiCurrent == null ? 'bg-neutral-700' : item.rsiCurrent <= 30 ? 'bg-emerald-500' : item.rsiCurrent >= 70 ? 'bg-rose-500' : 'bg-cyan-500'
                         }`}
-                        style={{ width: `${Math.min(100, Math.max(0, item.rsiCurrent))}%` }}
+                        style={{ width: `${item.rsiCurrent == null ? 0 : Math.min(100, Math.max(0, item.rsiCurrent))}%` }}
                       />
                     </div>
                   </div>
@@ -539,24 +542,24 @@ Confluência: ${item.confidence}%`;
                   <div className="flex justify-between">
                     <span className="text-neutral-500">Zona de Entrada:</span>
                     <span className="font-bold text-white">
-                      ${formatPrice(activeItem.entryZone[0])} - ${formatPrice(activeItem.entryZone[1])}
+                      {activeItem.entryZone ? `$${formatPrice(activeItem.entryZone[0])} - $${formatPrice(activeItem.entryZone[1])}` : 'n/d — sem setup'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-neutral-500">Stop Loss Técnico:</span>
-                    <span className="font-bold text-rose-400">${formatPrice(activeItem.stopLoss)}</span>
+                    <span className="font-bold text-rose-400">{activeItem.stopLoss == null ? 'n/d' : `$${formatPrice(activeItem.stopLoss)}`}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-neutral-500">Alvo 1 (Pivot/POC):</span>
-                    <span className="font-bold text-emerald-400">${formatPrice(activeItem.target1)}</span>
+                    <span className="font-bold text-emerald-400">{activeItem.target1 == null ? 'n/d' : `$${formatPrice(activeItem.target1)}`}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-neutral-500">Alvo 2 (Liquidez Macro):</span>
-                    <span className="font-bold text-emerald-400">${formatPrice(activeItem.target2)}</span>
+                    <span className="font-bold text-emerald-400">{activeItem.target2 == null ? 'n/d' : `$${formatPrice(activeItem.target2)}`}</span>
                   </div>
                   <div className="flex justify-between pt-1 border-t border-neutral-800 text-cyan-300">
                     <span>Risco / Retorno:</span>
-                    <span className="font-bold">{activeItem.riskRewardRatio}x</span>
+                    <span className="font-bold">{activeItem.riskRewardRatio == null ? 'n/d' : `${activeItem.riskRewardRatio}x`}</span>
                   </div>
                 </div>
               </div>
