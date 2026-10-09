@@ -171,7 +171,7 @@ const INITIAL_WIDGETS: WidgetConfig[] = [
     visible: true,
     minW: 6,
     minH: 4,
-    badge: 'PRO SLA'
+    badge: 'TELEMETRIA'
   },
   {
     id: 'kill_switch',
