@@ -441,6 +441,15 @@ export const TrendStrengthIndicator: React.FC<TrendStrengthIndicatorProps> = ({
 
   const isPriceUp = (ticker.priceChangePercent24h ?? 0) >= 0;
 
+  // Latência real do tick calculada contra o timestamp de atualização
+  const latencyDisplay = useMemo(() => {
+    if (!ticker.updatedAt) return 'n/d';
+    const diff = Math.max(0, Date.now() - ticker.updatedAt);
+    if (diff > 120_000) return 'stale (> 2m)';
+    if (diff > 1000) return `${(diff / 1000).toFixed(1)}s`;
+    return `${diff}ms`;
+  }, [ticker.updatedAt]);
+
   return (
     <div className={`space-y-4 text-neutral-200 font-sans ${className}`}>
       {/* Header Bar: Ticker Identity, Quick Switcher, Live Telemetry & Actions */}
@@ -751,7 +760,7 @@ export const TrendStrengthIndicator: React.FC<TrendStrengthIndicatorProps> = ({
             <span>Fonte: Stream SSE / Binance Ticker</span>
           </span>
           <span aria-hidden="true">·</span>
-          <span>Latência: &lt; 50ms</span>
+          <span>Idade do Tick: {latencyDisplay}</span>
         </div>
         <div className="flex items-center gap-1 text-neutral-400">
           <Clock className="w-3 h-3" />

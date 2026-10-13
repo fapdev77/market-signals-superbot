@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Bot, Zap, Activity, RefreshCw, Sliders, LineChart, BrainCircuit, 
   ShieldAlert, Wifi, BarChart2, Cpu, Database, Menu, X, ChevronRight, 
@@ -185,6 +185,45 @@ export const Header: React.FC<HeaderProps> = ({
 
   const topTickers = (tickers || []).slice(0, 6);
   const calibrationFor = useScoreCalibration();
+
+  // Métricas Globais Dinâmicas calculadas a partir do catálogo ativo de tickers
+  const marketMetrics = useMemo(() => {
+    if (!tickers || tickers.length === 0) {
+      return { totalVolume24hStr: 'n/d', btcDomStr: 'n/d', totalOiStr: 'n/d' };
+    }
+
+    let sumQuoteVol = 0;
+    let sumOi = 0;
+    let btcQuoteVol = 0;
+
+    for (const t of tickers) {
+      const qv = t.quoteVolume24h || (t.volume24h && t.price ? t.volume24h * t.price : 0);
+      sumQuoteVol += qv;
+      if (t.openInterest && t.price) {
+        sumOi += t.openInterest * t.price;
+      }
+      if (t.symbol === 'BTCUSDT' || t.baseAsset === 'BTC') {
+        btcQuoteVol += qv;
+      }
+    }
+
+    const fmtB = (val: number) => {
+      if (val <= 0) return 'n/d';
+      if (val >= 1e9) return `$${(val / 1e9).toFixed(1)}B`;
+      if (val >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
+      return `$${(val / 1e3).toFixed(1)}K`;
+    };
+
+    const btcDomPct = sumQuoteVol > 0 && btcQuoteVol > 0
+      ? `${((btcQuoteVol / sumQuoteVol) * 100).toFixed(1)}%`
+      : 'n/d';
+
+    return {
+      totalVolume24hStr: fmtB(sumQuoteVol),
+      btcDomStr: btcDomPct,
+      totalOiStr: fmtB(sumOi)
+    };
+  }, [tickers]);
 
   // Categorized Navigation Structure (Option 1)
   const navCategories: NavCategory[] = [
@@ -482,27 +521,27 @@ export const Header: React.FC<HeaderProps> = ({
             position="bottom"
             title="Volume Global 24h"
             badge="MERCADO"
-            content="Volume financeiro transacionado somado nos pares de derivativos perpétuos de cripto nas últimas 24 horas."
+            content="Volume financeiro transacionado somado nos pares de derivativos perpétuos de cripto monitorados nas últimas 24 horas."
           >
-            <span className="cursor-help">VOL 24H: <strong className="text-neutral-200">$48.2B</strong></span>
+            <span className="cursor-help">VOL 24H: <strong className="text-neutral-200 tabular-nums">{marketMetrics.totalVolume24hStr}</strong></span>
           </Tooltip>
           <span>•</span>
           <Tooltip
             position="bottom"
-            title="Dominância do Bitcoin"
+            title="Dominância do Bitcoin (Volume Ticker)"
             badge="BTC.D"
-            content="Participação percentual do Bitcoin sobre o valor de mercado total de criptoativos, indicando rotação entre BTC e altcoins."
+            content="Participação percentual do par BTC/USDT sobre o volume transacionado total monitorado em tempo real."
           >
-            <span className="cursor-help">BTC DOM: <strong className="text-orange-400">58.4%</strong></span>
+            <span className="cursor-help">BTC DOM: <strong className="text-orange-400 tabular-nums">{marketMetrics.btcDomStr}</strong></span>
           </Tooltip>
           <span>•</span>
           <Tooltip
             position="bottom"
-            title="Open Interest (Contratos em Aberto)"
+            title="Open Interest Agregado"
             badge="DERIVATIVOS"
-            content="Montante nocional de posições alavancadas ativas abertas no mercado futuro. Expansões rápidas sinalizam potencial de squeeze."
+            content="Montante nocional agregado de posições abertas no mercado futuro para os contratos ativos."
           >
-            <span className="cursor-help">OPEN INTEREST: <strong className="text-orange-400">$14.8B</strong></span>
+            <span className="cursor-help">OPEN INTEREST: <strong className="text-orange-400 tabular-nums">{marketMetrics.totalOiStr}</strong></span>
           </Tooltip>
           <span>•</span>
           <Tooltip
