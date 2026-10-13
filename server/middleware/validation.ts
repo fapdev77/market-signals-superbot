@@ -87,7 +87,7 @@ export const weightsUpdateSchema = z.preprocess((value: unknown) => {
 export const aiModelConfigItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  provider: z.enum(['gemini', 'openrouter', 'anthropic', 'local']),
+  provider: z.enum(['gemini', 'openai', 'openrouter', 'anthropic', 'local']),
   modelId: z.string().min(1),
   apiUrl: z.string().optional(),
   apiKey: z.string().optional(),

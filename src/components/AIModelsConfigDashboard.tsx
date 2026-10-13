@@ -969,6 +969,8 @@ export const AIModelsConfigDashboard: React.FC<{
                     {editingModel.provider === 'local' && (
                       <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-[10px] text-amber-300 leading-normal">
                         <strong>Dica Ollama na Nuvem:</strong> Se o app estiver rodando na nuvem, <code className="bg-black/40 px-1 py-0.5 rounded">localhost</code> aponta para o servidor e não para seu PC. Para conectar o Ollama do seu computador, rode <code className="bg-black/40 px-1 py-0.5 rounded">ngrok http 11434</code> e insira a URL pública gerada aqui.
+                        <br /><br />
+                        <strong>Ollama em outro host da sua LAN:</strong> se o robô roda na sua rede, informe o IP local do servidor (ex.: <code className="bg-black/40 px-1 py-0.5 rounded">http://192.168.10.5:11434</code>). Isso exige <code className="bg-black/40 px-1 py-0.5 rounded">ALLOW_PRIVATE_AI_ENDPOINTS=true</code> no ambiente do backend.
                       </div>
                     )}
                   </div>

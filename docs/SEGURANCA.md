@@ -51,7 +51,8 @@ O módulo `server/utils/outboundPolicy.ts` audita todas as chamadas de rede exte
   * OpenRouter: `openrouter.ai`
   * Anthropic: `api.anthropic.com`
   * OpenAI: `api.openai.com`
-* **Provedor Local (Ollama):** Permitido exclusivamente em `localhost` / `127.0.0.1` na porta configurada (ex: `11434`) quando o provedor for explicitamente `local`.
+* **Provedor Local (Ollama):** `localhost` / `127.0.0.1` (HTTP ou HTTPS) são permitidos quando o provedor for explicitamente `local`. Para alcançar um Ollama fora do host do backend (ex.: app na nuvem), também é aceito um endpoint público via **HTTPS** (túnel Ngrok/Cloudflare), desde que o host não seja IP literal de rede privada/loopback/metadata e passe na checagem anti-DNS-rebinding.
+* **LAN Privada (opt-in):** com `ALLOW_PRIVATE_AI_ENDPOINTS=true`, o provedor `local` também aceita IPs RFC 1918 (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`) em HTTP/HTTPS — útil quando o Ollama roda em outro host da mesma rede. Fora desse opt-in o bloqueio permanece. Metadata de nuvem (`169.254.x.x`) e loopback de provedores externos continuam sempre bloqueados.
 * **Bloqueio de Metadados de Nuvem:** Endereços como `169.254.169.254` (GCP/AWS Metadata Service), IPs de loopback para serviços remotos e faixas privadas RFC 1918 são bloqueados sumariamente.
 * **Protocolo Estrito:** Todas as conexões externas para IA devem obrigatoriamente utilizar **HTTPS**.
 * **Pendência conhecida (R-1):** a resolução de DNS antes de conectar (`validateOutboundAIUrlWithDns`, mitigação de *DNS rebinding*) já existe em `outboundPolicy.ts`, porém ainda não está no caminho das chamadas — rastreada em [`specs/phase-4-remaining-gaps.md`](../specs/phase-4-remaining-gaps.md).

@@ -130,6 +130,55 @@ describe('Security Suite - Contract & Protection Tests', () => {
       expect(localBlockedForGemini.isValid).toBe(false);
     });
 
+    it('should allow a remote HTTPS tunnel endpoint for the local provider (Ngrok/Cloudflare)', () => {
+      const ngrok = validateOutboundAIUrl('https://ab12-34-56.ngrok-free.app', 'local');
+      expect(ngrok.isValid).toBe(true);
+      const cloudflare = validateOutboundAIUrl('https://ollama.example.com', 'local');
+      expect(cloudflare.isValid).toBe(true);
+    });
+
+    it('should still block non-HTTPS and private-IP remote endpoints for the local provider', () => {
+      const plainHttpLan = validateOutboundAIUrl('http://192.168.1.50:11434', 'local');
+      expect(plainHttpLan.isValid).toBe(false);
+
+      const httpsPrivateIp = validateOutboundAIUrl('https://10.0.0.5:11434', 'local');
+      expect(httpsPrivateIp.isValid).toBe(false);
+
+      const metadata = validateOutboundAIUrl('https://169.254.169.254/latest', 'local');
+      expect(metadata.isValid).toBe(false);
+    });
+
+    it('should block private LAN endpoints for the local provider by default (opt-in required)', () => {
+      const prev = process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+      delete process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+      try {
+        expect(validateOutboundAIUrl('http://192.168.10.5:11434', 'local').isValid).toBe(false);
+        expect(validateOutboundAIUrl('https://10.0.0.5:11434', 'local').isValid).toBe(false);
+        expect(validateOutboundAIUrl('http://172.16.0.5:11434', 'local').isValid).toBe(false);
+      } finally {
+        if (prev === undefined) delete process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+        else process.env.ALLOW_PRIVATE_AI_ENDPOINTS = prev;
+      }
+    });
+
+    it('should allow private LAN endpoints for the local provider when ALLOW_PRIVATE_AI_ENDPOINTS=true', () => {
+      const prev = process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+      process.env.ALLOW_PRIVATE_AI_ENDPOINTS = 'true';
+      try {
+        expect(validateOutboundAIUrl('http://192.168.10.5:11434', 'local').isValid).toBe(true);
+        expect(validateOutboundAIUrl('http://10.0.0.5:11434', 'local').isValid).toBe(true);
+        expect(validateOutboundAIUrl('https://172.16.0.5:11434', 'local').isValid).toBe(true);
+
+        // Metadata/loopback guarantees remain intact even when opted-in.
+        expect(validateOutboundAIUrl('http://169.254.169.254/latest', 'local').isValid).toBe(false);
+        // The exception is scoped to the local provider only.
+        expect(validateOutboundAIUrl('http://192.168.10.5:11434', 'gemini').isValid).toBe(false);
+      } finally {
+        if (prev === undefined) delete process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+        else process.env.ALLOW_PRIVATE_AI_ENDPOINTS = prev;
+      }
+    });
+
     it('should block SSRF attempts targeting cloud metadata endpoints (169.254.169.254)', () => {
       const gcpMeta = validateOutboundAIUrl('http://169.254.169.254/computeMetadata/v1/', 'gemini');
       expect(gcpMeta.isValid).toBe(false);

@@ -272,6 +272,7 @@ export default function App() {
   };
 
   const handleSaveAIModels = async (newModels: AIModelConfig[]) => {
+    const previousModels = botState.aiModels;
     try {
       setBotState(prev => ({ ...prev, aiModels: newModels }));
       const res = await apiFetch('/api/settings/ai-models', {
@@ -284,8 +285,21 @@ export default function App() {
         if (data.models) {
           setBotState(prev => ({ ...prev, aiModels: data.models }));
         }
+      } else {
+        // A validação do servidor pode rejeitar, por exemplo, um endpoint de
+        // modelo local. Sem tratar o erro aqui, a lista voltava ao último valor
+        // persistido sem nenhum aviso — parecia que o endpoint informado tinha
+        // sido "substituído" sozinho.
+        const data = await res.json().catch(() => null);
+        const details = Array.isArray(data?.details)
+          ? data.details.map((d: { message?: string }) => d?.message).filter(Boolean).join(' | ')
+          : '';
+        const message = details || data?.message || `HTTP ${res.status}`;
+        setBotState(prev => ({ ...prev, aiModels: previousModels }));
+        alert(`Não foi possível salvar os modelos de IA:\n${message}`);
       }
     } catch (err) {
+      setBotState(prev => ({ ...prev, aiModels: previousModels }));
       console.error('Failed to save AI models:', err);
     }
   };

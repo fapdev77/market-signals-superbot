@@ -92,6 +92,43 @@ describe('R-1 DNS rebinding enforcement on AI outbound paths', () => {
     expect(logs[0].message).toMatch(/rebinding/i);
   });
 
+  it('local tunnel host goes through the DNS rebinding check', async () => {
+    const { validateOutboundAIUrlWithDns } = await import('../server/utils/outboundPolicy.js');
+    mockLookup([{ address: '10.1.2.3', family: 4 }]);
+
+    const result = await validateOutboundAIUrlWithDns('https://tunnel.example.com', 'local');
+    expect(result.isValid).toBe(false);
+    expect(result.error).toMatch(/rebinding/i);
+  });
+
+  it('opted-in private LAN endpoint is accepted without a DNS lookup', async () => {
+    const { validateOutboundAIUrlWithDns } = await import('../server/utils/outboundPolicy.js');
+    const prev = process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+    process.env.ALLOW_PRIVATE_AI_ENDPOINTS = 'true';
+    lookupSpy.mockImplementation((async () => {
+      throw new Error('DNS should not be called for a literal LAN IP');
+    }) as any);
+    try {
+      const result = await validateOutboundAIUrlWithDns('http://192.168.10.5:11434', 'local');
+      expect(result.isValid).toBe(true);
+      expect(lookupSpy).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_PRIVATE_AI_ENDPOINTS;
+      else process.env.ALLOW_PRIVATE_AI_ENDPOINTS = prev;
+    }
+  });
+
+  it('local loopback endpoint skips DNS resolution', async () => {
+    const { validateOutboundAIUrlWithDns } = await import('../server/utils/outboundPolicy.js');
+    lookupSpy.mockImplementation((async () => {
+      throw new Error('DNS should not be called for loopback local endpoints');
+    }) as any);
+
+    const result = await validateOutboundAIUrlWithDns('http://localhost:11434', 'local');
+    expect(result.isValid).toBe(true);
+    expect(lookupSpy).not.toHaveBeenCalled();
+  });
+
   it('gemini motor path proceeds to fetch when DNS resolves to a public IP', async () => {
     mockLookup([{ address: '142.250.79.74', family: 4 }]);
 
